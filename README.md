@@ -1,5 +1,7 @@
 # KrokAI Law
 
+[![selftest](https://github.com/igorsaevets/krokai-law/actions/workflows/selftest.yml/badge.svg)](https://github.com/igorsaevets/krokai-law/actions/workflows/selftest.yml)
+
 **Your AI quoted a law. Is the quote real?**
 
 **KrokAI Law** checks every quotation in your documents against the actual text of the law, on your own

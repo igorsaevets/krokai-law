@@ -1,5 +1,7 @@
 # KrokAI Law
 
+[![selftest](https://github.com/igorsaevets/krokai-law/actions/workflows/selftest.yml/badge.svg)](https://github.com/igorsaevets/krokai-law/actions/workflows/selftest.yml)
+
 **ИИ процитировал закон. А цитата настоящая?**
 
 `krokai` сверяет каждую цитату в ваших документах с настоящим текстом закона — с тем, что лежит у
