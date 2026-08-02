@@ -22,10 +22,10 @@ This matters more than usual, because the intended users hold privileged materia
 and PDF sidecars beside your sources. That is all.
 
 **On the network: nothing.** No command in this toolkit contacts a vendor, an API, or an update
-server. There is no telemetry. `lawverbatim selftest` passes on a machine with no network at all, and
+server. There is no telemetry. `krokai selftest` passes on a machine with no network at all, and
 that is asserted by the suite rather than promised in prose.
 
-The one exception is explicit and yours: `lawverbatim review` can hand a brief to a **separate**,
+The one exception is explicit and yours: `krokai review` can hand a brief to a **separate**,
 separately-installed review harness that does contact vendors. It is not bundled, it must be found on
 your machine or named by you, and the brief passes through the outbound gate first.
 
@@ -68,5 +68,5 @@ The line drawn: **a unit number turns a street address into a person; the street
 geography.**
 
 The list is not, and cannot be, complete. Adding your own patterns is a small edit to
-`lawverbatim/redact.py`, and the self-test will demand a probe line for any pattern you add — which is
+`krokai/redact.py`, and the self-test will demand a probe line for any pattern you add — which is
 the mechanism that keeps coverage honest.

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""lawverbatim - a citation safety harness for AI-assisted legal work.
+"""krokai - a citation safety harness for AI-assisted legal work.
 
 The one sentence that explains the whole package:
 

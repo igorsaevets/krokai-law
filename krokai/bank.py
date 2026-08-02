@@ -56,7 +56,7 @@ Every quotation below has been **opened in the primary source by a person** and 
 > This file is itself checked, and prose in quotes would be extracted as a quotation of law and
 > reported as NOT FOUND - a false alarm produced by the tool's own template. Measured on the first
 > real run.
-> 4. Run `lawverbatim check` before anything is filed, and read every flag rather than binning it.
+> 4. Run `krokai check` before anything is filed, and read every flag rather than binning it.
 
 Weight legend: 🟢 primary text, personally verified · 🟡 my inference, or a quotation with a
 caveat · 🔴 not personally verified - open the source before this goes anywhere.

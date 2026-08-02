@@ -46,7 +46,7 @@ HEADER = """---
 derived: true
 source: {src}
 extracted: {when}
-tool: lawverbatim sidecar
+tool: krokai sidecar
 ---
 
 > ⚠️ **THIS IS AN EXTRACTED TEXT LAYER, NOT THE PRIMARY SOURCE.** It exists so that grep, your
@@ -54,7 +54,7 @@ tool: lawverbatim sidecar
 > phrase in a PDF even when the phrase is demonstrably in its text layer.
 >
 > **Quote and verify against the original,** `{srcname}`. Page breaks, signatures and exact layout
-> exist only there. Rebuild with `lawverbatim sidecar`.
+> exist only there. Rebuild with `krokai sidecar`.
 
 ---
 

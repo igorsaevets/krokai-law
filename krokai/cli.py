@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""`lawverbatim <command>` - everything the toolkit does, from one entry point.
+"""`krokai <command>` - everything the toolkit does, from one entry point.
 
 Design note: every command that can be wrong about the world prints **what it looked at**, not just
 its conclusion. A checker whose output is a single number teaches you to trust the number; a checker
@@ -66,9 +66,9 @@ Next:
      🔴 Nothing of your own in there. A quotation copied out of your own memo would otherwise
      verify against your own memo, and a mistake made once would validate itself forever.
   2. Put your drafts in case/ (what gets filed), guides/ and research/.
-  3. lawverbatim sidecar      - so grep can see inside your PDFs
-  4. lawverbatim check        - the whole-matter pass
-  5. lawverbatim install-hooks - so steps 3-4 stop depending on anyone remembering them
+  3. krokai sidecar      - so grep can see inside your PDFs
+  4. krokai check        - the whole-matter pass
+  5. krokai install-hooks - so steps 3-4 stop depending on anyone remembering them
 """)
     return 0
 
@@ -379,7 +379,7 @@ def cmd_doctor(a):
     from .config import find_config
     from .redact import self_test, SECRET_PATTERNS, PII_PATTERNS
 
-    print("lawverbatim %s" % __version__)
+    print("krokai %s" % __version__)
     print("python  %s" % sys.version.split()[0])
     print("packs   %s" % ", ".join(available_packs()))
     print("gate    %d secret + %d personal detectors" % (len(SECRET_PATTERNS), len(PII_PATTERNS)))
@@ -397,7 +397,7 @@ def cmd_doctor(a):
               "needs two; measured, a single engine inflated one opinion by 51 % in broken tokens.")
 
     cfg_path = find_config(a.dir)
-    print("\nconfig  %s" % (cfg_path or "NOT FOUND - run `lawverbatim init`"))
+    print("\nconfig  %s" % (cfg_path or "NOT FOUND - run `krokai init`"))
     if cfg_path:
         from .config import load
         cfg = load(a.dir)
@@ -434,9 +434,9 @@ def cmd_selftest(a):
 # ----------------------------------------------------------------------------------------
 def build_parser():
     ap = argparse.ArgumentParser(
-        prog="lawverbatim",
+        prog="krokai",
         description="Check that every quotation of law in your documents is really in the source.")
-    ap.add_argument("--version", action="version", version="lawverbatim " + __version__)
+    ap.add_argument("--version", action="version", version="krokai " + __version__)
     sub = ap.add_subparsers(dest="cmd")
 
     def common(p):
@@ -518,7 +518,7 @@ def build_parser():
     p.add_argument("--skip", nargs="*", help="run everything except these")
     p.add_argument("--no-harness", action="store_true",
                    help="ignore an installed harness and use the built-in transports")
-    p.add_argument("--harness", help="path to a review harness (or set LAWVERBATIM_REVIEW_HARNESS)")
+    p.add_argument("--harness", help="path to a review harness (or set KROKAI_REVIEW_HARNESS)")
     p.add_argument("--harness-args", nargs="*")
     p.add_argument("--audit", help="skip everything and audit a folder of answers you already have")
     p.set_defaults(fn=cmd_review)
@@ -540,7 +540,7 @@ def build_parser():
     p.add_argument("--dir")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--uninstall", action="store_true")
-    p.set_defaults(fn=lambda a: __import__("lawverbatim.install", fromlist=["main"]).main(a))
+    p.set_defaults(fn=lambda a: __import__("krokai.install", fromlist=["main"]).main(a))
 
     return ap
 

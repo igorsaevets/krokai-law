@@ -37,12 +37,12 @@ def main():
     if cfg is None:
         return 0
 
-    from lawverbatim.bank import queue_open_items, read_bank
-    from lawverbatim.library import orphans
-    from lawverbatim.corpus import walk
-    from lawverbatim.sidecar import SUFFIX
+    from krokai.bank import queue_open_items, read_bank
+    from krokai.library import orphans
+    from krokai.corpus import walk
+    from krokai.sidecar import SUFFIX
 
-    lines = ["Facts about this matter, from `lawverbatim` at session start:"]
+    lines = ["Facts about this matter, from `krokai` at session start:"]
 
     bank = read_bank(cfg.abs(cfg["bank"]))
     entries = bank.count("\n### ")
@@ -75,7 +75,7 @@ def main():
         if without:
             lines.append("- **%d of %d PDFs have no text sidecar.** Grep and file search do not "
                          "read PDFs, so a search that finds nothing in those is a false negative, "
-                         "not evidence of absence. `python -m lawverbatim sidecar` fixes it."
+                         "not evidence of absence. `python -m krokai sidecar` fixes it."
                          % (len(without), len(pdfs)))
     except Exception:
         pass

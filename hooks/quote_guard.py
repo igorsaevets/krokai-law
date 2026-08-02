@@ -61,7 +61,7 @@ from _bootstrap import bootstrap, read_event, find_config      # noqa: E402
 
 bootstrap()
 
-SEEN = os.path.join(tempfile.gettempdir(), "lawverbatim-quote-guard-seen.json")
+SEEN = os.path.join(tempfile.gettempdir(), "krokai-quote-guard-seen.json")
 
 
 def main():
@@ -77,7 +77,7 @@ def main():
     if cfg is None:
         return 0
 
-    from lawverbatim.bank import candidates, read_bank, in_bank
+    from krokai.bank import candidates, read_bank, in_bank
 
     rel = os.path.relpath(os.path.abspath(path), cfg.root).replace("\\", "/").lower()
     if any(rel.startswith(x.lower().rstrip("/") + "/") or rel == x.lower()
@@ -132,7 +132,7 @@ def main():
         "     (b) is the ADDRESS beside it correct;",
         "     (c) 🔴 was a CONDITION cut off (If / Where / Unless / provided that / but).",
         "",
-        "     python -m lawverbatim check --only \"%s\"" % os.path.basename(path),
+        "     python -m krokai check --only \"%s\"" % os.path.basename(path),
         "",
         "   If the source is not on disk, download it into the library and add its index line",
         "   FIRST - otherwise the verdict will be NOT_FOUND through the library's fault rather",

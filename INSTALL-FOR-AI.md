@@ -59,7 +59,7 @@ locked-down machine, continue without them and **say which file types will be in
 ## Step 2 — put the toolkit somewhere permanent
 
 ```bash
-git clone https://github.com/<owner>/lawverbatim ~/tools/lawverbatim
+git clone https://github.com/<owner>/krokai ~/tools/krokai
 ```
 
 No clone available? Download the ZIP and unpack it. The toolkit needs no installation step and no
@@ -69,7 +69,7 @@ paralegal cannot install is a tool that does not exist.
 Verify:
 
 ```bash
-cd ~/tools/lawverbatim && python -m lawverbatim selftest
+cd ~/tools/krokai && python -m krokai selftest
 ```
 
 Expect `self-test: N/N passed`. **If any check fails, stop and report it.** Do not install a checker
@@ -95,7 +95,7 @@ Then say what you found and what you are about to configure, before you configur
 
 ```bash
 cd <matter folder>
-python ~/tools/lawverbatim/lawverbatim init .
+python ~/tools/krokai/krokai init .
 ```
 
 This writes a commented `casefile.json` plus `law/`, `case/`, `guides/`, `research/`, a quote-bank
@@ -105,7 +105,7 @@ Now edit `casefile.json` to match reality:
 
 - `sources` — folders holding **only** primary sources. 🔴 Re-read point 2 above.
 - `drafts` — tier `A` for what gets filed, `B` for guides, `C` for research.
-- `citation_packs` — run `python -m lawverbatim packs` and pick. `us-federal` is the base and belongs in
+- `citation_packs` — run `python -m krokai packs` and pick. `us-federal` is the base and belongs in
   almost every list; add `us-immigration` or `us-tax` alongside it, not instead.
 - `language` — `en` or `ru`, for verdict labels.
 - `drop_cyrillic_quotes` — `true` when the user writes in Russian but the law is in English. It stops
@@ -114,7 +114,7 @@ Now edit `casefile.json` to match reality:
 ## Step 5 — make the PDFs searchable
 
 ```bash
-python -m lawverbatim sidecar
+python -m krokai sidecar
 ```
 
 Your own file-search tool does not read PDFs, and it does not tell you so. In one measured library
@@ -129,7 +129,7 @@ see the page.
 ## Step 6 — the first check
 
 ```bash
-python -m lawverbatim check
+python -m krokai check
 ```
 
 Read the output before you summarise it:
@@ -151,8 +151,8 @@ rounds where the task was strategy — rounds that produced new quotations. **Ru
 by rule.** A hook is executed by the harness, and topic cannot influence it.
 
 ```bash
-python -m lawverbatim install-hooks --dry-run     # look at the diff first
-python -m lawverbatim install-hooks
+python -m krokai install-hooks --dry-run     # look at the diff first
+python -m krokai install-hooks
 ```
 
 Default scope is the project's `.claude/settings.json`. Use `--scope user` for the global one only if
@@ -172,8 +172,8 @@ The installer backs up the existing file, prints what it will change, is idempot
 ## Step 8 — verify, then report
 
 ```bash
-python -m lawverbatim doctor
-python -m lawverbatim close
+python -m krokai doctor
+python -m krokai close
 ```
 
 `doctor` must end with `STATUS: READY`. 🔴 If it prints `READY` and exits non-zero, that is a bug —
@@ -195,10 +195,10 @@ Not checked: whether any rule is still in force, and whether any quotation is ap
 
 ## What to tell the user afterwards, in their words
 
-- **`lawverbatim check`** before anything is filed.
-- **`lawverbatim quote "<a quotation>"`** to check one, right now.
-- **`lawverbatim close`** at the end of a working session.
-- **`lawverbatim gate <file>`** before pasting anything into another AI — it blocks credentials outright
+- **`krokai check`** before anything is filed.
+- **`krokai quote "<a quotation>"`** to check one, right now.
+- **`krokai close`** at the end of a working session.
+- **`krokai gate <file>`** before pasting anything into another AI — it blocks credentials outright
   and personal identifiers unless overridden, and it reports the kind and the line, never the value.
 - The quote bank is **theirs**. Nothing writes to it automatically. The queue asks the question; the
   bank stores the answer, including the mandatory line **what this quotation does NOT prove**.

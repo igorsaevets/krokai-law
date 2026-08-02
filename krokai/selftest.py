@@ -11,7 +11,7 @@ WHY IT MUST NOT TOUCH THE NETWORK
 ----------------------------------
 The suite promises it contacts no vendor. That promise is what lets it run in CI with no
 credentials, and what makes it safe to run against a matter under privilege. Live probing lives in
-`lawverbatim doctor`, which says out loud what it touched.
+`krokai doctor`, which says out loud what it touched.
 
 🔴 EXPECTATIONS ARE DERIVED, NOT COPIED
 ----------------------------------------
@@ -112,13 +112,13 @@ def build_corpus(tmp):
         "We think the rule says something entirely invented for this test, verbatim and unique.")
     # A stub: present, tiny, useless. Must be reported, not silently indexed.
     io.open(os.path.join(law, "chapter-11-stub.md"), "w", encoding="utf-8").write("# placeholder\n")
-    from lawverbatim.corpus import Corpus
+    from krokai.corpus import Corpus
     return Corpus([law], quiet=True), law
 
 
 # ------------------------------------------------------------------------------------------------
 def suite_normalise():
-    from lawverbatim.normalize import normalise, dehyph, alnum, latin_share, strip_markdown
+    from krokai.normalize import normalise, dehyph, alnum, latin_share, strip_markdown
 
     ok("normalise: line wrap collapses",
        normalise("on March\n9, 2020") == "on March 9, 2020")
@@ -147,7 +147,7 @@ def suite_normalise():
 
 
 def suite_extract():
-    from lawverbatim.extract import extract_quotes, blocks
+    from krokai.extract import extract_quotes, blocks
 
     doc = ('Intro paragraph.\n\n'
            '> «Family ties to the United States\n'
@@ -195,7 +195,7 @@ def suite_corpus(corpus, law):
 
 
 def suite_verify(corpus):
-    from lawverbatim.verify import check
+    from krokai.verify import check
 
     v, _w, _d = check("certified by a designated school official to consist of at least eighteen "
                       "clock hours of attendance a week", corpus)
@@ -252,7 +252,7 @@ def suite_verify(corpus):
 
 
 def suite_word_diff():
-    from lawverbatim.verify import word_diff
+    from krokai.verify import word_diff
     changed, hits, unaligned = word_diff(
         "the officer shall approve the application in every case",
         "the officer shall not approve the application in every case")
@@ -271,7 +271,7 @@ def suite_word_diff():
 
 
 def suite_citations():
-    from lawverbatim.citations import load_packs, available_packs
+    from krokai.citations import load_packs, available_packs
 
     # Derived, not copied: adding a pack must not turn this red.
     names = available_packs()
@@ -300,8 +300,8 @@ def suite_citations():
 
 
 def suite_address(corpus, law):
-    from lawverbatim.citations import load_packs
-    from lawverbatim.address import KeyMap, address_check
+    from krokai.citations import load_packs
+    from krokai.address import KeyMap, address_check
 
     packs = load_packs(["us-federal", "us-immigration"])
     km = KeyMap(corpus, packs)
@@ -327,7 +327,7 @@ def suite_address(corpus, law):
 
 
 def suite_redact():
-    from lawverbatim.redact import self_test, gate, scan, SECRET_PATTERNS, PII_PATTERNS
+    from krokai.redact import self_test, gate, scan, SECRET_PATTERNS, PII_PATTERNS
     out = []
     ok("gate: all detectors have probes and no negative control fires",
        self_test(printer=out.append), " ".join(out))
@@ -351,7 +351,7 @@ def suite_redact():
 
 
 def suite_mutations(corpus):
-    from lawverbatim.mutations import run
+    from krokai.mutations import run
     reg = [p for p in corpus.paths if "214" in os.path.basename(p)][0]
     man = [p for p in corpus.paths if "PM" in os.path.basename(p)][0]
     # Two base quotations chosen so that between them EVERY mutation is applicable: a modal without
@@ -376,7 +376,7 @@ def suite_mutations(corpus):
 
 
 def suite_prompts():
-    from lawverbatim.prompts import build_brief, anchor_warnings, QUOTE_RULES
+    from krokai.prompts import build_brief, anchor_warnings, QUOTE_RULES
 
     b = build_brief("What does the rule say?", marker="DONE-1")
     ok("brief: carries the fabrication rule", "worse than a refusal" in b.lower())
@@ -403,11 +403,11 @@ def suite_prompts():
        any("IN FULL" in why for why, _f in anchor_warnings(
            'The rule says "the officer may provide a simple statement of the reasons" - check it.')))
     ok("brief: every required-phrase entry declares when it applies",
-       all(len(e) == 3 for e in __import__("lawverbatim.prompts", fromlist=["x"]).REQUIRED_PHRASES))
+       all(len(e) == 3 for e in __import__("krokai.prompts", fromlist=["x"]).REQUIRED_PHRASES))
 
 
 def suite_bank(tmp):
-    from lawverbatim.bank import candidates, in_bank, append_queue, queue_open_items
+    from krokai.bank import candidates, in_bank, append_queue, queue_open_items
 
     text = ('We rely on «an applicant shall not be admitted to the United States unless he '
             'establishes eligibility» and on our own Russian gloss «это наш комментарий '
@@ -432,7 +432,7 @@ def suite_bank(tmp):
 
 
 def suite_config(tmp):
-    from lawverbatim.config import Config, find_config, TEMPLATE
+    from krokai.config import Config, find_config, TEMPLATE
     import json as _j
     root = os.path.join(tmp, "matter")
     os.makedirs(os.path.join(root, "sub", "deeper"), exist_ok=True)
@@ -448,7 +448,7 @@ def suite_config(tmp):
 
 
 def suite_install(tmp):
-    from lawverbatim.install import build_block, merge
+    from krokai.install import build_block, merge
 
     hooks_dir = os.path.join(tmp, "hooks")
     block = build_block(hooks_dir, "python")
@@ -473,7 +473,7 @@ def suite_install(tmp):
 
 
 def suite_verdicts():
-    from lawverbatim.verdicts import ORDER, LABEL, MEANING, DANGEROUS, CLEAN
+    from krokai.verdicts import ORDER, LABEL, MEANING, DANGEROUS, CLEAN
     for lang in LABEL:
         missing = [v for v in ORDER if v not in LABEL[lang]]
         ok("verdicts: every verdict has a %s label" % lang, not missing, str(missing))
@@ -490,7 +490,7 @@ def suite_consult(tmp):
     import io as _io
     import json as _json
     import re as _re
-    from lawverbatim import consult as C
+    from krokai import consult as C
 
     reg = C.load_registry()
     chans = reg.get("channels") or {}
@@ -509,7 +509,7 @@ def suite_consult(tmp):
     ok("consult: no metered channel ships switched ON", not metered_on, str(metered_on))
     # A key belongs in the environment. A registry that ships one is a registry that gets committed.
     blob = _json.dumps(reg)
-    from lawverbatim.redact import scan as _scan
+    from krokai.redact import scan as _scan
     ok("consult: the shipped registry contains no secret-shaped value",
        not [f for f in _scan(blob, "channels.json") if f[0] == "SECRET"])
 
@@ -605,7 +605,7 @@ def main():
     if root not in sys.path:
         sys.path.insert(0, root)
 
-    tmp = tempfile.mkdtemp(prefix="lawverbatim-selftest-")
+    tmp = tempfile.mkdtemp(prefix="krokai-selftest-")
     try:
         corpus, law = build_corpus(tmp)
         suite_normalise()

@@ -16,7 +16,7 @@ answers/
 .playwright-mcp/
 
 # Local state written by the hooks
-.lawverbatim/
+.krokai/
 *.backup-*
 
 # Python

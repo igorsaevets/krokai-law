@@ -1,8 +1,8 @@
-# lawverbatim
+# KrokAI Law
 
 **Your AI quoted a law. Is the quote real?**
 
-`lawverbatim` checks every quotation in your documents against the actual text of the law, on your own
+**KrokAI Law** checks every quotation in your documents against the actual text of the law, on your own
 disk, and tells you which ones are wrong — before anything is filed, sent, or relied on.
 
 It is built for people who work with an AI assistant on legal material: immigration attorneys and
@@ -56,7 +56,7 @@ downloaded. Not "is it roughly right" — is the string there.
 said*. If your document cites one provision and the sentence lives in another, you are told.
 
 **3. Checks what comes next.** The most expensive defect in legal drafting is a quotation that is
-exactly right and stops one clause too early. `lawverbatim` reads what follows the quotation in the
+exactly right and stops one clause too early. `krokai` reads what follows the quotation in the
 source and flags it when the next words are `but`, `unless`, `except`, `provided that`.
 
 **4. Keeps the sources.** A quote bank of everything you have personally opened and confirmed, and
@@ -64,7 +64,7 @@ an index of your downloaded law. Because "I could not find it" is only meaningfu
 whether you ever downloaded it.
 
 **5. Asks other models, and distrusts them too.** One model can be confidently, fluently wrong.
-`lawverbatim review` sends the same question to several — using the AI subscriptions you already pay
+`krokai review` sends the same question to several — using the AI subscriptions you already pay
 for, no API key needed — and then runs **their** quotations through the same checker as your own.
 That last step is the point: a reviewer's answer is input, not evidence.
 
@@ -98,7 +98,7 @@ So the reviewers' answers go through the same checker your own drafts do. **This
 orchestration tool structurally cannot perform** — it has your question and their answers, but not
 your corpus.
 
-If you already run a dedicated multi-model tool, `lawverbatim` hands it the same gated brief and
+If you already run a dedicated multi-model tool, `krokai` hands it the same gated brief and
 audits everything it brings back. If you do not, the built-in channels run on the subscriptions you
 already have. Either way the command works, because a feature that requires installing a second,
 differently-named program is a feature most people will never actually have.
@@ -132,15 +132,15 @@ entire argument for the hooks, and it is why this is a tool and not a checklist.
 ## Install in about a minute
 
 ```bash
-git clone https://github.com/<owner>/lawverbatim
+git clone https://github.com/<owner>/krokai
 cd /path/to/your/matter
-python /path/to/lawverbatim/lawverbatim init .
+python /path/to/krokai/krokai init .
 ```
 
 Then put your downloaded statutes, regulations and decisions in `law/`, your drafts in `case/`, and:
 
 ```bash
-python -m lawverbatim check
+python -m krokai check
 ```
 
 **No programming needed, no account, no API key, nothing leaves your machine.** Four install

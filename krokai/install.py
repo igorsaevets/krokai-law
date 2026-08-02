@@ -34,7 +34,7 @@ import shutil
 import sys
 import time
 
-MARKER = "lawverbatim"
+MARKER = "krokai"
 
 EVENTS = [
     ("PostToolUse", "Edit|Write|NotebookEdit|MultiEdit", "quote_guard.py", 20,
@@ -161,6 +161,6 @@ def main(a):
 🔴 settings.json is read when a SESSION STARTS. These hooks do nothing in the session that
    installed them. Start a new session, then confirm with:
 
-       python -m lawverbatim doctor
+       python -m krokai doctor
 """)
     return 0

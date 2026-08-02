@@ -46,7 +46,7 @@ DEFAULTS = {
 }
 
 TEMPLATE = {
-    "_doc": "Configuration for the lawverbatim legal-citation toolkit. Paths are relative to this file.",
+    "_doc": "Configuration for the krokai legal-citation toolkit. Paths are relative to this file.",
 
     "_sources": "Folders holding PRIMARY SOURCES ONLY - statutes, regulations, decisions, agency "
                 "manuals as published. 🔴 Never put your own analysis here: a quotation copied out "
@@ -74,7 +74,7 @@ TEMPLATE = {
     "_library_index": "One line per downloaded source. Checked BEFORE any web search.",
     "library_index": "law/INDEX.md",
 
-    "_citation_packs": "Which bodies of law you cite. Run `lawverbatim packs` to list what ships.",
+    "_citation_packs": "Which bodies of law you cite. Run `krokai packs` to list what ships.",
     "citation_packs": ["us-federal"],
 
     "language": "en",
@@ -141,7 +141,7 @@ class Config(object):
         if c:
             return self.abs(c)
         import tempfile
-        return os.path.join(tempfile.gettempdir(), "lawverbatim-corpus-cache")
+        return os.path.join(tempfile.gettempdir(), "krokai-corpus-cache")
 
     def missing_paths(self):
         """Configured folders that do not exist.
@@ -167,7 +167,7 @@ def load(start=None, required=True):
             return None
         raise SystemExit(
             "no %s found in this folder or any parent.\n"
-            "Run:  lawverbatim init\n"
+            "Run:  krokai init\n"
             "It writes a commented %s and the folder skeleton next to it." % (CONFIG_NAME, CONFIG_NAME))
     with open(p, encoding="utf-8") as fh:
         return Config(json.load(fh), p)

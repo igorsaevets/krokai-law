@@ -1,5 +1,5 @@
 {
-  "_doc": "Which outside models to ask, and how to reach them. Adding, disabling or re-pointing a channel is a change HERE, never in the code. Copy this file next to your casefile.json to override it for one matter; `lawverbatim consult --registry <path>` overrides it for one run.",
+  "_doc": "Which outside models to ask, and how to reach them. Adding, disabling or re-pointing a channel is a change HERE, never in the code. Copy this file next to your casefile.json to override it for one matter; `krokai consult --registry <path>` overrides it for one run.",
 
   "_why_a_file": "Every value in here rotates. Model names change monthly, a weekly subscription limit runs out mid-round, a vendor renames a flag. Measured on the system this was extracted from: two review CLIs changed their model identifier inside one week, and a document that asserted the old one read as documentation rather than as stale. Configuration rots visibly; code rots silently.",
 
@@ -50,7 +50,7 @@
       "bin_env": "AGY_BIN",
       "prompt": "file",
       "argv": ["-p", "{prompt_file}", "--add-dir", "{workdir}"],
-      "_disabled_because": "Off by default because its flag set is the one that changes most and a wrong flag here exits non-zero in three seconds. Turn it on once `lawverbatim doctor --channels` reports it green on YOUR machine. Two traps if you do: a permission denial makes it discard the whole run while still exiting 0 with SUCCESS, and `--mode` is unvalidated so it is not the read-only guarantee it looks like.",
+      "_disabled_because": "Off by default because its flag set is the one that changes most and a wrong flag here exits non-zero in three seconds. Turn it on once `krokai doctor --channels` reports it green on YOUR machine. Two traps if you do: a permission denial makes it discard the whole run while still exiting 0 with SUCCESS, and `--mode` is unvalidated so it is not the read-only guarantee it looks like.",
       "notes": "Large-context reading and tie-breaking."
     },
 
@@ -91,8 +91,8 @@
       "cost": "metered",
       "retains": "unknown",
       "telemetry": false,
-      "base_url_env": "LAWVERBATIM_HTTP_BASE",
-      "key_env": "LAWVERBATIM_HTTP_KEY",
+      "base_url_env": "KROKAI_HTTP_BASE",
+      "key_env": "KROKAI_HTTP_KEY",
       "model": "set-me",
       "_key_handling": "The key is read from the named environment variable at call time and never written here, never printed, never logged. This file is safe to commit; a file with a key in it is not.",
       "_metered_warning": "🔴 The only metered kind that ships. If you have a subscription to the same model, use the CLI channel instead: a subscription is several times cheaper than the same tokens through an API, and it cannot run up a bill you did not plan.",
@@ -112,7 +112,7 @@
         "~/tools/ai-second-opinion/orchestrate.py",
         "./ai-second-opinion/orchestrate.py"
       ],
-      "env": "LAWVERBATIM_REVIEW_HARNESS",
+      "env": "KROKAI_REVIEW_HARNESS",
       "notes": "If you already run a dedicated orchestration tool, this hands it the same gated brief and then audits everything it brings back. Preferred over the built-in transports when present: it has more channels and better telemetry. When it is absent the built-in CLI channels above still work, so this toolkit is never a dead feature."
     }
   },

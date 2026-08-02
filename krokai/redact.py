@@ -112,23 +112,59 @@ PII_PATTERNS = [
         r"(?i)\b(?:account|acct|routing)\s*(?:no|number|#)?\.?\s*[:#]?\s*\d{6,17}(?!\d)")),
     ("UNIT_NUMBER", re.compile(
         r"(?i)\b(?:apt|apartment|unit|suite|ste)\.?\s*#?\s*[A-Za-z]?\d{1,5}[A-Za-z]?(?!\w)")),
+    # 🔴 THE HOUSE NUMBER, AND ONLY THE NUMBER. Added 2026-08-02 on Igor's correction: the earlier
+    # rule cut the apartment and left the street number standing, which is half a job - a street
+    # number plus a street name is a mailable address. The street NAME, the city and the ZIP stay,
+    # deliberately: a reviewer cannot check "is this neighbourhood inside the city limits" against
+    # `[ADDRESS]`, and that class of check is a large part of why a document is sent out at all.
+    ("HOUSE_NUMBER", re.compile(
+        r"(?<!\w)\d{1,6}(?:-\d{1,4})?(?=\s+(?:[NSEW]\.?\s+)?[A-Z][A-Za-z'.\-]+"
+        r"(?:\s+[A-Z][A-Za-z'.\-]+){0,3}\s+"
+        r"(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Ct|Court|Pl|Place|"
+        r"Way|Ter|Terrace|Pkwy|Parkway|Cir|Circle|Hwy|Highway)\b)")),
 ]
 
+# ------------------------------------------------------------------------------------------------
+# 🔴 NAMES: THE SURNAME GOES, THE GIVEN NAME STAYS - AND THIS CANNOT BE A REGEX.
+#
+# Igor, 2026-08-02: «не удалял в полностью имя и фамилию, а только фамилию удалил… Что бы ИИ было
+# больше контекста, иногда важно в каком городе человек, от этого многое зависит.»
+#
+# No pattern can tell a surname from a given name, and one that guesses will cut the wrong token in
+# a document full of judges', agencies' and statutes' names. So the surnames are CONFIGURED, in
+# `casefile.json`, per matter - the one place that already knows whose matter this is.
+#
+# What this buys, and it is the whole point: a reviewer that sees `Maria [SURNAME], Studio City,
+# 91604` can still reason about who the person is, where they live, which office has jurisdiction
+# and which local rule applies. A reviewer that sees `[NAME], [ADDRESS]` can reason about none of
+# it, and will answer the general question instead of the one that was asked.
+# ------------------------------------------------------------------------------------------------
+def name_patterns(surnames):
+    """Build detectors for the surnames this matter must not send. Case-insensitive, whole word."""
+    out = []
+    for s in surnames or []:
+        s = (s or "").strip()
+        if len(s) < 2:
+            continue                       # a one-letter "surname" would redact half the document
+        out.append(("SURNAME", re.compile(r"(?i)(?<!\w)%s(?:'s)?(?!\w)" % re.escape(s))))
+    return out
 
-def scan(text, name="payload"):
+
+def scan(text, name="payload", surnames=()):
     """Return `[(severity, kind, name, line_number), ...]`. Never the matched value."""
     out = []
+    pii = list(PII_PATTERNS) + name_patterns(surnames)
     for lineno, line in enumerate((text or "").splitlines(), 1):
         for kind, rx in SECRET_PATTERNS:
             if rx.search(line):
                 out.append(("SECRET", kind, name, lineno))
-        for kind, rx in PII_PATTERNS:
+        for kind, rx in pii:
             if rx.search(line):
                 out.append(("PII", kind, name, lineno))
     return out
 
 
-def scrub(text):
+def scrub(text, surnames=()):
     """Replace every match with a fixed-width marker.
 
     🔴 Apply this at the **logging choke point**, not to the output file. Measured: a diagnostics
@@ -139,8 +175,11 @@ def scrub(text):
     s = text or ""
     for kind, rx in SECRET_PATTERNS:
         s = rx.sub("[REDACTED:%s]" % kind, s)
-    for kind, rx in PII_PATTERNS:
-        s = rx.sub("[REDACTED:%s]" % kind, s)
+    for kind, rx in list(PII_PATTERNS) + name_patterns(surnames):
+        # 🔴 The marker names the KIND, so the reader of the sent copy can tell a removed surname
+        # from a removed account number. A uniform `[REDACTED]` turns a document into a puzzle and
+        # invites the reviewer to guess what was there.
+        s = rx.sub("[%s]" % kind, s)
     return s
 
 
@@ -213,6 +252,8 @@ POSITIVE = {
     "PAYMENT_CARD": "4111 1111 1111 1111",
     "BANK_ACCOUNT": "account no. 000123456789",
     "UNIT_NUMBER": "732 S Spring St Apt 1204",
+    # Cuts the number, keeps `S Spring St` - the street is geography, the number is a doorway.
+    "HOUSE_NUMBER": "732 S Spring St",
 }
 
 # 🔴 Negative controls. Every one of these is a sentence that a real document legitimately contains

@@ -5,7 +5,7 @@
 **A change to a detector or a verdict comes with the case that motivated it.**
 
 Not a description of the case — the text. A quotation, the source text it should have matched, and
-the verdict it produces now. That case becomes a permanent check in `lawverbatim/selftest.py`.
+the verdict it produces now. That case becomes a permanent check in `krokai/selftest.py`.
 
 The reason is in the project's own history: every rule in this codebase whose reason was written down
 survived, and the ones that were not got "simplified" back out by someone who could not see what they
@@ -15,14 +15,14 @@ a wrong conclusion.
 ## Before opening a pull request
 
 ```bash
-python -m lawverbatim selftest        # must be N/N
-python -m lawverbatim gate --self-test
+python -m krokai selftest        # must be N/N
+python -m krokai gate --self-test
 ```
 
 If you touched `verify.py`, also run the regression bank against a real corpus:
 
 ```bash
-python -m lawverbatim mutate --limit 60
+python -m krokai mutate --limit 60
 ```
 
 The number that matters is not the catch rate. It is whether your change **increased** the

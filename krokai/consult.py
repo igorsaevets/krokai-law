@@ -163,7 +163,7 @@ def find_harness(reg, explicit=None):
     ch = (reg.get("channels") or {}).get("harness") or {}
     if explicit:
         return explicit if os.path.exists(explicit) else None
-    env = os.environ.get(ch.get("env") or "LAWVERBATIM_REVIEW_HARNESS")
+    env = os.environ.get(ch.get("env") or "KROKAI_REVIEW_HARNESS")
     if env and os.path.exists(env):
         return env
     for c in ch.get("candidates") or []:
@@ -565,7 +565,7 @@ def write_analytics(path, rows, seconds, brief_sha, lang="en"):
     defect written to disk by the run that found it just sits there being true. This file is the
     difference between "I recall that channel grounding on a blog" and "the round says so, dated."
     """
-    L = ["<!-- lawverbatim: instrument report about the REVIEWERS. Not a source of law. -->",
+    L = ["<!-- krokai: instrument report about the REVIEWERS. Not a source of law. -->",
          "# Round analytics", "",
          "%d channel(s) in %.1f s. Brief sha256 `%s`." % (len(rows), seconds, brief_sha[:16]),
          "",
@@ -613,7 +613,7 @@ def write_analytics(path, rows, seconds, brief_sha, lang="en"):
 
     L += ["---", "",
           "🔴 Nothing here says whether the answers are RIGHT. It says whether the instruments "
-          "worked. Run `lawverbatim review --audit <folder>` to check the quotations themselves "
+          "worked. Run `krokai review --audit <folder>` to check the quotations themselves "
           "against your own corpus - that is the step this report does not perform.", ""]
     io.open(path, "w", encoding="utf-8", newline="\n").write("\n".join(L))
     return path
@@ -642,7 +642,7 @@ def neutral_cwd(printer=print):
     "NOTHING IN CONTEXT". Every path this module builds is absolute by the time it is used.
     """
     scratch = os.path.join(os.environ.get("TEMP") or os.environ.get("TMPDIR") or ".",
-                           "lawverbatim-neutral-cwd")
+                           "krokai-neutral-cwd")
     os.makedirs(scratch, exist_ok=True)
     try:
         os.chdir(scratch)
@@ -716,9 +716,9 @@ def run_round(reg, system, brief, out_dir, marker="REVIEW-COMPLETE", only=(), sk
         printer("That is a statement about this machine, not about the world:")
         printer("  * install one of the command-line tools above, or")
         printer("  * set %s to your own harness, or" % (
-            (reg.get("channels", {}).get("harness") or {}).get("env") or "LAWVERBATIM_REVIEW_HARNESS"))
-        printer("  * run `lawverbatim brief` and paste it into each model by hand, then")
-        printer("    `lawverbatim consult --audit <folder>` - which is the step that matters.")
+            (reg.get("channels", {}).get("harness") or {}).get("env") or "KROKAI_REVIEW_HARNESS"))
+        printer("  * run `krokai brief` and paste it into each model by hand, then")
+        printer("    `krokai consult --audit <folder>` - which is the step that matters.")
         return [], out_dir
 
     out_dir = os.path.abspath(out_dir)
@@ -811,7 +811,7 @@ def run_round(reg, system, brief, out_dir, marker="REVIEW-COMPLETE", only=(), sk
     printer("ledger appended (hashes only, never the text): %s" % os.path.abspath(lp))
     printer("")
     printer("🔴 NOTHING ABOVE SAYS THE ANSWERS ARE RIGHT. Now check their quotations:")
-    printer("     lawverbatim review --audit %s" % out_dir)
+    printer("     krokai review --audit %s" % out_dir)
     printer("   Report per channel what you ACCEPTED, what you REJECTED with proof, and where they")
     printer("   disagreed with each other. The disagreement is the product.")
     return rows, out_dir
