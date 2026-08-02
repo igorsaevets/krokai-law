@@ -1,0 +1,41 @@
+# A matter's own files never belong in this repository. Listed first because that is the mistake
+# with consequences: this tool is used on privileged material.
+casefile.json
+law/
+case/
+guides/
+research/
+reports/
+reviews/
+answers/
+*.text.md
+
+# Browser-automation debris. 🔴 Named explicitly: in a different project a folder like this held
+# 497 KB of live session URLs with a token in the query string, and it was one `git add -A` away
+# from being published.
+.playwright-mcp/
+
+# Local state written by the hooks
+.verbatim/
+*.backup-*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Anything credential-shaped, belt and braces
+.env
+.env.*
+*.pem
+*.key

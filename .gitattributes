@@ -1,0 +1,9 @@
+# Normalise to LF in the repository. Written before the first commit, because a repository that
+# stores CRLF hands a Windows-authored file to a macOS or Linux user with visible `^M` at every
+# line end - and, for anything executable, a shebang line that the kernel cannot parse.
+* text=auto eol=lf
+
+# JSON packs are read by the toolkit on every platform; keep them byte-identical everywhere.
+*.json text eol=lf
+*.py   text eol=lf
+*.md   text eol=lf

@@ -1,0 +1,64 @@
+<!--
+Paste this into the CLAUDE.md / AGENTS.md of a matter that uses `verbatim`.
+
+🔴 Keep it SHORT. This file is loaded in full on every request and competes for attention with the
+task in front of the assistant. The long-form reasoning belongs in the toolkit's own FEATURES.md,
+which is read on demand.
+
+🔴 And do not rely on it. The single most useful measurement behind this toolkit is that an
+instruction of exactly this kind was obeyed while the task was about checking and NOT ONCE across
+three rounds where the task was strategy. Rules fire by topic, not by rule. This text is a
+convenience; the hooks are the mechanism. Install them.
+-->
+
+## Quotations of law — how this matter works
+
+Sources live in `law/` and are **primary sources only**. Never put analysis, memos or reviewers'
+answers there: a quotation copied out of your own memo would verify against your own memo, and a
+mistake made once would validate itself forever.
+
+**Before any web search, open `law/INDEX.md`.** Everything listed is already on disk in full text.
+
+**Downloaded a source? Save it** — into `law/` *and* as a line in the index. A source that is not
+indexed gets downloaded again next round, and its absence turns an honest quotation into a
+`NOT_FOUND` that reads like a fabrication.
+
+**A quotation entering a filed document gets checked at the moment it is entered**, not at the end of
+the round — and three things are checked, not one:
+
+1. is the phrase in the source at all;
+2. is the **address** printed beside it correct;
+3. 🔴 was a **condition** cut off (`If` / `Where` / `Unless` / `provided that` / `, but`).
+
+```
+python -m verbatim quote "<the quotation>"     one, right now
+python -m verbatim check                        everything, before anything is filed
+python -m verbatim close                        end of session
+python -m verbatim gate <file>                  before pasting anything into another AI
+```
+
+### 🔴 `NOT_FOUND` is not `INVENTED` — four causes, in this order
+
+1. **The corpus is incomplete.** It is a set of downloads and can be silently missing text. Open the
+   live page.
+2. **The extraction is broken.** Check with a second PDF engine — one splits words (`resu lt`) while
+   the PDF has them whole.
+3. **Your own normalisation.** Strip the blockquote marker, the bold, the line wrap, and re-search.
+4. Only now: the quotation is altered.
+
+Ruling these out in order is the difference between fixing a document and corrupting a correct one.
+
+### The quote bank
+
+`case/QUOTE-BANK.md` holds only quotations someone has **personally opened in the source**. Every
+entry carries its address, where the source sits on disk, how to re-check it, and the mandatory line
+**what this quotation does NOT prove**.
+
+`case/QUOTE-QUEUE.md` is written automatically and is a list of undone work, not a second bank. The
+decision — does this matter need the quotation — stays with a person.
+
+### Scans
+
+Files with no text layer are listed by `verbatim sidecar`. 🔴 **Never read a scan with a language
+model.** It produces plausible text, the plausible text becomes a quotation, and the quotation is
+then treated as the primary source. Hand the list to a person with an OCR engine.

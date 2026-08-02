@@ -1,0 +1,71 @@
+{
+  "id": "us-tax",
+  "name": "US federal tax: Internal Revenue Code, Treasury regulations, IRS guidance, Tax Court",
+  "_doc": "Shipped as the second worked example, so that 'packs are pluggable' is a demonstrated claim and not a promise. It is also the body of law a founder is most likely to be arguing about. Load ALONGSIDE us-federal.",
+
+  "primary_hint": "I\\.?R\\.?C|26\\s*U\\.?\\s?S\\.?\\s?C|Treas\\.?\\s?Reg|26\\s*C\\.?\\s?F\\.?\\s?R|Rev\\.?\\s?(?:Rul|Proc)|T\\.?\\s?C\\.?\\s|\\bPLR\\b|Notice\\s+\\d{4}-\\d",
+
+  "aliases": {
+    "_doc": "IRC § 162 IS 26 U.S.C. § 162 — the same provision under two names, exactly like INA/8 U.S.C. No map is needed because the section numbers are identical; only the title prefix is added. Absence of a `map` key means pass the captured value straight through.",
+    "irc": {"to_kind": "usc", "to_prefix": ["26"], "on": 0},
+    "treasreg": {"to_kind": "cfr", "to_prefix": ["26"], "on": 0}
+  },
+
+  "shapes": [
+    {
+      "_what": "IRC § 162(a) / I.R.C. § 1202 — becomes ('usc','26',<section>).",
+      "regex": "\\b(?:I\\.?\\s?R\\.?\\s?C\\.?)\\s*§*\\s*(\\d+[A-Za-z]?)(?:\\([^()\\s]{1,8}\\))*",
+      "address": {"kind": "irc", "groups": [1], "label": "I.R.C. § %s"}
+    },
+    {
+      "_what": "Treas. Reg. § 1.162-4 — the part number is what precedes the first dot (here, 1).",
+      "regex": "\\bTreas\\.?\\s?Reg\\.?\\s*§*\\s*(\\d{1,3})\\.[\\d-]+(?:\\([^()\\s]{1,8}\\))*",
+      "address": {"kind": "treasreg", "groups": [1], "label": "Treas. Reg. part %s"}
+    },
+    {
+      "_what": "Rev. Rul. 99-6 / Rev. Proc. 2024-12 — published IRS guidance.",
+      "regex": "\\bRev\\.?\\s?(Rul|Proc)\\.?\\s*(\\d{2,4})-(\\d{1,3})",
+      "address": {
+        "kind": "revguide",
+        "groups": [1, 2, 3],
+        "label": "Rev. %s. %s-%s",
+        "file_match": [
+          {"where": "filename_flat", "all": ["{g2}{g3}"], "any": ["rev", "rul", "proc"]},
+          {"where": "body", "regex_all": [
+            {"pattern": "Rev\\.?\\s?{g1}\\.?\\s*{g2}-{g3}", "min_count": 1}]}
+        ]
+      }
+    },
+    {
+      "_what": "Notice 2023-64 / Announcement 2024-3.",
+      "regex": "\\b(?:Notice|Announcement)\\s+(\\d{4})-(\\d{1,3})",
+      "address": {
+        "kind": "irsnotice",
+        "groups": [1, 2],
+        "label": "Notice %s-%s",
+        "file_match": [
+          {"where": "filename_flat", "all": ["{g1}{g2}"]},
+          {"where": "body", "regex_all": [
+            {"pattern": "(?:Notice|Announcement)\\s+{g1}-{g2}", "min_count": 1}]}
+        ]
+      }
+    },
+    {
+      "_what": "142 T.C. 1 / T.C. Memo. 2019-134 — Tax Court. Recognised as a neighbour citation; the address of a case is its party names, which us-federal supplies.",
+      "regex": "\\b(?:\\d{1,3}\\s+T\\.?\\s?C\\.?\\s+\\d+|T\\.?\\s?C\\.?\\s?Memo\\.?\\s*\\d{4}-\\d{1,3})"
+    },
+    {
+      "_what": "PLR 202412008 — a private letter ruling. 🔴 Recognised on purpose so that the report can show it, because IRC § 6110(k)(3) says it may not be used or cited as precedent. Seeing it in a draft is the point.",
+      "regex": "\\bPLR\\s*(\\d{9,11})",
+      "address": {
+        "kind": "plr",
+        "groups": [1],
+        "label": "PLR %s (NOT precedent - IRC 6110(k)(3))",
+        "file_match": [
+          {"where": "filename_flat", "all": ["{g1}"]},
+          {"where": "body", "regex_all": [{"pattern": "{g1}", "min_count": 1}]}
+        ]
+      }
+    }
+  ]
+}
