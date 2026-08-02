@@ -248,5 +248,9 @@ Recorded because a changelog that lists only features is a sales document.
   scan to skip `LICENSE`.
 
 [0.3.0]: https://github.com/igorsaevets/krokai-law/releases/tag/v0.3.0
-[0.2.0]: https://github.com/igorsaevets/krokai-law/releases/tag/v0.2.0
-[0.1.0]: https://github.com/igorsaevets/krokai-law/releases/tag/v0.1.0
+[0.2.0]: https://github.com/igorsaevets/krokai-law/commit/8c6648c
+[0.1.0]: https://github.com/igorsaevets/krokai-law/commit/002f6d1
+
+0.1.0 and 0.2.0 link to commits, not to releases: they were real states of this repository
+and they were never published, so a release tag for either would be a link to something that
+does not exist. 0.3.0 is the first published version.
