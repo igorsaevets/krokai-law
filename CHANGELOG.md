@@ -10,6 +10,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.3.1] — 2026-08-02
+
+Everything the tag `v0.3.0` did not contain, because a changelog entry describing code its own tag
+never held is the same defect 0.3.0 was about.
+
+### Added
+
+- **Continuous integration** — this project's argument for its hooks, turned on itself: *run the
+  suite before you push* is a rule, and rules fire by topic. No secret, no vendor. It settles two
+  claims no local run can: the **Python 3.9 floor** `INSTALL.md` states and nothing had ever
+  verified (green on a real 3.9.25 runner), and the suite on a machine with **no PDF or .docx
+  library** — the state a locked-down work laptop is actually in. Five jobs, Ubuntu 3.9/3.11/3.13
+  and Windows 3.13.
+- **A build badge**, which is the opposite of the numbers this release spent its time deleting: a
+  claim with an error signal. If the suite breaks, the front page says so without anyone editing it.
+- **An issue form for a wrong verdict**, asking for the four things that make one reproducible. The
+  README asked for them in prose already; a form is a mechanism.
+
+### Fixed
+
+- 🔴 **`README.ru.md` was two sections behind `README.md`** — the second-opinion architecture, and
+  worse, the **prior-art table**. That is not a translation gap: a Russian reader was shown a tool
+  with no precedent and no invitation to name one. Both sections are written, and a test now requires
+  the two versions to credit the same outside projects. The negative control names `eyecite` and
+  `citereview` by URL when the table is removed.
+- 🔴 **The CI step checking that `doctor`'s status agrees with its exit code died on its own first
+  run**, and the tool was fine. GitHub runs `bash -e`, so `cmd; rc=$?` aborts the step the instant
+  cmd is non-zero — before the line that would have reported it. **A check that captures an exit
+  code cannot fail informatively under `-e`; it can only vanish.** `cmd || rc=$?` is the form that
+  works.
+- `actions/checkout` and `actions/setup-python` were pinned three majors back, and the runner was
+  already printing a deprecation notice — a version written down once and never asked about again.
+
 ## [0.3.0] — 2026-08-02
 
 The release made by re-reading what 0.2.0 said about itself before publishing it. Everything below
@@ -49,17 +82,6 @@ was found by checking the documents against the code, not by running the tool.
   every commit is a guard someone deletes.
 - **Rename safety as an assertion** rather than a memory: what gets stamped must carry the current
   name, and the previous name must still be recognised.
-- **Continuous integration**, which is this project's own argument for its hooks applied to itself:
-  *run the suite before you push* is a rule, and rules fire by topic. The workflow needs no secret
-  and touches no vendor. It also tests two claims no local run can: the **Python 3.9 floor** stated
-  in `INSTALL.md`, which nothing had ever verified, and the suite on a machine with **no PDF or
-  .docx library installed** — the state a locked-down work laptop is actually in.
-- **An issue form for a wrong verdict** that asks for the four things which make one reproducible.
-  The README already asked for them in prose; a form is a mechanism.
-- **Translation parity as a test.** 🔴 `README.ru.md` was two sections behind `README.md` — the
-  second-opinion architecture and, worse, the **prior-art table**. A Russian reader was shown a tool
-  with no precedent and no invitation to name one, which is not a translation gap but a different
-  claim. Both sections are written now, and the two versions must credit the same outside projects.
 
 ### Changed
 
@@ -258,6 +280,7 @@ Recorded because a changelog that lists only features is a sales document.
   and it shipped that way for the repository's entire life because a per-file allowlist told the leak
   scan to skip `LICENSE`.
 
+[0.3.1]: https://github.com/igorsaevets/krokai-law/releases/tag/v0.3.1
 [0.3.0]: https://github.com/igorsaevets/krokai-law/releases/tag/v0.3.0
 [0.2.0]: https://github.com/igorsaevets/krokai-law/commit/8c6648c
 [0.1.0]: https://github.com/igorsaevets/krokai-law/commit/002f6d1
