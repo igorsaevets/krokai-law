@@ -12,7 +12,7 @@ things that were pushed out of this program along with the transport were not tr
 
 * deciding whether an answer is usable at all;
 * deciding whether an answer's *sourcing* is usable, which is not the same question;
-* telling you what each vendor will receive, and what it keeps, BEFORE anything is sent;
+* naming every channel that will run, and what it costs, BEFORE anything is sent;
 * stopping your own instruction files from reaching the vendor in the first place.
 
 Those are all **trust** controls, the same family as "check the reviewer's quotations against the
@@ -24,9 +24,10 @@ So the line is now:
     a separate harness, if you have one  ->  TRANSPORT. Get answers back.
     this module                          ->  TRUST. What may go out, and what may be believed.
 
-Everything here happens in the round it belongs to. Nothing accumulates a history across rounds: a
-persistent dispatch ledger was built and cut - see the note further down - and the only durable
-artefacts are the answers themselves and the report about them, both inside the round's folder.
+Everything here happens in the round it belongs to and nothing outlives it. A dispatch ledger, a
+printed brief hash and a per-vendor retention column were each built and then cut - see the note
+further down. The only durable artefacts are the answers and the report about them, both inside the
+round's folder.
 
 And when no harness is installed, this module carries its own transport for command-line channels,
 because a feature that requires a second unpublished tool is a feature the reader does not have.
@@ -56,7 +57,6 @@ grader never reads prose at all. A code cannot collide with English.
 """
 from __future__ import annotations
 
-import hashlib
 import io
 import json
 import os
@@ -109,7 +109,6 @@ QUALITY_MEANING = {
     "NO_TELEMETRY": "this channel reports nothing about which pages it opened. The URL counts here "
                     "are therefore what the answer PRINTED, and printing is not opening",
     "SEARCH_NOT_USED": "the channel had search available and issued none, so its answer is recall",
-    "UNKNOWN_RETENTION": "it is not recorded whether this vendor keeps what you sent",
 }
 
 _URL_RE = re.compile(r"https?://[^\s<>\"'\)\]\},;]+", re.I)
@@ -227,7 +226,7 @@ def plan(reg, chosen, harness=None, delegating=None, allow_pii=False, printer=pr
 
     A plan is not decoration. Every paid channel in this design prints its resolved settings before
     it spends anything, because the failure this prevents - discovering after the bill that the
-    round ran with the wrong model, or that a vendor retains what you sent - cannot be undone by
+    round ran with the wrong model, or that a channel was not installed at all - cannot be undone by
     reading a log afterwards.
     """
     problems = []
@@ -246,8 +245,8 @@ def plan(reg, chosen, harness=None, delegating=None, allow_pii=False, printer=pr
     else:
         printer("  harness:  none installed here - using the built-in command-line transports")
     printer("")
-    printer("  %-9s %-4s %-10s %-6s %-12s %-8s %s" %
-            ("channel", "on?", "vendor", "how", "cost", "retains", "installed"))
+    printer("  %-9s %-4s %-12s %-6s %-13s %s" %
+            ("channel", "on?", "vendor", "how", "cost", "installed"))
     will_run = []
     for name, ch in sorted(chosen.items()):
         ready, why = "yes", ""
@@ -274,9 +273,8 @@ def plan(reg, chosen, harness=None, delegating=None, allow_pii=False, printer=pr
         on = "on" if ch.get("enabled") else "off"
         if ch.get("enabled") and ready == "yes":
             will_run.append(name)
-        printer("  %-9s %-4s %-10s %-6s %-12s %-8s %s %s" % (
-            name, on, (ch.get("vendor") or "-")[:10], kind, ch.get("cost") or "-",
-            (ch.get("retains") or "unknown")[:8], ready, why))
+        printer("  %-9s %-4s %-12s %-6s %-13s %s %s" % (
+            name, on, (ch.get("vendor") or "-")[:12], kind, ch.get("cost") or "-", ready, why))
     printer("")
     runners = sorted(will_run)
     if harness and delegating:
@@ -286,10 +284,6 @@ def plan(reg, chosen, harness=None, delegating=None, allow_pii=False, printer=pr
     metered = [n for n in will_run if chosen[n].get("cost") == "metered"]
     if metered:
         printer("  🔴 METERED and will run: %s. These bill per call." % ", ".join(sorted(metered)))
-    unknown = [n for n in will_run if (chosen[n].get("retains") or "unknown") == "unknown"]
-    if unknown:
-        printer("  ⚠️  retention not recorded for: %s" % ", ".join(sorted(unknown)))
-        printer("     Sending IS publishing. 'Not checked' is not 'no'.")
     if allow_pii:
         printer("  🔴 --allow-pii is on: personal identifiers WILL leave this machine.")
 
@@ -582,7 +576,7 @@ def grounding_of(result, g):
     return {"total": len(urls), **buckets}
 
 
-def triage(result, g, retains="unknown"):
+def triage(result, g):
     """FAILED / DIRTY / OK, read from codes and counts only. Never from prose."""
     ground = grounding_of(result, g)
     quality = list(result.get("quality") or [])
@@ -596,8 +590,6 @@ def triage(result, g, retains="unknown"):
                                     "; ".join(ground["nonauthoritative"][:3]))))
     if ground["total"] == 0 and (result.get("text") or "").strip():
         quality.append(("NO_URLS_CITED", ""))
-    if (retains or "unknown") == "unknown":
-        quality.append(("UNKNOWN_RETENTION", ""))
 
     verdict = "FAILED" if result.get("failures") else ("DIRTY" if quality else "OK")
     return verdict, quality, ground
@@ -614,7 +606,7 @@ def triage(result, g, retains="unknown"):
 # That is a check on THIS round. It is not a file that accumulates.
 
 
-def write_analytics(path, rows, seconds, brief_sha, lang="en"):
+def write_analytics(path, rows, seconds, lang="en"):
     """Write the instrument report to disk EVERY run, without being asked.
 
     A defect noticed in conversation has to be remembered and re-obeyed by whoever works next. A
@@ -623,13 +615,13 @@ def write_analytics(path, rows, seconds, brief_sha, lang="en"):
     """
     L = ["<!-- krokai: instrument report about the REVIEWERS. Not a source of law. -->",
          "# Round analytics", "",
-         "%d channel(s) in %.1f s. Brief sha256 `%s`." % (len(rows), seconds, brief_sha[:16]),
+         "%d channel(s) in %.1f s." % (len(rows), seconds),
          "",
          "`FAILED` no usable answer · `DIRTY` readable, sourcing suspect · `OK` nothing flagged.",
          "",
          "| channel | verdict | sec | answer B | URLs cited | official | of those, dated | "
-         "commentary | retains |",
-         "|---|---|---|---|---|---|---|---|---|"]
+         "commentary |",
+         "|---|---|---|---|---|---|---|---|"]
 
     def f(x):
         return "—" if x is None else x
@@ -641,10 +633,10 @@ def write_analytics(path, rows, seconds, brief_sha, lang="en"):
         # printed as `primary 0` - which reads as "cited no official source" and is simply false.
         # An annual edition is the codification; it is just not the text in force.
         dated = len(gr.get("snapshot") or [])
-        L.append("| %s | **%s** | %s | %s | %s | %s | %s | %s | %s |" % (
+        L.append("| %s | **%s** | %s | %s | %s | %s | %s | %s |" % (
             r["channel"], r["verdict"], f(r.get("seconds")), f(r.get("bytes")),
             gr.get("total", 0), len(gr.get("primary") or []) + dated, dated or "",
-            len(gr.get("nonauthoritative") or []) or "", r.get("retains") or "unknown"))
+            len(gr.get("nonauthoritative") or []) or ""))
 
     L += ["",
           "«—» means NOT MEASURED, never «zero».",
@@ -784,8 +776,7 @@ def run_round(reg, system, brief, out_dir, marker="REVIEW-COMPLETE", only=(), sk
     io.open(brief_path, "w", encoding="utf-8", newline="\n").write(brief)
     io.open(system_path, "w", encoding="utf-8", newline="\n").write(system)
 
-    brief_sha = hashlib.sha256(brief.encode("utf-8")).hexdigest()
-    printer("  brief sha256 %s  (%d chars)" % (brief_sha[:16], len(brief)))
+    printer("  brief: %d chars" % len(brief))
 
     origin = os.getcwd()
     neutral_cwd(printer=printer)
@@ -823,14 +814,14 @@ def run_round(reg, system, brief, out_dir, marker="REVIEW-COMPLETE", only=(), sk
         if r.get("text"):
             io.open(os.path.join(out_dir, name.upper() + ".md"), "w",
                     encoding="utf-8", newline="\n").write(r["text"])
-        verdict, quality, ground = triage(r, g, ch.get("retains"))
+        verdict, quality, ground = triage(r, g)
         rows.append({**r, "verdict": verdict, "quality": quality, "ground": ground,
-                     "vendor": ch.get("vendor"), "retains": ch.get("retains") or "unknown"})
+                     "vendor": ch.get("vendor")})
 
     for r in delegated:
-        verdict, quality, ground = triage(r, g, "unknown")
+        verdict, quality, ground = triage(r, g)
         rows.append({**r, "verdict": verdict, "quality": quality, "ground": ground,
-                     "vendor": "via harness", "retains": "unknown"})
+                     "vendor": "via harness"})
 
     secs = time.time() - t0
     printer("")
@@ -845,14 +836,14 @@ def run_round(reg, system, brief, out_dir, marker="REVIEW-COMPLETE", only=(), sk
         for code, detail in r["failures"]:
             printer("    FAIL %-22s %s" % (code, FAILURE_MEANING.get(code, "")))
         for code, detail in r["quality"]:
-            if code in ("NO_TELEMETRY", "UNKNOWN_RETENTION"):
+            if code == "NO_TELEMETRY":
                 continue
             printer("    warn %-22s %s" % (code, detail or QUALITY_MEANING.get(code, "")))
     counts = {v: sum(1 for r in rows if r["verdict"] == v) for v in ("OK", "DIRTY", "FAILED")}
     printer("=" * 78)
     printer("OK %d · DIRTY %d · FAILED %d" % (counts["OK"], counts["DIRTY"], counts["FAILED"]))
 
-    ap = write_analytics(os.path.join(out_dir, "ANALYTICS.md"), rows, secs, brief_sha)
+    ap = write_analytics(os.path.join(out_dir, "ANALYTICS.md"), rows, secs)
     printer("analytics written without being asked: %s" % ap)
     printer("")
     printer("🔴 NOTHING ABOVE SAYS THE ANSWERS ARE RIGHT. Now check their quotations:")

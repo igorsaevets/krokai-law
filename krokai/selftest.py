@@ -508,7 +508,6 @@ def suite_consult(tmp):
     ok("consult: every channel kind in use is documented in _kinds",
        used_kinds <= documented_kinds, str(used_kinds - documented_kinds))
     for name, ch in chans.items():
-        ok("consult: %s declares retention" % name, bool(ch.get("retains")))
         ok("consult: %s declares a cost class" % name, bool(ch.get("cost")))
     metered_on = [n for n, c in chans.items() if c.get("cost") == "metered" and c.get("enabled")]
     ok("consult: no metered channel ships switched ON", not metered_on, str(metered_on))
@@ -580,17 +579,14 @@ def suite_consult(tmp):
 
     clean = {"channel": "t", "text": "See https://www.ecfr.gov/current/title-8 for the text.",
              "failures": [], "quality": []}
-    v, _q, _gr = C.triage(clean, g, retains="no")
+    v, _q, _gr = C.triage(clean, g)
     ok("consult: a clean answer on a primary source grades OK", v == "OK", v)
-    v, _q, _gr = C.triage({**clean, "failures": [("TIMED_OUT", "")]}, g, retains="no")
+    v, _q, _gr = C.triage({**clean, "failures": [("TIMED_OUT", "")]}, g)
     ok("consult: any failure code grades FAILED", v == "FAILED", v)
     v, q, _gr = C.triage({"channel": "t", "text": "no links here at all", "failures": [],
-                          "quality": []}, g, retains="no")
+                          "quality": []}, g)
     ok("consult: an answer citing nothing is DIRTY, not OK", v == "DIRTY", v)
     ok("consult: ...and says why", "NO_URLS_CITED" in [c for c, _ in q], str(q))
-    v, q, _gr = C.triage(clean, g, retains="unknown")
-    ok("consult: unrecorded retention is surfaced, not assumed benign",
-       "UNKNOWN_RETENTION" in [c for c, _ in q], str(q))
 
     # 🔴 NEGATIVE CONTROLS for the refusal detector. Each of these is a sentence a good review
     # legitimately contains. The system this was extracted from graded the honest outcome its own
@@ -613,13 +609,22 @@ def suite_consult(tmp):
     # 2026-08-02. This asserts it stays cut: a file that quietly grows a history of what was sent
     # to whom is a second record of the client's material, and its absence is a property worth
     # testing rather than a thing to remember.
-    ok("consult: no cross-round ledger is written or exposed",
-       not hasattr(C, "append_ledger") and "ledger.jsonl" not in src.lower())
+    # 🔴 THREE FEATURES WERE BUILT AND THEN CUT ON INSTRUCTION (2026-08-02): a persistent dispatch
+    # ledger, the brief hash printed before sending, and the per-vendor retention column. Testing
+    # that something is ABSENT is the only way it stays absent - otherwise it comes back next month
+    # looking like an improvement, because each one reads as obviously useful in isolation.
+    for gone, why in [("append_ledger", "cross-round dispatch ledger"),
+                      ("brief_sha", "brief hash printed before sending")]:
+        ok("consult: %s stays removed" % why, not hasattr(C, gone) and gone not in src)
+    ok("consult: the retention column stays removed",
+       "retains" not in src and "UNKNOWN_RETENTION" not in src)
+    ok("consult: no channel in the shipped registry declares retention",
+       not [n for n, c in C.channel_items(reg) if "retains" in c])
 
-    rows = [{"channel": "t", "verdict": "DIRTY", "seconds": 1, "bytes": 10, "retains": "no",
+    rows = [{"channel": "t", "verdict": "DIRTY", "seconds": 1, "bytes": 10,
              "ground": {"total": 1, "primary": [], "snapshot": ["u"], "nonauthoritative": []},
              "failures": [], "quality": [("DATED_EDITION_CITED", "1: u")]}]
-    ap = C.write_analytics(os.path.join(tmp, "an.md"), rows, 1.0, "abc123")
+    ap = C.write_analytics(os.path.join(tmp, "an.md"), rows, 1.0)
     txt = _io.open(ap, encoding="utf-8").read()
     ok("consult: analytics explains the code rather than printing a bare token",
        C.QUALITY_MEANING["DATED_EDITION_CITED"][:40] in txt)

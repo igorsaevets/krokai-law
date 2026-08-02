@@ -30,8 +30,8 @@ program installed printed instructions and did nothing.
   rather than code. Shipped channels are **command-line tools on subscriptions you already pay
   for — no API key**. The one metered kind ships disabled, and a self-test asserts that no metered
   channel is ever enabled by default.
-- **A plan printed before anything is sent**: channel, vendor, transport, cost, **retention**, and
-  whether the binary is actually installed. `--dry-run` is a complete preflight and spends nothing.
+- **A plan printed before anything is sent**: channel, vendor, transport, cost, and whether the
+  binary is actually installed. `--dry-run` is a complete preflight and spends nothing.
 - **Failure grading from machine codes, never prose.** The predecessor searched warning text for
   substrings, and marked FAILED the honest *"my search found no confirmation"* its own brief asks
   for; `not set` matched the finding *"the regulation does not set a deadline"*. Five negative
@@ -74,12 +74,12 @@ built to stop exactly that. The whole ledger has since been cut — see below.
 
 ### Removed before release
 
-- **The persistent dispatch ledger.** Built, documented, tested, and cut on the author's
-  instruction: *«этот функционал делать не будем»*. What replaced it is nothing — deliberately. The
-  brief's hash is still printed before dispatch and the plan still names every vendor and its
-  retention answer, so the checks that matter happen at the moment the decision is made. Nothing
-  accumulates across rounds, and a self-test asserts it stays that way: a growing record of what
-  went to whom is itself a second record of the client's material.
+- **Every record of what was sent where.** Three features, cut in sequence on the author's
+  instruction: the persistent dispatch ledger, the brief hash printed before sending, and the
+  per-vendor retention column in the plan. What replaced them is nothing, deliberately — the round
+  produces the answers, the report, and the check of their quotations, and nothing outlives it.
+  A self-test asserts all three stay absent, because each reads as obviously useful in isolation and
+  would otherwise be reinvented by someone who could not see it had been weighed.
 
 ### Fixed — all seven found before the first paid round, six by reading the plan
 

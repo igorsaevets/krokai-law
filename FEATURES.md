@@ -841,24 +841,24 @@ Its own test caught the first version of this: the URL was lower-cased and the p
 `CFR-` could never match `cfr-`. **The check ran, reported nothing, and read as a clean result.** A
 detector that never fires is indistinguishable from a corpus with nothing to find.
 
-### Considered and cut: a persistent dispatch ledger
+### Considered and cut: three ways of recording what was sent
 
-A file recording one line per dispatch — which model, which vendor, a fingerprint of what was sent,
-whether that vendor retains it — was built and then **removed**. It is recorded here rather than
-quietly deleted, so the next person to have the idea knows it was weighed and dropped rather than
-overlooked.
+Three related features were built, documented, tested — and then removed on the author's
+instruction, in that order over one afternoon:
 
-Two things stay, because they cost nothing and are used every round:
+| cut | what it was |
+|---|---|
+| the dispatch ledger | one line per send: which model, which vendor, a fingerprint of the payload |
+| the brief hash | a SHA-256 printed before sending, proving every channel got the same brief |
+| the retention column | each vendor's answer to *"do you keep what you are sent?"*, shown in the plan |
 
-- the brief's SHA-256 is printed **before** dispatch, so *every channel got the same brief* is a fact
-  rather than an intention;
-- the plan names each vendor and its retention answer before anything leaves, which is the moment
-  the decision is actually made.
+They are recorded here rather than quietly deleted, because each one reads as obviously useful in
+isolation and will otherwise be reinvented within a month by someone who cannot see that it was
+weighed. **A self-test asserts all three stay absent** — testing for a thing that is gone is the
+only way it stays gone.
 
-Both are checks on **this** round. Neither accumulates a history, and a self-test asserts that no
-such file is written — because a growing record of what was sent to whom is itself a second record
-of the client's material, and its absence is a property worth testing rather than a rule to
-remember.
+What is left in their place is nothing, deliberately. The round produces the answers, the report
+about them, and the check of their quotations. Nothing outlives the round.
 
 ### 🔴 The neutral working directory
 
@@ -886,13 +886,10 @@ wrong guess there fails silently in the expensive direction.
 
 ### The plan is printed before anything is sent
 
-Channel, vendor, transport, cost class, **retention**, and whether the binary is actually installed.
-Two facts that look like one are kept apart: *switched on* and *installed*. The first version
-collapsed them and printed a disabled-but-installed channel as `ready: yes`, which every reader takes
-to mean *will run*.
-
-`retains: unknown` is an honest value and prints as a warning, because **"we did not check" must
-never read as "no"**.
+Channel, vendor, transport, cost class, and whether the binary is actually installed. Two facts that
+look like one are kept apart: *switched on* and *installed*. The first version collapsed them and
+printed a disabled-but-installed channel as `ready: yes`, which every reader takes to mean *will
+run*.
 
 `--dry-run` resolves the whole plan and spends nothing. It is a complete preflight, not a preview.
 
