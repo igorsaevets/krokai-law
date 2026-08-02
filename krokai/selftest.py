@@ -760,6 +760,23 @@ def suite_docs(root):
         ok("docs: every relative link in README.md resolves to a file", not missing,
            ", ".join(missing))
 
+    # -- the translation drifts, and it drifts in the direction that flatters ----------------------
+    # 🔴 Measured: README.ru.md was two whole sections behind README.md - the second-opinion
+    # architecture and, worse, the PRIOR ART table. A Russian reader was therefore shown a tool with
+    # no precedent and no invitation to name one, which is not a translation gap but a different
+    # claim. Comparing prose across languages is hopeless; comparing the set of outside projects and
+    # people each version links to is not, and that set is exactly what went missing.
+    if "README.md" in text and "README.ru.md" in text:
+        def outward(t):
+            skip = ("github.com/igorsaevets/krokai-law", "keepachangelog", "semver.org")
+            return {u.rstrip("/.,)") for u in re.findall(r"https?://[^\s)\]]+", t)
+                    if not any(s in u for s in skip)}
+        en, ru = outward(text["README.md"]), outward(text["README.ru.md"])
+        ok("docs: the Russian README credits the same outside projects as the English one",
+           not (en - ru), "missing from README.ru.md: " + ", ".join(sorted(en - ru)))
+        ok("docs: ...and cites nothing the English one does not",
+           not (ru - en), "only in README.ru.md: " + ", ".join(sorted(ru - en)))
+
 
 def suite_rename(root):
     """A rename is survivable only if the old stamp is still recognised.

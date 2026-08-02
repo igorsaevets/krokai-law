@@ -1,0 +1,15 @@
+blank_issues_enabled: true
+contact_links:
+  - name: A security problem
+    url: https://github.com/igorsaevets/krokai-law/security/advisories/new
+    about: >
+      Report it privately, not as a public issue. This tool reads legal matters and holds an
+      outbound gate over client data, so a hole in it is worth handling quietly first.
+  - name: An idea, a question, or a body of law you want a citation pack for
+    url: https://github.com/igorsaevets/krokai-law/discussions
+    about: Discussions, not issues — nothing has to be broken for the conversation to be useful.
+  - name: Something else is broken
+    url: https://github.com/igorsaevets/krokai-law/issues/new
+    about: >
+      A plain issue is fine. Include the output of `krokai doctor`; it answers half the questions
+      anyone would otherwise have to ask you.

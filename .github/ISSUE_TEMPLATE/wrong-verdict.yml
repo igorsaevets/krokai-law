@@ -1,0 +1,69 @@
+name: A verdict looks wrong
+description: The checker said VERIFIED about something bad, or flagged something correct.
+labels: [verdict]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the report that improves the tool most, so the form asks for the four things that
+        make it reproducible. Every one of them is on your own machine already.
+
+        **Please do not paste client material.** A quotation of a published statute, regulation or
+        decision is public text and is fine. Names, case numbers and addresses are not needed to
+        reproduce a verdict — and if you are unsure, `krokai gate <file>` will tell you what it
+        finds without printing the values.
+
+  - type: textarea
+    id: quotation
+    attributes:
+      label: The quotation, exactly as it appears in your document
+      description: Copy it including the quotation marks and any ellipsis.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: source
+    attributes:
+      label: The passage in the source, exactly as it appears there
+      description: >
+        The sentence before and after it as well, if you have them. Most interesting verdicts turn
+        on what comes immediately after the quotation ends.
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: got
+    attributes:
+      label: The verdict you got
+      placeholder: e.g. ALTERED
+    validations:
+      required: true
+
+  - type: input
+    id: expected
+    attributes:
+      label: The verdict you expected
+      placeholder: e.g. TRUNCATED_CONDITION, or VERIFIED
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Output of `krokai doctor`
+      description: >
+        It prints the version, the Python, which optional libraries are installed and whether the
+        gate passes. A missing PDF engine explains a whole class of these reports on its own.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: anything
+    attributes:
+      label: Anything else
+      description: >
+        Where the source came from matters — a scraped copy can be genuinely incomplete, and then
+        the flag is right about the disk and wrong about your document.

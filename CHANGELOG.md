@@ -49,6 +49,17 @@ was found by checking the documents against the code, not by running the tool.
   every commit is a guard someone deletes.
 - **Rename safety as an assertion** rather than a memory: what gets stamped must carry the current
   name, and the previous name must still be recognised.
+- **Continuous integration**, which is this project's own argument for its hooks applied to itself:
+  *run the suite before you push* is a rule, and rules fire by topic. The workflow needs no secret
+  and touches no vendor. It also tests two claims no local run can: the **Python 3.9 floor** stated
+  in `INSTALL.md`, which nothing had ever verified, and the suite on a machine with **no PDF or
+  .docx library installed** — the state a locked-down work laptop is actually in.
+- **An issue form for a wrong verdict** that asks for the four things which make one reproducible.
+  The README already asked for them in prose; a form is a mechanism.
+- **Translation parity as a test.** 🔴 `README.ru.md` was two sections behind `README.md` — the
+  second-opinion architecture and, worse, the **prior-art table**. A Russian reader was shown a tool
+  with no precedent and no invitation to name one, which is not a translation gap but a different
+  claim. Both sections are written now, and the two versions must credit the same outside projects.
 
 ### Changed
 

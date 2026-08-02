@@ -1,0 +1,94 @@
+# The self-test, executed by the harness rather than by whoever remembers to run it.
+#
+# That is this project's own argument for its hooks, applied to itself: a rule fires by topic, not
+# by rule, and "run the suite before you push" is a rule. It was obeyed while the task was about the
+# suite and would not have been obeyed while the task was about something else.
+#
+# Two claims are under test here that no local run can make:
+#
+#   * "Python 3.9 or newer" - INSTALL.md states a floor and nothing verified it. A stated minimum
+#     version is a number in prose, and this release exists mostly because of what those turn into.
+#   * "no network, no credentials, no configuration" - the suite says so in its own output. Here it
+#     runs on a machine that has none of the author's setup, and on a runner with no PDF or .docx
+#     library installed, which is the state a locked-down work laptop is actually in.
+#
+# Nothing here needs a secret. If this workflow ever needs one, something has gone wrong upstream.
+name: selftest
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ['3.9', '3.11', '3.13']
+        include:
+          # Developed on Windows, and the hooks force UTF-8 on stderr because without it the
+          # warning arrives as mojibake exactly where it matters. Worth one runner.
+          - os: windows-latest
+            python: '3.13'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: every module compiles
+        run: python -m compileall -q krokai hooks
+
+      - name: self-test, with no optional library installed
+        run: python -m krokai selftest
+
+      - name: outbound gate
+        run: python -m krokai gate --self-test
+
+      - name: doctor reports the missing libraries rather than pretending
+        # No casefile here, so INCOMPLETE and exit 1 are the correct answers. What is being checked
+        # is that the status line and the exit code agree - a sibling project shipped a doctor that
+        # printed READY and exited 1, which is worse than having no status line at all.
+        shell: bash
+        run: |
+          out="$(python -m krokai doctor || true)"
+          echo "$out"
+          python -m krokai doctor >/dev/null 2>&1; rc=$?
+          echo "exit=$rc"
+          case "$out" in
+            *"STATUS: READY"*)      [ "$rc" = 0 ] || { echo "READY but exit $rc"; exit 1; } ;;
+            *"STATUS: INCOMPLETE"*) [ "$rc" = 1 ] || { echo "INCOMPLETE but exit $rc"; exit 1; } ;;
+            *) echo "doctor printed no status line at all"; exit 1 ;;
+          esac
+
+      - name: the hooks survive junk on stdin and still exit 0
+        # A Stop hook that returns non-zero prevents the turn from ending and can loop.
+        shell: bash
+        run: |
+          for h in hooks/quote_guard.py hooks/bank_queue.py hooks/session_anchor.py; do
+            echo 'not json at all' | python "$h" >/dev/null 2>&1
+            rc=$?; echo "$h exit=$rc"; [ "$rc" = 0 ] || exit 1
+          done
+
+  with-optional-libraries:
+    # The same suite with the PDF and .docx engines present. Both states are supported and they
+    # exercise different code, so both are tested rather than assumed to be the same.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install --quiet pypdf pymupdf mammoth
+      - run: python -m krokai selftest
+      - run: python -m krokai doctor || true

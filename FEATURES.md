@@ -1128,6 +1128,8 @@ than the design.
 | 40 | 🔴 The guard for incident 39 **could not see** the sentence that carried the number: a falsified `99` passed a clean run | coverage asserted, not only correctness |
 | 41 | A rename left the tier-D stamp under the previous product name — every existing report would have rejoined tier C (incident 3) | one stamp written, several recognised |
 | 42 | A supported partial install killed the self-test with no verdict; `SystemExit` does not derive from `Exception` | a named failure that says what still works |
+| 43 | The Russian README was two sections behind the English one — including the **prior-art table**, so it presented a tool with no precedent | the two versions must credit the same outside projects |
+| 44 | "Run the suite before you push" is a rule, and rules fire by topic | the suite runs in CI, executed by the harness |
 
 ---
 
