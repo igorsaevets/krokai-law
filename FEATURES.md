@@ -1130,6 +1130,7 @@ than the design.
 | 42 | A supported partial install killed the self-test with no verdict; `SystemExit` does not derive from `Exception` | a named failure that says what still works |
 | 43 | The Russian README was two sections behind the English one — including the **prior-art table**, so it presented a tool with no precedent | the two versions must credit the same outside projects |
 | 44 | "Run the suite before you push" is a rule, and rules fire by topic | the suite runs in CI, executed by the harness |
+| 45 | The CI step checking that `doctor`'s status agrees with its exit code **died on its own first run** under `bash -e`, and the tool was fine | `cmd \|\| rc=$?`, never `cmd; rc=$?` |
 
 ---
 

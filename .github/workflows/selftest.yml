@@ -59,14 +59,18 @@ jobs:
         # No casefile here, so INCOMPLETE and exit 1 are the correct answers. What is being checked
         # is that the status line and the exit code agree - a sibling project shipped a doctor that
         # printed READY and exited 1, which is worse than having no status line at all.
+        #
+        # 🔴 The first version of this step died on its own first run, and the tool was fine. GitHub
+        # runs `bash -e`, so `cmd; rc=$?` ABORTS THE STEP the moment cmd is non-zero - before the
+        # line that would have reported it. A check that captures an exit code cannot fail
+        # informatively under `-e`; it can only vanish. `cmd || rc=$?` puts the command on the left
+        # of an operator, which is the one place `-e` leaves alone.
         shell: bash
         run: |
-          out="$(python -m krokai doctor || true)"
-          echo "$out"
-          python -m krokai doctor >/dev/null 2>&1; rc=$?
-          echo "exit=$rc"
+          rc=0; out="$(python -m krokai doctor)" || rc=$?
+          echo "$out"; echo "exit=$rc"
           case "$out" in
-            *"STATUS: READY"*)      [ "$rc" = 0 ] || { echo "READY but exit $rc"; exit 1; } ;;
+            *"STATUS: READY"*)      [ "$rc" = 0 ] || { echo "READY but exit $rc";      exit 1; } ;;
             *"STATUS: INCOMPLETE"*) [ "$rc" = 1 ] || { echo "INCOMPLETE but exit $rc"; exit 1; } ;;
             *) echo "doctor printed no status line at all"; exit 1 ;;
           esac
@@ -75,10 +79,12 @@ jobs:
         # A Stop hook that returns non-zero prevents the turn from ending and can loop.
         shell: bash
         run: |
+          bad=0
           for h in hooks/quote_guard.py hooks/bank_queue.py hooks/session_anchor.py; do
-            echo 'not json at all' | python "$h" >/dev/null 2>&1
-            rc=$?; echo "$h exit=$rc"; [ "$rc" = 0 ] || exit 1
+            rc=0; echo 'not json at all' | python "$h" >/dev/null 2>&1 || rc=$?
+            echo "$h exit=$rc"; [ "$rc" = 0 ] || bad=1
           done
+          exit $bad
 
   with-optional-libraries:
     # The same suite with the PDF and .docx engines present. Both states are supported and they
