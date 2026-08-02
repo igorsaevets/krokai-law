@@ -44,7 +44,7 @@ Everything here follows from that.
 
 ## normalize
 
-`verbatim/normalize.py` — the single text normaliser. **There is exactly one.**
+`lawverbatim/normalize.py` — the single text normaliser. **There is exactly one.**
 
 ### Why one
 
@@ -137,7 +137,7 @@ Measured: the class form left the marker untouched and the fix looked like it ha
 
 ## extract
 
-`verbatim/extract.py` — pulling quoted spans out of your own document. The half nobody expects to be
+`lawverbatim/extract.py` — pulling quoted spans out of your own document. The half nobody expects to be
 hard.
 
 ### `blocks()` — a block is a **paragraph**, not a line
@@ -193,7 +193,7 @@ accusation against an innocent document.
 
 ## readers
 
-`verbatim/readers.py` — getting text out of a file without silently losing part of it.
+`lawverbatim/readers.py` — getting text out of a file without silently losing part of it.
 
 ### `read_pdf()` — two engines, and keep the one that did not break words
 
@@ -246,7 +246,7 @@ it fails in a way that blames the quotation.
 
 ## corpus
 
-`verbatim/corpus.py` — every primary source you have, indexed for exact search.
+`lawverbatim/corpus.py` — every primary source you have, indexed for exact search.
 
 ### 🔴🔴 The one rule that makes the tool mean anything
 
@@ -297,7 +297,7 @@ this one. Confirmed by execution, not by reading.
 
 ## verify
 
-`verbatim/verify.py` + `verbatim/verdicts.py` — one quotation in, one of fifteen verdicts out.
+`lawverbatim/verify.py` + `lawverbatim/verdicts.py` — one quotation in, one of fifteen verdicts out.
 
 ### Why fifteen and not two
 
@@ -391,7 +391,7 @@ continuous passage something the authority never wrote as one.
 
 ## address
 
-`verbatim/address.py` — *"found in the corpus"* is not the claim *"found where you said"*.
+`lawverbatim/address.py` — *"found in the corpus"* is not the claim *"found where you said"*.
 
 Measured: a quotation of a signature statute was compared against a completely unrelated regulation
 and flagged for a changed operative word. The quotation was perfect; the file holding the real
@@ -430,7 +430,7 @@ accusations are false teaches the reader to skim.
 
 ## citation packs
 
-`verbatim/citations.py` + `packs/*.json` — how the toolkit recognises the address of a rule.
+`lawverbatim/citations.py` + `packs/*.json` — how the toolkit recognises the address of a rule.
 
 Three ship: **`us-federal`** (CFR, U.S. Code, Federal Register, federal courts, public laws),
 **`us-immigration`** (INA, USCIS Policy Manual, FAM, I&N Dec., *Matter of*, numbered policy memos,
@@ -480,7 +480,7 @@ real fabrication hides in a pile of shrugs.
 
 ## bank and queue
 
-`verbatim/bank.py` — two files that do opposite jobs.
+`lawverbatim/bank.py` — two files that do opposite jobs.
 
 **The bank is a decision.** *This quotation matters, here is its address, here is where the source
 sits on disk, here is how to re-check it in a minute, and here is what it does NOT prove.* A person
@@ -530,7 +530,7 @@ real run.
 
 ## library
 
-`verbatim/library.py` — download it once, index it, check the index before the internet.
+`lawverbatim/library.py` — download it once, index it, check the index before the internet.
 
 **The rule:** downloaded a source? Save it — to the library folder **and** as a line in the index.
 
@@ -574,7 +574,7 @@ page.
 
 ## sidecar
 
-`verbatim/sidecar.py` — making your own search stop lying to you.
+`lawverbatim/sidecar.py` — making your own search stop lying to you.
 
 A phrase known to be the title of an agency memorandum:
 
@@ -600,7 +600,7 @@ derived in its own header so it can never be quoted *instead of* the original.
 
 ## redact
 
-`verbatim/redact.py` — the outbound gate.
+`lawverbatim/redact.py` — the outbound gate.
 
 The moment you paste a case file into a chat window it has been published: the vendor has it, the
 transcript is written to disk and replayed into later context, and it can be retrieved from that
@@ -668,7 +668,7 @@ tests and the class with no override had one.
 
 ## prompts
 
-`verbatim/prompts.py` — what to put in a prompt so an outside model does useful legal work.
+`lawverbatim/prompts.py` — what to put in a prompt so an outside model does useful legal work.
 
 ### Problem 1: the refusal is a **framing** result
 
@@ -766,7 +766,7 @@ is. One per round — and recorded outside the brief, or you risk absorbing your
 
 ## mutations
 
-`verbatim/mutations.py` — measuring how often the checker says *clean* about something that is not.
+`lawverbatim/mutations.py` — measuring how often the checker says *clean* about something that is not.
 
 From a reviewing model, about the project this came from:
 
@@ -797,7 +797,7 @@ Reference figure from the source project: **243 mutants, 0 false-clean.**
 
 ## config
 
-`verbatim/config.py` — `casefile.json`, the one file that makes the toolkit yours.
+`lawverbatim/config.py` — `casefile.json`, the one file that makes the toolkit yours.
 
 The system this was extracted from had absolute paths compiled into eleven scripts, including a
 cloud-synced folder name and a person's user account. Fine for one matter, impossible for anyone
@@ -815,7 +815,7 @@ NOT FOUND — which reads like catastrophe and is really a typo in a path.
 
 ## run and report
 
-`verbatim/run.py` — the whole-matter pass.
+`lawverbatim/run.py` — the whole-matter pass.
 
 **Tiers.** Your own writing is not one pile: what gets filed and what sits in a research note fail at
 different costs. Tier **D** is this tool's own output and reviewers' answers — still checked, because
@@ -890,7 +890,7 @@ all-clear.
 
 ## install
 
-`verbatim/install.py` — wiring the hooks into `settings.json` without destroying what is there.
+`lawverbatim/install.py` — wiring the hooks into `settings.json` without destroying what is there.
 
 "Add this block to your settings.json" is how people end up with a broken settings.json, and the
 hooks are the part that makes everything else work without anybody remembering anything. **A toolkit
@@ -911,7 +911,7 @@ session that installed it. Measured the hard way; printed at the end of every ru
 
 ## selftest
 
-`verbatim selftest` — **81 behavioural checks**, no network, no configuration, no credentials.
+`lawverbatim selftest` — **81 behavioural checks**, no network, no configuration, no credentials.
 
 **It builds its own corpus.** A test that needs your files is a test nobody runs, and the interesting
 assertions are about *specific text*.

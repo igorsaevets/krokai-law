@@ -21,15 +21,15 @@ made of numbers from commands it actually ran, not from a claim that it worked.
 ## 2. Clone
 
 ```bash
-git clone https://github.com/<owner>/verbatim ~/tools/verbatim
-cd ~/tools/verbatim
-python -m verbatim selftest        # expect N/N passed
+git clone https://github.com/<owner>/lawverbatim ~/tools/lawverbatim
+cd ~/tools/lawverbatim
+python -m lawverbatim selftest        # expect N/N passed
 ```
 
 Then, in your matter folder:
 
 ```bash
-python ~/tools/verbatim/verbatim init .
+python ~/tools/lawverbatim/lawverbatim init .
 ```
 
 ## 3. Download and unpack
@@ -43,14 +43,14 @@ On a locked-down work laptop where you cannot install anything: copy the folder 
 run it in place.
 
 ```bash
-python /wherever/you/put/verbatim/verbatim init .
-python -m verbatim check          # from the matter folder, with the toolkit on PYTHONPATH
+python /wherever/you/put/lawverbatim/lawverbatim init .
+python -m lawverbatim check          # from the matter folder, with the toolkit on PYTHONPATH
 ```
 
 or, without touching `PYTHONPATH`:
 
 ```bash
-python /wherever/you/put/verbatim/verbatim check --dir .
+python /wherever/you/put/lawverbatim/lawverbatim check --dir .
 ```
 
 This method is supported on purpose and tested. A tool a paralegal cannot install is a tool that
@@ -73,7 +73,7 @@ pip install pypdf pymupdf mammoth
 | both | 🔴 the cross-check that catches a word-splitting extraction cannot run. Measured on a real corpus: one engine reported **51 % more** alphabetic tokens than the other on a controlling opinion, because it split words apart — and that degrades a verbatim quotation into a flagged one for reasons that look like the quotation's fault |
 | `mammoth` | `.docx` is read through the raw-XML pass only. Usable, but the popular alternative drops **tables silently** — measured at −10 % of the text — so the XML pass is the safety net, not the primary reader |
 
-`python -m verbatim doctor` prints exactly which are present and what each absence means.
+`python -m lawverbatim doctor` prints exactly which are present and what each absence means.
 
 ---
 
@@ -81,7 +81,7 @@ pip install pypdf pymupdf mammoth
 
 ```bash
 cd /path/to/your/matter
-python -m verbatim init .
+python -m lawverbatim init .
 ```
 
 Creates:
@@ -114,7 +114,7 @@ statute, fix the pattern — do not ignore it.
 ### Choosing citation packs
 
 ```bash
-python -m verbatim packs
+python -m lawverbatim packs
 ```
 
 `us-federal` is the base and belongs in almost every configuration. Add `us-immigration` or `us-tax`
@@ -131,8 +131,8 @@ Adding your own body of law is a JSON file, not a code change. See
 This is the step that makes everything else automatic, and it is the one people skip.
 
 ```bash
-python -m verbatim install-hooks --dry-run     # see the diff
-python -m verbatim install-hooks
+python -m lawverbatim install-hooks --dry-run     # see the diff
+python -m lawverbatim install-hooks
 ```
 
 **Why bother.** An instruction file in a real matter said, in bold, *"check every quotation as it is
@@ -151,16 +151,16 @@ It backs the file up first. It is idempotent, so running it twice does not dupli
 to touch it and says so.
 
 🔴 **`settings.json` is read when a session starts.** Newly installed hooks do nothing in the session
-that installed them. Start a new session, then run `python -m verbatim doctor`.
+that installed them. Start a new session, then run `python -m lawverbatim doctor`.
 
 ---
 
 ## Confirming it works
 
 ```bash
-python -m verbatim doctor      # ends with STATUS: READY
-python -m verbatim check       # the whole-matter pass
-python -m verbatim close       # end-of-session checks
+python -m lawverbatim doctor      # ends with STATUS: READY
+python -m lawverbatim check       # the whole-matter pass
+python -m lawverbatim close       # end-of-session checks
 ```
 
 `doctor` prints what is installed, what is configured, and what is missing. If it ever prints
@@ -172,7 +172,7 @@ exit code teaches people to ignore both.
 ## Uninstalling
 
 ```bash
-python -m verbatim install-hooks --uninstall
+python -m lawverbatim install-hooks --uninstall
 ```
 
 Then delete the folder. `casefile.json`, your quote bank, your library index and your reports are

@@ -1,5 +1,5 @@
 <!--
-Paste this into the CLAUDE.md / AGENTS.md of a matter that uses `verbatim`.
+Paste this into the CLAUDE.md / AGENTS.md of a matter that uses `lawverbatim`.
 
 🔴 Keep it SHORT. This file is loaded in full on every request and competes for attention with the
 task in front of the assistant. The long-form reasoning belongs in the toolkit's own FEATURES.md,
@@ -31,10 +31,10 @@ the round — and three things are checked, not one:
 3. 🔴 was a **condition** cut off (`If` / `Where` / `Unless` / `provided that` / `, but`).
 
 ```
-python -m verbatim quote "<the quotation>"     one, right now
-python -m verbatim check                        everything, before anything is filed
-python -m verbatim close                        end of session
-python -m verbatim gate <file>                  before pasting anything into another AI
+python -m lawverbatim quote "<the quotation>"     one, right now
+python -m lawverbatim check                        everything, before anything is filed
+python -m lawverbatim close                        end of session
+python -m lawverbatim gate <file>                  before pasting anything into another AI
 ```
 
 ### 🔴 `NOT_FOUND` is not `INVENTED` — four causes, in this order
@@ -59,6 +59,6 @@ decision — does this matter need the quotation — stays with a person.
 
 ### Scans
 
-Files with no text layer are listed by `verbatim sidecar`. 🔴 **Never read a scan with a language
+Files with no text layer are listed by `lawverbatim sidecar`. 🔴 **Never read a scan with a language
 model.** It produces plausible text, the plausible text becomes a quotation, and the quotation is
 then treated as the primary source. Hand the list to a person with an OCR engine.

@@ -27,7 +27,7 @@ it does not prove. A person makes that call. Automatic entry would turn the bank
 hundred-odd rows in which the four that matter are invisible - and an unreadable bank is an unopened
 bank.
 
-The queue asks the question. The bank stores the answer. ``verbatim close`` refuses to call the
+The queue asks the question. The bank stores the answer. ``lawverbatim close`` refuses to call the
 round finished while the queue has open items, which is the other half: a file nobody is obliged to
 open gets read exactly as often as an instruction gets obeyed.
 
@@ -61,7 +61,7 @@ def log(cfg, line):
         print(row)
     if cfg is None:
         return
-    p = os.path.join(cfg.root, ".verbatim", "bank_queue.log")
+    p = os.path.join(cfg.root, ".lawverbatim", "bank_queue.log")
     try:
         os.makedirs(os.path.dirname(p), exist_ok=True)
         old = io.open(p, encoding="utf-8").read().splitlines() if os.path.exists(p) else []
@@ -128,7 +128,7 @@ def main():
         log(cfg, "empty answer - skipped")
         return 0
 
-    from verbatim.bank import candidates, read_bank, in_bank, append_queue
+    from lawverbatim.bank import candidates, read_bank, in_bank, append_queue
 
     cands = candidates(text)
     if not cands:
@@ -146,8 +146,8 @@ def main():
 
     rows = []
     try:
-        from verbatim.corpus import Corpus
-        from verbatim.verify import check
+        from lawverbatim.corpus import Corpus
+        from lawverbatim.verify import check
         corpus = Corpus(cfg.source_dirs, skip_dirs=set(cfg["skip_dirs"]),
                         cache_dir=cfg.cache, quiet=True)
         for q in fresh:

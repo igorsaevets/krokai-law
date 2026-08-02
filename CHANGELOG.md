@@ -41,7 +41,7 @@ session. The complete list of those failures is the incident log in
 - **Prompt language** that gets an outside model to do legal research instead of refusing, with the
   measurement showing the refusal was about framing rather than subject matter — and the one line
   that measurably stops fabricated quotations.
-- **Reviewer-answer auditing.** `verbatim review --audit` runs every quotation from every outside
+- **Reviewer-answer auditing.** `lawverbatim review --audit` runs every quotation from every outside
   reviewer through the same checker as your own drafts. This is the step an orchestration harness
   cannot do, and it is the reason the two are separate programs.
 - **A mutation bank.** Every defect class ever paid for, applied to quotations the checker already
@@ -89,8 +89,8 @@ Recorded because a changelog that lists only features is a sales document.
 - **A flag can mean the tool is wrong.** Your downloaded copy may itself be incomplete — measured, a
   scraped agency chapter held four of its six bullet points, so a correct quotation of the missing
   text came back flagged. The order in which to rule things out is printed with every miss.
-- The copyright holder in `LICENSE` reads *the verbatim contributors*. A fork or a named maintainer
+- The copyright holder in `LICENSE` reads *the lawverbatim contributors*. A fork or a named maintainer
   should set it deliberately — and should know that a generator which rewrites author names across a
   repository can silently mangle a copyright line, which has happened.
 
-[0.1.0]: https://github.com/<owner>/verbatim/releases/tag/v0.1.0
+[0.1.0]: https://github.com/<owner>/lawverbatim/releases/tag/v0.1.0

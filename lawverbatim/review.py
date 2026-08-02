@@ -63,7 +63,7 @@ HARNESS_CANDIDATES = [
 def find_harness(explicit=None):
     if explicit:
         return explicit if os.path.exists(explicit) else None
-    env = os.environ.get("VERBATIM_REVIEW_HARNESS")
+    env = os.environ.get("LAWVERBATIM_REVIEW_HARNESS")
     if env and os.path.exists(env):
         return env
     for p in HARNESS_CANDIDATES:
@@ -118,12 +118,12 @@ def run_harness(harness, brief_path, system_path, out_dir, extra=(), printer=pri
     if not harness:
         printer("""
 No review harness found on this machine. That is a statement about this machine, not about the
-world - set VERBATIM_REVIEW_HARNESS to yours, or do it by hand:
+world - set LAWVERBATIM_REVIEW_HARNESS to yours, or do it by hand:
 
   1. Open each reviewer you use.
   2. Paste system.md as the system prompt, brief.md as the message. BYTE-IDENTICAL to each.
   3. Save each answer as <name>.md in the output folder.
-  4. Then run:  verbatim review --audit <folder>
+  4. Then run:  lawverbatim review --audit <folder>
 
 Step 4 is the one that matters. Everything before it is transport.""")
         return 1

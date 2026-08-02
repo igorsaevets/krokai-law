@@ -42,7 +42,7 @@ def read_event():
 
 
 def find_config(start=None):
-    from verbatim.config import load
+    from lawverbatim.config import load
     try:
         return load(start or os.getcwd(), required=False)
     except SystemExit:

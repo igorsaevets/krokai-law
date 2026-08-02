@@ -1,8 +1,8 @@
-# verbatim
+# lawverbatim
 
 **Your AI quoted a law. Is the quote real?**
 
-`verbatim` checks every quotation in your documents against the actual text of the law, on your own
+`lawverbatim` checks every quotation in your documents against the actual text of the law, on your own
 disk, and tells you which ones are wrong — before anything is filed, sent, or relied on.
 
 It is built for people who work with an AI assistant on legal material: immigration attorneys and
@@ -56,7 +56,7 @@ downloaded. Not "is it roughly right" — is the string there.
 said*. If your document cites one provision and the sentence lives in another, you are told.
 
 **3. Checks what comes next.** The most expensive defect in legal drafting is a quotation that is
-exactly right and stops one clause too early. `verbatim` reads what follows the quotation in the
+exactly right and stops one clause too early. `lawverbatim` reads what follows the quotation in the
 source and flags it when the next words are `but`, `unless`, `except`, `provided that`.
 
 **4. Keeps the sources.** A quote bank of everything you have personally opened and confirmed, and
@@ -95,15 +95,15 @@ entire argument for the hooks, and it is why this is a tool and not a checklist.
 ## Install in about a minute
 
 ```bash
-git clone https://github.com/<owner>/verbatim
+git clone https://github.com/<owner>/lawverbatim
 cd /path/to/your/matter
-python /path/to/verbatim/verbatim init .
+python /path/to/lawverbatim/lawverbatim init .
 ```
 
 Then put your downloaded statutes, regulations and decisions in `law/`, your drafts in `case/`, and:
 
 ```bash
-python -m verbatim check
+python -m lawverbatim check
 ```
 
 **No programming needed, no account, no API key, nothing leaves your machine.** Four install
@@ -207,9 +207,20 @@ Full function-by-function reference, with the incident behind each one:
 
 ---
 
-## Contact
+## Found a bug? Want a feature? Want to work together?
 
-Issues and discussions on this repository. Security reports: use the private advisory form under the
-Security tab rather than an issue.
+| what | where |
+|---|---|
+| something is broken, or a verdict is wrong | [open an issue](../../issues) — include the quotation, the source text, the verdict you got and the one you expected |
+| an idea, a question, a body of law you want a pack for | [discussions](../../discussions) |
+| a security problem | [private advisory](../../security/advisories/new) — **not** a public issue |
+| collaboration, consulting, or just to talk | [LinkedIn](https://www.linkedin.com/in/igorsaevets/) · [Facebook](https://facebook.com/igorsaevets) · [GitHub](https://github.com/igorsaevets) |
+
+**There is deliberately no contact email.** The address on this repository's commits is GitHub's
+no-reply relay: it attributes commits correctly and has **no mail exchanger at all**, so mail sent to
+it is discarded without a bounce. A reporting channel that silently swallows a bug report is worse
+than an absent one. Use the links above.
+
+Maintained by **Igor Saevets** ([@igorsaevets](https://github.com/igorsaevets)), Los Angeles.
 
 Licence: MIT. Nothing here contacts a vendor, and no test needs a key.
