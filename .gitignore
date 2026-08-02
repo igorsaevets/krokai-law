@@ -39,3 +39,11 @@ Thumbs.db
 .env.*
 *.pem
 *.key
+
+# Keys. The recommended place is OUTSIDE this folder (`krokai keys --setup`), but if
+# someone points KROKAI_KEY_DIR here, this stops the accident becoming permanent.
+.env
+.env.*
+!.env.example
+keys.env
+*.key

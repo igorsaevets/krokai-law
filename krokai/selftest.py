@@ -493,13 +493,18 @@ def suite_consult(tmp):
     from krokai import consult as C
 
     reg = C.load_registry()
-    chans = reg.get("channels") or {}
+    chans = dict(C.channel_items(reg))
     ok("consult: the shipped registry loads", bool(chans))
+    # 🔴 The registry's own convention is that an `_`-prefixed key is documentation. The first
+    # version put a prose note inside `channels`, and every loop over it crashed on a string.
+    # One iterator now decides what a channel is; this asserts the tests use it too.
+    ok("consult: documentation keys are not mistaken for channels",
+       all(isinstance(c, dict) and not n.startswith("_") for n, c in chans.items()))
 
     # Expectations are DERIVED from the file, never copied into the test. A registry with a fourth
     # channel must not turn three correct tests red.
     documented_kinds = set((reg.get("_kinds") or {}).keys())
-    used_kinds = {c.get("kind") for c in chans.values()}
+    used_kinds = {c.get("kind") for _n, c in C.channel_items(reg)}
     ok("consult: every channel kind in use is documented in _kinds",
        used_kinds <= documented_kinds, str(used_kinds - documented_kinds))
     for name, ch in chans.items():
@@ -520,6 +525,46 @@ def suite_consult(tmp):
     known = set(C.FAILURE_MEANING) | set(C.QUALITY_MEANING)
     ok("consult: every emitted code has a plain-English meaning",
        emitted <= known, str(sorted(emitted - known)))
+
+    # --- keys ------------------------------------------------------------------------------
+    from krokai import keys as K
+    from krokai.redact import scan as _kscan
+
+    api = [(n, c) for n, c in C.channel_items(reg) if c.get("kind") == "http"]
+    ok("keys: API channels ship", bool(api))
+    for n, c in api:
+        ok("keys: %s names a key variable" % n, bool(c.get("key_env")))
+        ok("keys: %s declares its API shape" % n, (c.get("api") or "chat") in ("chat", "messages"))
+    ok("keys: no API channel ships enabled", not [n for n, c in api if c.get("enabled")])
+
+    # 🔴 The recipe must not itself look like a leaked key. Measured: `setx NAME "18-word-chars"`
+    # matched the labelled-secret detector, so the instructions for handling a key SAFELY were
+    # blocked as a key. Third false positive in this project's own safety checks, and by its own
+    # doctrine that outranks a miss.
+    for line in K.console_recipe("KROKAI_TEST_KEY"):
+        hits = [f for f in _kscan(line, "recipe") if f[0] == "SECRET"]
+        ok("keys: the console recipe is not itself secret-shaped", not hits, line[:60])
+
+    os.environ["KROKAI_SELFTEST_KEY"] = "abcdefghijklmnopqrstuvwxyz0123456789"
+    st = K.status(["KROKAI_SELFTEST_KEY", "KROKAI_DEFINITELY_UNSET"])
+    ok("keys: status reports set-ness and LENGTH only",
+       st[0] == ("KROKAI_SELFTEST_KEY", True, 36) and st[1][1] is False, str(st))
+    ok("keys: the folder note tells an assistant to stop, and says rotate",
+       "stop here" in K.FOLDER_NOTE.lower() and "rotate" in K.FOLDER_NOTE.lower())
+    del os.environ["KROKAI_SELFTEST_KEY"]
+
+    kf = os.path.join(tmp, "keys.env")
+    _io.open(kf, "w", encoding="utf-8").write(
+        "# comment\nKROKAI_FROMFILE=zzz9\nKROKAI_ALREADY=fromfile\n")
+    os.environ["KROKAI_ALREADY"] = "fromenv"
+    got = K.load_key_file(kf)
+    ok("keys: the key file loads by NAME, and returns names not values",
+       got == ["KROKAI_FROMFILE"], str(got))
+    # The console is the stronger channel; a stale line in a file must not silently override it.
+    ok("keys: an existing environment value wins over the file",
+       os.environ["KROKAI_ALREADY"] == "fromenv")
+    for v in ("KROKAI_FROMFILE", "KROKAI_ALREADY"):
+        os.environ.pop(v, None)
 
     g = reg["grounding"]
     ok("consult: a .gov page is primary",

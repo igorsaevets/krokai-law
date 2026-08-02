@@ -78,7 +78,9 @@ FAILURE_MEANING = {
                      "truncated answer reads as a complete one and its last section is missing",
     "TOO_SHORT": "far below the floor for a real review; usually a refusal or a crash",
     "TRANSPORT_ERROR": "the call itself failed",
-    "KEY_NOT_SET": "this channel needs an environment variable that is not set",
+    "KEY_NOT_SET": "this channel needs an environment variable that is not set - run `krokai keys`",
+    "MODEL_NOT_SET": "this channel has no model pinned, and guessing one fails at the vendor with a "
+                     "message that does not say so",
     "HTTP_ERROR": "the endpoint answered with an error status",
     "POLICY_REFUSAL": "the channel declined to engage with the subject, and produced no review",
 }
@@ -183,10 +185,24 @@ def _bin_path(ch):
     return shutil.which(ch.get("bin") or "")
 
 
+def channel_items(reg):
+    """Every real channel. One place, because there are five loops over this dictionary.
+
+    🔴 Skips `_`-prefixed keys and anything that is not a mapping. This file's own convention is
+    that an underscore key is documentation, and the first version put a prose note inside
+    `channels` - so every loop over it crashed on a string. The convention is not the bug; five
+    loops each re-deciding what a channel is, was.
+    """
+    for name, ch in (reg.get("channels") or {}).items():
+        if name.startswith("_") or not isinstance(ch, dict):
+            continue
+        yield name, ch
+
+
 def selected(reg, only=(), skip=(), with_disabled=False):
     """Which channels this round would use, honouring enabled/--only/--skip."""
     out = {}
-    for name, ch in (reg.get("channels") or {}).items():
+    for name, ch in channel_items(reg):
         if ch.get("kind") == "delegate":
             continue
         if only and name not in only:
@@ -238,10 +254,16 @@ def plan(reg, chosen, harness=None, delegating=None, allow_pii=False, printer=pr
                 ready, why = "NO", "`%s` not on PATH" % ch.get("bin")
                 problems.append((name, why))
         elif kind == "http":
-            for k in ("key_env", "base_url_env"):
-                if ch.get(k) and not os.environ.get(ch[k]):
-                    ready, why = "NO", "%s not set" % ch[k]
-                    problems.append((name, why))
+            if not resolve_base(ch):
+                ready, why = "NO", "%s not set" % (ch.get("base_url_env") or "base_url")
+                problems.append((name, why))
+            elif not resolve_key(ch)[0]:
+                # The variable NAME, so the user knows what to set. Never a hint about the value.
+                ready, why = "NO", "%s not set" % (ch.get("key_env") or "key")
+                problems.append((name, why))
+            elif (ch.get("model") or "set-me") == "set-me":
+                ready, why = "NO", "pin `model` in channels.json"
+                problems.append((name, why))
         # 🔴 "switched on" and "installed" are two independent facts, and collapsing them is how a
         # plan lies. A channel disabled in the registry does not run even though its binary is
         # present - and the first draft of this table printed that case as `ready: yes`, which any
@@ -363,29 +385,76 @@ def call_cli(name, ch, payload, marker, workdir, floor, timeout, printer=print):
     return _finish(r, marker, floor)
 
 
+def resolve_key(ch):
+    """Return `(value, variable_name)`. The caller may print the NAME; never the value.
+
+    Every helper here that touches a credential is written so the useful thing to log - which
+    variable supplied it - is a different object from the thing that must never be logged.
+    """
+    for var in (ch.get("key_env"), ch.get("key_env_fallback")):
+        if var and os.environ.get(var):
+            return os.environ[var], var
+    return "", (ch.get("key_env") or "")
+
+
+def resolve_base(ch):
+    return (ch.get("base_url") or os.environ.get(ch.get("base_url_env") or "") or "").rstrip("/")
+
+
 def call_http(name, ch, system, brief, marker, floor, timeout, printer=print):
+    """One API reviewer. Two request shapes, because the market uses two.
+
+    `chat`     - OpenAI-style `/chat/completions`; the system prompt is a message.
+    `messages` - Anthropic-style `/messages`; the system prompt is its OWN top-level field and the
+                 answer is a LIST of content blocks.
+
+    🔴 Sending the second in the first's shape does not fail loudly. The system prompt is dropped as
+    an unrecognised field and the reply comes back looking complete - so a review whose entire
+    framing was discarded reads exactly like a good one. That is why the shape is declared per
+    channel in the registry instead of guessed from the URL.
+    """
     import urllib.request
     import urllib.error
 
-    base = os.environ.get(ch.get("base_url_env") or "")
-    key = os.environ.get(ch.get("key_env") or "")
+    base = resolve_base(ch)
+    key, key_var = resolve_key(ch)
     if not base or not key:
-        missing = [k for k in (ch.get("base_url_env"), ch.get("key_env"))
-                   if k and not os.environ.get(k)]
+        missing = []
+        if not base:
+            missing.append(ch.get("base_url_env") or "base_url")
+        if not key:
+            missing.append(key_var or "a key variable")
         return _result(name, failures=[("KEY_NOT_SET", ", ".join(missing))])
 
-    body = json.dumps({"model": ch.get("model"),
-                       "messages": [{"role": "system", "content": system},
-                                    {"role": "user", "content": brief}]}).encode("utf-8")
-    req = urllib.request.Request(base.rstrip("/") + "/chat/completions", data=body, headers={
-        "Content-Type": "application/json", "Authorization": "Bearer " + key})
+    model = ch.get("model") or ""
+    if not model or model == "set-me":
+        # Not a crash and not a default. A guessed model identifier is a hard failure at the vendor
+        # with a confusing message; naming the omission here is the cheaper error.
+        return _result(name, failures=[("MODEL_NOT_SET", "set `model` for this channel")])
+
+    headers = {"Content-Type": "application/json"}
+    if (ch.get("api") or "chat").lower() == "messages":
+        url, shape = base + "/messages", "messages"
+        payload = {"model": model, "max_tokens": int(ch.get("max_tokens") or 32000),
+                   "system": system, "messages": [{"role": "user", "content": brief}]}
+        headers["x-api-key"] = key
+        headers["anthropic-version"] = ch.get("anthropic_version") or "2023-06-01"
+    else:
+        url, shape = base + "/chat/completions", "chat"
+        payload = {"model": model,
+                   "messages": [{"role": "system", "content": system},
+                                {"role": "user", "content": brief}]}
+        headers["Authorization"] = "Bearer " + key
+
+    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers)
     t0 = time.time()
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8", "replace"))
     except urllib.error.HTTPError as exc:
-        # 🔴 The status and the body are reported; the request headers are NOT, because they carry
-        # the key. A crash handler that dumps the request is how a credential reaches a log.
+        # 🔴 The status and reason are reported. The request is NOT: it carries the key in a header,
+        # and an exception handler that dumps the request is exactly how a credential reaches a log.
+        # Measured once on the machine this was written on, from a command whose PURPOSE was masking.
         return _result(name, seconds=round(time.time() - t0, 1),
                        failures=[("HTTP_ERROR", "%s %s" % (exc.code, exc.reason))])
     except Exception as exc:                                        # noqa: BLE001
@@ -393,7 +462,11 @@ def call_http(name, ch, system, brief, marker, floor, timeout, printer=print):
 
     text = ""
     try:
-        text = data["choices"][0]["message"]["content"] or ""
+        if shape == "messages":
+            text = "".join(b.get("text") or "" for b in (data.get("content") or [])
+                           if isinstance(b, dict) and b.get("type") == "text")
+        else:
+            text = data["choices"][0]["message"]["content"] or ""
     except (KeyError, IndexError, TypeError):
         return _result(name, failures=[("TRANSPORT_ERROR", "unparseable response body")])
     r = _result(name, text=text, seconds=round(time.time() - t0, 1),

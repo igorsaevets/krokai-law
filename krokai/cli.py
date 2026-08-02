@@ -329,6 +329,93 @@ def cmd_review(a):
     return 1 if any(r["verdict"] == "FAILED" for r in rows) else 0
 
 
+# ---------------------------------------------------------------------------------- keys
+def cmd_keys(a):
+    """Where an API key should live, whether it is there, and how to put it there safely.
+
+    🔴 This command exists so that "is my key set?" has an answer that is not "open the file".
+    Opening the file is how a key reaches a transcript - and a transcript is written to disk,
+    replayed into later context, and archived.
+    """
+    from .keys import key_dir, key_file, load_key_file, status, console_recipe, FOLDER_NOTE
+    from .consult import load_registry, channel_items
+
+    reg = load_registry(getattr(a, "registry", None))
+    wanted = []
+    for name, ch in sorted(channel_items(reg)):
+        for var in (ch.get("key_env"), ch.get("key_env_fallback")):
+            if var and not any(v == var for v, _ in wanted):
+                wanted.append((var, name))
+
+    if a.setup:
+        d = key_dir()
+        os.makedirs(d, exist_ok=True)
+        note = os.path.join(d, "READ-THIS-NOT-THE-KEYS.md")
+        io.open(note, "w", encoding="utf-8", newline="\n").write(FOLDER_NOTE)
+        kf = key_file()
+        if os.path.exists(kf):
+            # 🔴 Never overwrite. A "template" written over a populated key file destroys the
+            # credentials and looks like a successful setup.
+            print("kept your existing %s untouched" % kf)
+        else:
+            lines = ["# One key per line: NAME=value. No quotes, no spaces around `=`.",
+                     "# A key already set in your environment WINS over a line here.",
+                     "# Never commit this file. Never paste it into a chat window.", ""]
+            lines += ["# %s" % v for v, _c in wanted]
+            io.open(kf, "w", encoding="utf-8", newline="\n").write("\n".join(lines) + "\n")
+            print("created %s - empty, with the variable NAMES as comments and no values" % kf)
+        print("wrote   %s" % note)
+        print("")
+        print("🔴 That folder is OUTSIDE your matter on purpose, so an assistant working in the")
+        print("   matter does not meet it by accident. It is the SECOND-strongest place for a key.")
+        print("   The strongest is not a file at all - see below.")
+        print("")
+
+    loaded = load_key_file()
+    exists = os.path.exists(key_file())
+    print("key file : %s%s" % (key_file(), "" if exists else "   (none - that is fine)"))
+    if loaded:
+        print("           supplied %d variable(s) not already in your environment" % len(loaded))
+    print("")
+    print("%-28s %-12s %-6s %s" % ("variable", "channel", "set?", "length"))
+    missing = []
+    for var, ch_name in wanted:
+        _n, is_set, ln = status([var])[0]
+        # 🔴 The LENGTH, never a prefix, never a masked form. A "mask" that kept the first 60
+        # characters of a 48-character key printed the whole key. That is why this column is an
+        # integer and why there is no --show flag anywhere in this program.
+        print("%-28s %-12s %-6s %s" % (var, ch_name, "yes" if is_set else "no",
+                                       ln if is_set else "-"))
+        if not is_set:
+            missing.append(var)
+
+    if missing and a.how:
+        print("")
+        print("=" * 76)
+        print("SETTING A KEY WITHOUT ANY ASSISTANT EVER SEEING IT")
+        print("=" * 76)
+        print("Type these yourself in a terminal. Do NOT ask an assistant to run them for you:")
+        print("the value would then be in the conversation, which is the thing being avoided.")
+        for var in missing[:4]:
+            print("")
+            print("  %s" % var)
+            for line in console_recipe(var):
+                print(("  " + line) if line else "")
+        if len(missing) > 4:
+            print("")
+            print("  ... and %d more; the pattern is the same." % (len(missing) - 4))
+        print("")
+        print("Easier and slightly weaker: put them in the key file above (`krokai keys --setup`).")
+    elif missing:
+        print("")
+        print("%d not set. `krokai keys --how` prints the exact command for your system."
+              % len(missing))
+    else:
+        print("")
+        print("All set. Nothing above showed a key, and nothing in this toolkit ever will.")
+    return 0
+
+
 # --------------------------------------------------------------------------------- close
 def cmd_close(a):
     """Mechanical end-of-round checks. Changes nothing; prints. The decision stays human."""
@@ -528,6 +615,14 @@ def build_parser():
 
     p = common(sub.add_parser("doctor", help="what is installed, what is configured, what is missing"))
     p.set_defaults(fn=cmd_doctor)
+
+    p = sub.add_parser("keys", help="where API keys go, whether they are set, and how to set one")
+    p.add_argument("--setup", action="store_true",
+                   help="create the key folder outside your matter, with its warning file")
+    p.add_argument("--how", action="store_true",
+                   help="print the exact console command for each key that is missing")
+    p.add_argument("--registry", help="a channels.json other than the shipped one")
+    p.set_defaults(fn=cmd_keys)
 
     p = sub.add_parser("packs", help="list the citation packs that ship")
     p.set_defaults(fn=cmd_packs)

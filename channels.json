@@ -83,10 +83,97 @@
       "notes": "Off by default for independence, not for quality."
     },
 
-    "http": {
+    "_api_channels": "🔴 Everything below needs an API key and BILLS PER CALL. All of it ships disabled. A key is read from the environment at call time and is never written in this file, never printed, never logged - so this file stays safe to commit and safe to show an assistant. Run `krokai keys` for where to put one; the strongest answer is not a file. Two API shapes are supported: `chat` = OpenAI-style /chat/completions, `messages` = Anthropic-style /messages.",
+
+    "spark": {
       "kind": "http",
+      "api": "messages",
       "enabled": false,
-      "label": "Any OpenAI-compatible endpoint",
+      "label": "Meta Spark (Messages API)",
+      "vendor": "Meta",
+      "cost": "metered",
+      "retains": "unknown",
+      "telemetry": false,
+      "base_url": "https://api.meta.ai/v1",
+      "key_env": "KROKAI_SPARK_KEY",
+      "key_env_fallback": "MODEL_API_KEY",
+      "model": "muse-spark-1.1",
+      "notes": "API ONLY - this model has no command-line client, so the subscription route does not exist for it. Cheap and web-grounded; a sensible default for fact-checking. Its content filter is cumulative over a long payload, so a large brief can be refused where a small one is accepted - probe cheaply before sending an expensive one."
+    },
+
+    "openai": {
+      "kind": "http",
+      "api": "chat",
+      "enabled": false,
+      "label": "OpenAI API",
+      "vendor": "OpenAI",
+      "cost": "metered",
+      "retains": "unknown",
+      "telemetry": false,
+      "base_url": "https://api.openai.com/v1",
+      "key_env": "KROKAI_OPENAI_KEY",
+      "key_env_fallback": "OPENAI_API_KEY",
+      "model": "set-me",
+      "_model": "Deliberately unset. Model identifiers rotate faster than any file that names them, and a wrong one is a hard failure rather than a quiet downgrade - so this asks you once now instead of failing later with a name that was correct last month.",
+      "notes": "Use INSTEAD of the codex CLI channel, not alongside it: the same vendor answering twice costs twice and the two answers read as agreement."
+    },
+
+    "anthropic": {
+      "kind": "http",
+      "api": "messages",
+      "enabled": false,
+      "label": "Anthropic API",
+      "vendor": "Anthropic",
+      "cost": "metered",
+      "retains": "unknown",
+      "telemetry": false,
+      "base_url": "https://api.anthropic.com/v1",
+      "key_env": "KROKAI_ANTHROPIC_KEY",
+      "key_env_fallback": "ANTHROPIC_API_KEY",
+      "model": "set-me",
+      "_independence_warning": "🔴 If you are running this from inside a Claude assistant, this is not a second opinion - same model family, same blind spots, and its agreement measures nothing. One voice among other vendors, never the reviewer of work it helped write.",
+      "notes": "Off by default for independence, not for quality."
+    },
+
+    "google": {
+      "kind": "http",
+      "api": "chat",
+      "enabled": false,
+      "label": "Google Gemini (OpenAI-compatible endpoint)",
+      "vendor": "Google",
+      "cost": "metered",
+      "retains": "unknown",
+      "telemetry": false,
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "key_env": "KROKAI_GOOGLE_KEY",
+      "key_env_fallback": "GEMINI_API_KEY",
+      "model": "set-me",
+      "notes": "Measured on the source system, and the reason to prefer the API over the CLI for this vendor: the direct API reported per call which pages grounding actually attached, while the same model through its coding-agent wrapper issued ten searches, opened zero pages, and cited three URLs that were 404s."
+    },
+
+    "openrouter": {
+      "kind": "http",
+      "api": "chat",
+      "enabled": false,
+      "label": "OpenRouter (many vendors, one key)",
+      "vendor": "varies - see `model`",
+      "cost": "metered",
+      "retains": "unknown",
+      "telemetry": false,
+      "base_url": "https://openrouter.ai/api/v1",
+      "key_env": "KROKAI_OPENROUTER_KEY",
+      "key_env_fallback": "OPENROUTER_API_KEY",
+      "model": "set-me",
+      "_why_it_is_here": "One key reaches models with no CLI and no direct account. Measured on the source system: the same question cost $4.07 over 91 requests through an agent wrapper against $0.13 over 1 request sent directly. When a channel looks expensive, suspect the wrapper before the model.",
+      "_vendor_is_unknown_here": "🔴 `vendor` is what the retention and independence warnings key off, and here it depends on `model`. Set it when you pin a model, or the plan reports less than it appears to.",
+      "notes": "Useful as a fifth voice. Check which upstream provider actually served the request: a silent fallback to a different provider makes the answer something other than the one you asked for."
+    },
+
+    "custom": {
+      "kind": "http",
+      "api": "chat",
+      "enabled": false,
+      "label": "Any other OpenAI-compatible endpoint",
       "vendor": "depends on the endpoint",
       "cost": "metered",
       "retains": "unknown",
@@ -94,9 +181,7 @@
       "base_url_env": "KROKAI_HTTP_BASE",
       "key_env": "KROKAI_HTTP_KEY",
       "model": "set-me",
-      "_key_handling": "The key is read from the named environment variable at call time and never written here, never printed, never logged. This file is safe to commit; a file with a key in it is not.",
-      "_metered_warning": "🔴 The only metered kind that ships. If you have a subscription to the same model, use the CLI channel instead: a subscription is several times cheaper than the same tokens through an API, and it cannot run up a bill you did not plan.",
-      "notes": "Off, and needs two environment variables before it will run."
+      "notes": "A local model server, a corporate gateway, or any vendor not listed above."
     },
 
     "harness": {
