@@ -609,11 +609,17 @@ archive months later by anything that can read it. So the gate runs **before** t
 ### Two classes, one override
 
 **Secrets have no override** — there is no legitimate reason to send an API key to a reviewer, and a
-gate with a bypass for its most serious class has no serious class. **10 detectors.**
+gate with a bypass for its most serious class has no serious class. **10 detectors for credentials.**
 
 **Personal data has one** (`--allow-pii`), because a lawyer sometimes genuinely must send a client's
 date of birth to a reviewing model, and pretending otherwise teaches people to work around the tool.
-**11 detectors.**
+**12 detectors for personal identifiers.**
+
+🔴 Both of those numbers were **wrong in this file** until a self-test was told to read it. Adding
+the house-number detector took the second count from 11 to 12, and the prose kept saying 11 — in the
+one document whose whole promise is that its numbers were measured. `selftest` now parses the
+`N detectors` sentences out of `README.md` and `FEATURES.md` and compares them with the tables, so
+the next detector cannot ship with the old number beside it.
 
 ### 🔴 The value is never printed
 
@@ -792,7 +798,13 @@ quotations against the source*, which nobody proposed to move out. So the line i
 | | |
 |---|---|
 | a separate harness, if you have one | **transport** — get answers back |
-| this module | **trust** — what may go out, what may be believed, and a record of both |
+| this module | **trust** — what may go out and what may be believed |
+
+🔴 The third bullet is listed because it was part of the original mistake, **not** because it exists.
+Every form of it was built and then cut — see *Considered and cut* below. Those are two different
+statements and both are true: a record of what was sent sits on the trust side of the line, and this
+tool still does not keep one. Where a control belongs is an argument about architecture; whether to
+build it is a decision about what a tool should hold, and the second does not follow from the first.
 
 And because a feature that requires installing a second, differently-named program is a feature most
 of the audience will never have, the built-in transports run when no harness is present. The tool is
@@ -1042,7 +1054,12 @@ session that installed it. Measured the hard way; printed at the end of every ru
 
 ## selftest
 
-`krokai selftest` — **81 behavioural checks**, no network, no configuration, no credentials.
+`krokai selftest` — a behavioural suite that **prints its own count**, no network, no configuration,
+no credentials. The count is deliberately not written down here: it changes on almost every commit,
+and this file said **81** for long enough to be published that way. A number in prose that nothing
+executes is a claim with no error signal — the same defect the tool exists to catch, one level up.
+Numbers that *are* written down here (the detector counts above) are the ones a test now reads back
+out of this file.
 
 **It builds its own corpus.** A test that needs your files is a test nobody runs, and the interesting
 assertions are about *specific text*.
@@ -1099,13 +1116,18 @@ than the design.
 | 28 | A manual unchanged for two years while the programme was suspended by other means | the two-question rule |
 | 29 | Right words, wrong pincite — headnote quoted, opinion cited | **not caught**; needs a reader |
 | 30 | A verdict list where one verdict was both dangerous and clean | a self-test invariant |
-| 31 | The second opinion split into a separate program, taking four **trust** controls with it | `consult.py`; the line redrawn |
+| 31 | The second opinion split into a separate program, taking four **trust** controls with it | `consult.py`; the line redrawn (three of the four returned; the record of what was sent was cut instead) |
 | 32 | A grader reading prose, marking FAILED the honest refusal its own brief asks for | machine codes + 5 negative controls |
 | 33 | Snapshot URLs lower-cased on one side only — the historical-edition check **could never fire** | lower-case both sides |
 | 34 | A harness and a built-in channel about to ask the same vendor the same question twice | the double-spend guard |
 | 35 | The completion marker not passed to the delegated harness — every complete answer would read as truncated | pass it, and say why |
 | 36 | `--harness-args` accepted and silently ignored | wired through |
 | 37 | "Quote the section IN FULL" demanded of a brief containing no statutory text at all | `applies_when` on every requirement |
+| 38 | `krokai --version` printed **0.1.0** while the changelog documented **0.2.0** — the executed copy was the stale one | `__version__` checked against the newest changelog heading |
+| 39 | Three shipped documents said **11** personal-data detectors; the table had **12** | the counts are read back out of the documents |
+| 40 | 🔴 The guard for incident 39 **could not see** the sentence that carried the number: a falsified `99` passed a clean run | coverage asserted, not only correctness |
+| 41 | A rename left the tier-D stamp under the previous product name — every existing report would have rejoined tier C (incident 3) | one stamp written, several recognised |
+| 42 | A supported partial install killed the self-test with no verdict; `SystemExit` does not derive from `Exception` | a named failure that says what still works |
 
 ---
 

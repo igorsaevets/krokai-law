@@ -78,6 +78,9 @@ class Corpus(object):
         self.paths, self.starts, self.astarts, self.hstarts = [], [], [], []
         self.excluded_derived, self.excluded_stub, self.unreadable = [], [], []
         drx = re.compile(derived_re, re.I) if derived_re else None
+        # One string or several. Several, because a renamed tool must still recognise the stamp it
+        # wrote under its old name - see the note beside SENTINELS in run.py.
+        sents = (sentinel,) if isinstance(sentinel, str) else tuple(sentinel or ())
 
         buf, abuf, hbuf = [], [], []
         pos = apos = hpos = 0
@@ -90,7 +93,7 @@ class Corpus(object):
             except Exception as exc:
                 self.unreadable.append((p, type(exc).__name__))
                 continue
-            if sentinel and sentinel in t[:400]:
+            if any(s in t[:400] for s in sents):
                 self.excluded_derived.append(p)      # stamped as this toolkit's own output
                 continue
             if len(t.strip()) < MIN_TEXT_LAYER:

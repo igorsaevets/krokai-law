@@ -35,9 +35,17 @@ from .readers import read_any
 from .verdicts import ORDER, DANGEROUS, MEANING, label, meaning
 from .verify import check
 
-__all__ = ["scan_matter", "write_report", "SENTINEL"]
+__all__ = ["scan_matter", "write_report", "SENTINEL", "SENTINELS"]
 
-SENTINEL = "LAWVERBATIM-TOOL-OUTPUT"
+SENTINEL = "KROKAI-TOOL-OUTPUT"
+
+# The stamp the tool WRITES is one string; the stamps it RECOGNISES are several, and that asymmetry
+# is the whole reason a rename is survivable. A report written before the project was renamed still
+# carries the old stamp, and a report that stops being recognised silently rejoins tier C - which is
+# incident 3 in FEATURES.md, the largest number in the whole log: 1 443 of 1 606 misses from one
+# file. Delete a legacy entry only once you are willing to say that no archived report anywhere
+# still carries it, which for a document a lawyer keeps for the life of a matter is a long time.
+SENTINELS = (SENTINEL, "LAWVERBATIM-TOOL-OUTPUT")
 TARGET_EXT = (".md", ".txt", ".docx")
 
 TIER_D = ("D", "tool output and reviewers' answers")
@@ -46,7 +54,8 @@ TIER_D = ("D", "tool output and reviewers' answers")
 def _is_tool_output(path):
     try:
         with io.open(path, encoding="utf-8", errors="replace") as fh:
-            return SENTINEL in fh.read(400)
+            head = fh.read(400)
+        return any(s in head for s in SENTINELS)
     except OSError:
         return False
 
@@ -59,7 +68,7 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
         printer("citation packs: %s" % ", ".join(packs.ids))
 
     corpus = Corpus(cfg.source_dirs, skip_dirs=set(cfg["skip_dirs"]),
-                    cache_dir=cfg.cache, quiet=quiet, sentinel=SENTINEL)
+                    cache_dir=cfg.cache, quiet=quiet, sentinel=SENTINELS)
     if not corpus.paths:
         printer("\n🔴 The corpus is EMPTY. Every quotation will come back NOT FOUND, which looks "
                 "like catastrophe and is really a path problem.")

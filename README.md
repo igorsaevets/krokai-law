@@ -134,9 +134,9 @@ entire argument for the hooks, and it is why this is a tool and not a checklist.
 ## Install in about a minute
 
 ```bash
-git clone https://github.com/<owner>/krokai
+git clone https://github.com/igorsaevets/krokai-law
 cd /path/to/your/matter
-python /path/to/krokai/krokai init .
+python /path/to/krokai-law/krokai init .
 ```
 
 Then put your downloaded statutes, regulations and decisions in `law/`, your drafts in `case/`, and:
@@ -235,7 +235,7 @@ work than maintaining this.
 ## Also in the box
 
 - **A guard against sending client data to an AI.** 10 detectors for credentials with no override,
-  11 for personal identifiers with one. It reports the kind and the line number and **never the
+  12 for personal identifiers with one. It reports the kind and the line number and **never the
   value** — printing the match to prove the check works would leak it into the transcript, which is
   the same mistake one step earlier.
 - **Prompt language that stops a model refusing legal work** — and the measurement showing the

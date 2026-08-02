@@ -59,7 +59,7 @@ locked-down machine, continue without them and **say which file types will be in
 ## Step 2 — put the toolkit somewhere permanent
 
 ```bash
-git clone https://github.com/<owner>/krokai ~/tools/krokai
+git clone https://github.com/igorsaevets/krokai-law ~/tools/krokai
 ```
 
 No clone available? Download the ZIP and unpack it. The toolkit needs no installation step and no

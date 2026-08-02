@@ -3,6 +3,58 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+<!-- KROKAI-SELFTEST: DISCUSSES-PLACEHOLDERS - this log quotes the defects it records, and one
+     of them is an unreplaced clone-URL placeholder. The self-test's placeholder check honours
+     this declaration for a document that declares it, and refuses the declaration outright to
+     README.md, README.ru.md, INSTALL.md and INSTALL-FOR-AI.md - the files a reader copies
+     commands out of. Exempting a declared file is auditable; exempting a filename is the
+     allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
+
+## [0.3.0] — 2026-08-02
+
+The release made by re-reading what 0.2.0 said about itself before publishing it. Everything below
+was found by checking the documents against the code, not by running the tool.
+
+### Fixed — seven claims this project made about itself and got wrong
+
+- **`krokai --version` printed `0.1.0`** while the changelog documented `0.2.0`. Two homes for one
+  fact, and the executed one was the stale one. A self-test now reads the newest changelog heading
+  and compares it with `__version__`.
+- **The personal-data detector count read 11 in three shipped documents and 12 in the table**, ever
+  since the house-number detector was added — in a file whose entire promise is that its numbers
+  were measured rather than estimated.
+- 🔴 **The guard written to catch exactly that could not see the sentence carrying it.** A
+  deliberately falsified `99` sat in `README.md` through a clean run, because the check demanded the
+  word *detectors* between the number and the class and the README's second count has none. Fixed
+  twice over: the word is optional now, **and** every document must be shown to state *both* counts
+  where the check can read them. Correctness alone would have gone on passing.
+- **The tier-D stamp still carried the previous product name.** Renaming without noticing would have
+  dropped every existing report back into tier C, which is incident 3 — the largest number in the
+  whole log. The tool now writes one stamp and recognises several.
+- **A supported install died with no verdict.** `channels.json` sits beside the package, so copying
+  only `krokai/` — install method 4, the locked-down work laptop — killed the suite with a bare path
+  list, in front of an installer told to stop and report if any check fails. `SystemExit` does not
+  derive from `Exception`, so the obvious catch caught nothing.
+- **The changelog described `LICENSE`'s copyright holder, and described it wrongly.** It points at
+  the file now instead of restating it.
+- Placeholder clone URLs (`github.com/<owner>/…`) in four documents, including both READMEs — the
+  first command a new reader runs.
+
+### Added
+
+- **`selftest` reads the documentation now.** Stated detector counts are compared with the tables,
+  every relative link in `README.md` must resolve to a file, and no shipped document may contain a
+  placeholder. Six negative controls prove each check fails when it should. The suite's own count is
+  deliberately written down nowhere: it changes on almost every commit, and a guard that fires on
+  every commit is a guard someone deletes.
+- **Rename safety as an assertion** rather than a memory: what gets stamped must carry the current
+  name, and the previous name must still be recognised.
+
+### Changed
+
+- The tier-D sentinel written into new reports is `KROKAI-TOOL-OUTPUT`. Reports already stamped with
+  the previous name are still recognised, and will stay recognised.
+
 ## [0.2.0] — 2026-08-02
 
 Corrects an architecture error in 0.1.0 that was found by a reader, not by a test.
@@ -19,7 +71,7 @@ and stopping your own instruction files from reaching a vendor. Those belong bes
 reviewer's quotations*, which nobody proposed to move out.
 
     a separate harness, if installed  ->  transport: get answers back
-    this toolkit                      ->  trust: what may go out, what may be believed, the record
+    this toolkit                      ->  trust: what may go out and what may be believed
 
 The practical cost of the old boundary fell entirely on the reader: `review` without that other
 program installed printed instructions and did nothing.
@@ -42,7 +94,9 @@ program installed printed instructions and did nothing.
   instruction file of its launch directory into the vendor's context, outside the outbound gate.
 - **`ANALYTICS.md` written every run, unasked** — an instrument report about the reviewers that
   states plainly it says nothing about whether they are right.
-- 42 further self-checks: **123 total**.
+- Further self-checks. The total is deliberately not recorded here: it was written down as
+  **123** while the suite actually stood at 147, which is the same defect this release is
+  mostly about. `krokai selftest` prints the number it just ran.
 
 ### Changed by an outside review of this release
 
@@ -186,8 +240,13 @@ Recorded because a changelog that lists only features is a sales document.
 - **A flag can mean the tool is wrong.** Your downloaded copy may itself be incomplete — measured, a
   scraped agency chapter held four of its six bullet points, so a correct quotation of the missing
   text came back flagged. The order in which to rule things out is printed with every miss.
-- The copyright holder in `LICENSE` reads *the KrokAI Law contributors*. A fork or a named maintainer
-  should set it deliberately — and should know that a generator which rewrites author names across a
-  repository can silently mangle a copyright line, which has happened.
+- **Read `LICENSE` for the copyright holder; it is not restated here.** An earlier draft of this line
+  named a holder the file did not contain — a second copy of a fact, disagreeing with the first. A
+  fork should set the holder deliberately, and should know that a generator rewriting author names
+  across a repository can silently mangle a copyright line. That has happened, in a sibling project,
+  and it shipped that way for the repository's entire life because a per-file allowlist told the leak
+  scan to skip `LICENSE`.
 
-[0.1.0]: https://github.com/<owner>/krokai/releases/tag/v0.1.0
+[0.3.0]: https://github.com/igorsaevets/krokai-law/releases/tag/v0.3.0
+[0.2.0]: https://github.com/igorsaevets/krokai-law/releases/tag/v0.2.0
+[0.1.0]: https://github.com/igorsaevets/krokai-law/releases/tag/v0.1.0

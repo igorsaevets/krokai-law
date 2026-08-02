@@ -155,7 +155,7 @@
       "key_env_fallback": "OPENROUTER_API_KEY",
       "model": "set-me",
       "_why_it_is_here": "One key reaches models with no CLI and no direct account. Measured on the source system: the same question cost $4.07 over 91 requests through an agent wrapper against $0.13 over 1 request sent directly. When a channel looks expensive, suspect the wrapper before the model.",
-      "_vendor_is_unknown_here": "🔴 `vendor` is what the retention and independence warnings key off, and here it depends on `model`. Set it when you pin a model, or the plan reports less than it appears to.",
+      "_vendor_is_unknown_here": "🔴 `vendor` is what the double-spend guard and the independent-vendor count key off, and here it depends on `model`. Leave it unset and two channels routed to the same upstream read as two independent opinions - which is the one failure this whole exercise exists to prevent. Set it when you pin a model.",
       "notes": "Useful as a fifth voice. Check which upstream provider actually served the request: a silent fallback to a different provider makes the answer something other than the one you asked for."
     },
 

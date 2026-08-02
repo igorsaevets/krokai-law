@@ -21,7 +21,7 @@ made of numbers from commands it actually ran, not from a claim that it worked.
 ## 2. Clone
 
 ```bash
-git clone https://github.com/<owner>/krokai ~/tools/krokai
+git clone https://github.com/igorsaevets/krokai-law ~/tools/krokai
 cd ~/tools/krokai
 python -m krokai selftest        # expect N/N passed
 ```

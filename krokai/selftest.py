@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -492,7 +493,24 @@ def suite_consult(tmp):
     import re as _re
     from krokai import consult as C
 
-    reg = C.load_registry()
+    # 🔴 A partial copy is a SUPPORTED install method - INSTALL.md option 4 exists for a work laptop
+    # where nothing may be installed - and `channels.json` sits beside the package rather than inside
+    # it. Copy only `krokai/` and the registry loader raised, so the suite died with a bare path list
+    # and no verdict, in front of an installer whose instruction is "if any check fails, stop and
+    # report it". A missing registry is a real defect for a full install and merely a limitation for
+    # a package-only one, so it is reported as a named failure that says which of the two it is -
+    # never a crash, and never a silent skip.
+    # 🔴 `SystemExit` is listed FIRST and deliberately. It is this codebase's convention for a fatal
+    # user-facing message (`config.py`, `citations.py`, `consult.py` all use it, and the hook
+    # bootstrap already catches it), and it does NOT derive from `Exception` - so the obvious
+    # `except Exception` caught nothing and the suite still died without printing a verdict.
+    try:
+        reg = C.load_registry()
+    except (SystemExit, Exception) as exc:
+        ok("consult: the channel registry ships beside the package and is findable", False,
+           "%s - `krokai review` cannot run; the citation checker is unaffected"
+           % (type(exc).__name__,))
+        return
     chans = dict(C.channel_items(reg))
     ok("consult: the shipped registry loads", bool(chans))
     # 🔴 The registry's own convention is that an `_`-prefixed key is documentation. The first
@@ -642,6 +660,124 @@ def suite_consult(tmp):
        "NOTHING HERE SAYS" in txt.upper())
 
 
+def suite_docs(root):
+    """The prose is checked against the code, because prose has no error signal.
+
+    🔴 This suite exists because of a measured failure, not as tidiness. Adding the house-number
+    detector took the personal-data table from 11 entries to 12, and three shipped documents went on
+    saying 11 - in a file whose entire promise is that its numbers were measured rather than
+    estimated. Nothing failed, because nothing was looking. Same shape as the `LICENSE` that read
+    `Copyright (c) 2026 the operator Saevets` for a repository's whole life while the build reported
+    clean: a claim nobody executes is a claim with no error signal.
+
+    So the numbers a document states about the code are now *read back out of the document* and
+    compared with the code. The self-test's own count is deliberately NOT written down anywhere,
+    for the opposite reason - it changes on nearly every commit, so guarding it would only teach
+    someone to delete the guard.
+    """
+    from krokai.redact import SECRET_PATTERNS, PII_PATTERNS
+
+    docs = [f for f in ("README.md", "README.ru.md", "FEATURES.md", "INSTALL.md",
+                        "INSTALL-FOR-AI.md", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md")
+            if os.path.exists(os.path.join(root, f))]
+    if not docs:
+        # Stated out loud rather than skipped silently: a check that quietly does not run reads
+        # exactly like a check that ran and found nothing.
+        print("note: documentation checks did not run - no shipped .md next to the package "
+              "(a package-only copy). Run the suite from a source checkout to include them.")
+        return
+
+    text = {f: io.open(os.path.join(root, f), encoding="utf-8", errors="replace").read()
+            for f in docs}
+
+    # 🔴 The first version of this check MATCHED NOTHING IN THE SENTENCE IT WAS WRITTEN FOR, and
+    # passed. Its regex demanded the word "detectors" between the number and the class, and the
+    # README says "10 detectors for credentials ..., 12 for personal identifiers" - the second
+    # count carries no such word. A deliberately falsified count of 99 went straight through while
+    # the suite printed a clean run, which is this project's own recurring defect committed inside
+    # the guard written to prevent it. Two things fixed it, and the second matters more than the
+    # first: the word is optional now, AND every document must be shown to carry BOTH counts, so a
+    # sentence the regex cannot see fails loudly instead of being silently uncovered.
+    CLASS = {"credentials": "secret", "personal identifiers": "pii",
+             "учётных данных": "secret", "персональных данных": "pii"}
+    want = {"secret": len(SECRET_PATTERNS), "pii": len(PII_PATTERNS)}
+
+    claims = []          # (file, class, claimed)
+    for f, t in text.items():
+        for m in re.finditer(r"(\d+)\s+(?:detectors?\s+|детекторов\s+)?(?:for\s+)?"
+                             r"(credentials|personal identifiers|учётных данных|персональных данных)",
+                             t):
+            claims.append((f, CLASS[m.group(2)], int(m.group(1))))
+
+    bad = ["%s says %d for %s, the table has %d" % (f, c, k, want[k])
+           for f, k, c in claims if c != want[k]]
+    ok("docs: every stated detector count matches the tables", not bad, "; ".join(bad))
+
+    # Coverage, not just correctness: a document that states one count and not the other has a
+    # sentence this check cannot see, and an unseen sentence is where the stale number lives.
+    for f in ("README.md", "README.ru.md", "FEATURES.md"):
+        if f not in text:
+            continue
+        got = {k for g, k, _ in claims if g == f}
+        ok("docs: %s states both detector counts where the check can read them" % f,
+           got == {"secret", "pii"}, "found %s" % (sorted(got) or "none"))
+
+    # -- the version the tool prints against the version it documents -----------------------------
+    # 🔴 `krokai --version` said 0.1.0 while CHANGELOG.md documented 0.2.0. One fact, two homes, and
+    # the home that gets EXECUTED was the stale one - which is the direction people assume cannot
+    # happen. Nothing forced them to agree, so they stopped agreeing.
+    if "CHANGELOG.md" in text:
+        from krokai import __version__
+        heads = re.findall(r"^## \[([0-9][^\]]*)\]", text["CHANGELOG.md"], re.M)
+        ok("docs: the newest changelog entry is a version number", bool(heads), "none found")
+        if heads:
+            ok("docs: --version matches the newest changelog entry", __version__ == heads[0],
+               "__version__=%s, changelog=%s" % (__version__, heads[0]))
+
+    # -- an install command nobody can run --------------------------------------------------------
+    # 🔴 FOURTH TIME IN THIS PROJECT that a safety check fired on the documentation OF that check:
+    # the changelog entry describing the placeholder defect contains the placeholder. A false
+    # positive here is worse than a miss - it teaches whoever hits it to delete the check - so the
+    # exemption is a DECLARATION the document makes about itself, in the manner of the parent
+    # project's `PUBLISH-AUDIT: PATTERN-SOURCE`, never a filename this code recognises. An
+    # allowlist keyed on a name is what let a mangled `LICENSE` ship for a repository's whole life.
+    #
+    # And the declaration is refused outright for the three files a reader copies commands out of.
+    # A document may say "I discuss placeholders"; the install instructions may not.
+    DECLARE = "KROKAI-SELFTEST: DISCUSSES-PLACEHOLDERS"
+    NEVER = ("README.md", "README.ru.md", "INSTALL.md", "INSTALL-FOR-AI.md")
+    abuse = [f for f in NEVER if DECLARE in text.get(f, "")]
+    ok("docs: the placeholder exemption is refused to the files people copy commands from",
+       not abuse, ", ".join(abuse))
+    holes = ["%s:%s" % (f, ph) for f, t in text.items() if DECLARE not in t or f in NEVER
+             for ph in ("<owner>", "<your-", "TODO", "FIXME") if ph in t]
+    ok("docs: no placeholder survives in a shipped document", not holes, ", ".join(holes))
+
+    # -- a link on the front page that 404s is the dead-button failure again -----------------------
+    if "README.md" in text:
+        rel = set(re.findall(r"\]\((?!https?:|\.\./)([^)#\s]+)", text["README.md"]))
+        missing = sorted(r for r in rel if not os.path.exists(os.path.join(root, r)))
+        ok("docs: every relative link in README.md resolves to a file", not missing,
+           ", ".join(missing))
+
+
+def suite_rename(root):
+    """A rename is survivable only if the old stamp is still recognised.
+
+    The tier-D stamp is written into every report this tool produces and read back months later.
+    Renaming the product changed the string; a report carrying the old one would silently rejoin
+    tier C, which is incident 3 - the largest number in the incident log, 1 443 of 1 606 misses
+    from a single file. So the tool writes one stamp and recognises several.
+    """
+    from krokai.run import SENTINEL, SENTINELS
+    ok("rename: the stamp written carries the current product name", SENTINEL.startswith("KROKAI"),
+       SENTINEL)
+    ok("rename: the stamp of the previous name is still recognised",
+       "LAWVERBATIM-TOOL-OUTPUT" in SENTINELS, str(SENTINELS))
+    ok("rename: what is written is the first thing recognised", SENTINELS[0] == SENTINEL,
+       str(SENTINELS))
+
+
 # ------------------------------------------------------------------------------------------------
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -666,6 +802,8 @@ def main():
         suite_install(tmp)
         suite_verdicts()
         suite_consult(tmp)
+        suite_rename(root)
+        suite_docs(root)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
