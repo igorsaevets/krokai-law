@@ -1,0 +1,142 @@
+{
+  "_doc": "Which outside models to ask, and how to reach them. Adding, disabling or re-pointing a channel is a change HERE, never in the code. Copy this file next to your casefile.json to override it for one matter; `lawverbatim consult --registry <path>` overrides it for one run.",
+
+  "_why_a_file": "Every value in here rotates. Model names change monthly, a weekly subscription limit runs out mid-round, a vendor renames a flag. Measured on the system this was extracted from: two review CLIs changed their model identifier inside one week, and a document that asserted the old one read as documentation rather than as stale. Configuration rots visibly; code rots silently.",
+
+  "version": 1,
+
+  "_kinds": {
+    "cli": "A command-line tool you already have installed and already pay for. Needs NO API key: it runs on your existing subscription. This is the DEFAULT kind on purpose - a metered API key is a second bill and a second credential to leak, and for this audience neither is necessary.",
+    "http": "An OpenAI-compatible /chat/completions endpoint. Needs an API key, named here and read from the environment - never written in this file. Off unless you turn it on.",
+    "delegate": "Hand the whole round to a separate review harness if one is installed. Its absence is reported as 'not installed here', never as 'does not exist'."
+  },
+
+  "_retention": "🔴 `retains` is the question a lawyer has to be able to answer and nobody else's harness records: does this vendor keep what you send? It is printed in the plan BEFORE anything is sent, and written to the ledger afterwards. `unknown` is an honest value and prints as a warning, because 'we did not check' must never read as 'no'.",
+
+  "_telemetry": "Does the channel report which pages it actually opened? Where it does not, this toolkit derives grounding from the URLs in the answer text instead - and labels it as derived. `false` here makes the report print `not measured`, never `0`. Measured on the source system: a channel that had issued 61 searches printed as one that had issued none, because its count lived under a different key.",
+
+  "channels": {
+    "codex": {
+      "kind": "cli",
+      "enabled": true,
+      "label": "OpenAI Codex CLI",
+      "vendor": "OpenAI",
+      "cost": "subscription",
+      "retains": "unknown",
+      "telemetry": false,
+      "bin": "codex",
+      "bin_env": "CODEX_BIN",
+      "prompt": "stdin",
+      "argv": ["exec", "--sandbox", "read-only", "--skip-git-repo-check",
+               "-C", "{workdir}", "--color", "never",
+               "-c", "tools.web_search=true",
+               "-o", "{outfile}", "-"],
+      "_argv_notes": "The prompt goes on STDIN and argv ends with `-`. A positional prompt while something else pipes stdin hangs on 'Reading additional input from stdin...'. `--sandbox read-only` still writes the report, because `-o` is not sandboxed.",
+      "_search_switch": "MEASURED against codex-cli 0.146.0, not recalled. `--search` is a GLOBAL flag and its POSITION is the whole story: `codex --search exec ...` is accepted, `codex exec --search ...` dies with `unexpected argument '--search' found`. Separately, both `-c tools.web_search=true` and `-c web_search=\"live\"` are accepted - two different settings, not two spellings of one. Three outside reviewers split on this exact question and each was partly right; the shell settled it in two seconds. Anything asserted about a flag without running it is a guess wearing a citation.",
+      "_free_probe": "🔴 A config key can be validated with NO API call and no spend: `codex exec --strict-config -c <key>=<value> -` with empty stdin. An unknown key fails first with `unknown configuration field ... in -c/--config override`; a known key gets past config loading and fails later with `No prompt provided via stdin`. Confirmed with a deliberately bogus control key, because a probe that passes everything proves nothing.",
+      "_no_model_pinned": "No `-m` and no effort override ship here, deliberately. The identifier that was current when this file was written is already wrong by the time you read it, and a wrong `-m` is a hard failure, not a downgrade. Set `model` below to pin one for your machine; leaving it out uses whatever your own config already selects, which is the value you actually maintain.",
+      "notes": "Strategic questions and line-level audits of a finished draft. Reports no tool telemetry at all, so its grounding is derived from the URLs in its answer."
+    },
+
+    "agy": {
+      "kind": "cli",
+      "enabled": false,
+      "label": "Antigravity CLI (Gemini)",
+      "vendor": "Google",
+      "cost": "subscription",
+      "retains": "unknown",
+      "telemetry": true,
+      "bin": "agy",
+      "bin_env": "AGY_BIN",
+      "prompt": "file",
+      "argv": ["-p", "{prompt_file}", "--add-dir", "{workdir}"],
+      "_disabled_because": "Off by default because its flag set is the one that changes most and a wrong flag here exits non-zero in three seconds. Turn it on once `lawverbatim doctor --channels` reports it green on YOUR machine. Two traps if you do: a permission denial makes it discard the whole run while still exiting 0 with SUCCESS, and `--mode` is unvalidated so it is not the read-only guarantee it looks like.",
+      "notes": "Large-context reading and tie-breaking."
+    },
+
+    "gemini": {
+      "kind": "cli",
+      "enabled": false,
+      "label": "Gemini CLI",
+      "vendor": "Google",
+      "cost": "subscription",
+      "retains": "unknown",
+      "telemetry": false,
+      "bin": "gemini",
+      "prompt": "stdin",
+      "argv": ["-p", "-"],
+      "notes": "Enable after doctor confirms it. Kept as a worked example of adding a channel with two lines of JSON and no code."
+    },
+
+    "claude": {
+      "kind": "cli",
+      "enabled": false,
+      "label": "Claude Code CLI",
+      "vendor": "Anthropic",
+      "cost": "subscription",
+      "retains": "unknown",
+      "telemetry": false,
+      "bin": "claude",
+      "prompt": "stdin",
+      "argv": ["-p"],
+      "_independence_warning": "🔴 If you are already working inside Claude Code, this channel is NOT a second opinion - it is the same model family reading the same files, and its agreement measures nothing. Enable it only as a fourth voice alongside other vendors, never as the reviewer of work it helped write.",
+      "notes": "Off by default for independence, not for quality."
+    },
+
+    "http": {
+      "kind": "http",
+      "enabled": false,
+      "label": "Any OpenAI-compatible endpoint",
+      "vendor": "depends on the endpoint",
+      "cost": "metered",
+      "retains": "unknown",
+      "telemetry": false,
+      "base_url_env": "LAWVERBATIM_HTTP_BASE",
+      "key_env": "LAWVERBATIM_HTTP_KEY",
+      "model": "set-me",
+      "_key_handling": "The key is read from the named environment variable at call time and never written here, never printed, never logged. This file is safe to commit; a file with a key in it is not.",
+      "_metered_warning": "🔴 The only metered kind that ships. If you have a subscription to the same model, use the CLI channel instead: a subscription is several times cheaper than the same tokens through an API, and it cannot run up a bill you did not plan.",
+      "notes": "Off, and needs two environment variables before it will run."
+    },
+
+    "harness": {
+      "kind": "delegate",
+      "enabled": true,
+      "label": "A separate multi-model review harness, if installed",
+      "cost": "depends",
+      "retains": "declared by that harness",
+      "telemetry": true,
+      "candidates": [
+        "~/.claude/skills/model-orchestration/orchestrate.py",
+        "~/ai-second-opinion/orchestrate.py",
+        "~/tools/ai-second-opinion/orchestrate.py",
+        "./ai-second-opinion/orchestrate.py"
+      ],
+      "env": "LAWVERBATIM_REVIEW_HARNESS",
+      "notes": "If you already run a dedicated orchestration tool, this hands it the same gated brief and then audits everything it brings back. Preferred over the built-in transports when present: it has more channels and better telemetry. When it is absent the built-in CLI channels above still work, so this toolkit is never a dead feature."
+    }
+  },
+
+  "_ordering": "When `harness` is available it runs INSTEAD of the built-in transports for the channels it covers, not alongside them. Two paths to one vendor would double the spend and produce two answers that look like agreement.",
+
+  "grounding": {
+    "_doc": "How to read the URLs a reviewer cites. Domain suffixes, not full domains, so this stays short and portable.",
+    "primary": [".gov", ".mil", ".gov.uk", "europa.eu", "legislation.gov.uk", "canlii.org",
+                "courtlistener.com", "supremecourt.gov"],
+    "_snapshot_doc": "🔴 An ANNUAL EDITION is a snapshot, not the text in force - and it lives on a .gov domain, so a naive 'is it a government source' check passes it. Measured on the source system: a channel graded clean while grounded on a 2019 CFR edition. These patterns catch the common shapes.",
+    "snapshot": ["/CFR-19", "/CFR-20", "govinfo.gov/content/pkg/CFR-", "/uscode/text/",
+                 "?date=", "/historical/", "/archive/"],
+    "_nonauthoritative_doc": "Useful as a lead, never as the source of a legal position. A reviewer that grounds only here has told you where to look, not what the law says.",
+    "nonauthoritative": ["law.com", "lexology.com", "jdsupra.com", "natlawreview.com",
+                         "findlaw.com", "nolo.com", "avvo.com", "justia.com/blog",
+                         "medium.com", "reddit.com", "wikipedia.org", "quora.com",
+                         "linkedin.com", "substack.com"]
+  },
+
+  "limits": {
+    "_doc": "Ceilings, not targets. A round that hits one of these stops and says so.",
+    "timeout_seconds": 2400,
+    "max_parallel": 4,
+    "min_answer_chars": 800
+  }
+}

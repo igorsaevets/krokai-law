@@ -63,8 +63,45 @@ source and flags it when the next words are `but`, `unless`, `except`, `provided
 an index of your downloaded law. Because "I could not find it" is only meaningful if you know
 whether you ever downloaded it.
 
-**5. Makes it automatic.** Optional hooks fire when your AI writes a quotation into a document —
+**5. Asks other models, and distrusts them too.** One model can be confidently, fluently wrong.
+`lawverbatim review` sends the same question to several — using the AI subscriptions you already pay
+for, no API key needed — and then runs **their** quotations through the same checker as your own.
+That last step is the point: a reviewer's answer is input, not evidence.
+
+**6. Stops your client's data leaving.** Before anything is sent anywhere, an outbound gate scans it
+for credentials and personal identifiers, reports the kind and the line number, and **never prints
+the value**. Secrets have no override. And every dispatch is written to a ledger — which model,
+which vendor, what was sent (as a fingerprint, never the text), and whether that vendor keeps it.
+
+**7. Makes it automatic.** Optional hooks fire when your AI writes a quotation into a document —
 not when you remember to check. This is the part that matters most, and the reason is below.
+
+---
+
+## Why a second opinion, and why it is not a separate download
+
+A single model can produce a fluent, well-sourced, confident answer that is wrong — and you cannot
+tell from the answer. Several models fail differently, so their **disagreement** is the signal. That
+is the whole reason to ask more than one.
+
+But asking several models is only half of it. Measured on the system this came from:
+
+- one channel produced a quotation, both neighbouring sentences, and a tag claiming it had opened
+  the page — and had invented all three;
+- two channels returned the **same** pincite with two **different** "verbatim" texts. One was
+  quoting the decision; the other was quoting a later decision's paraphrase of it. Filed under the
+  first pincite, that is another authority's words under this authority's address;
+- five channels agreed with each other, and every one of them had returned the asker's own mistake,
+  because a fragment of the expected answer was sitting inside the question.
+
+So the reviewers' answers go through the same checker your own drafts do. **This is the step an
+orchestration tool structurally cannot perform** — it has your question and their answers, but not
+your corpus.
+
+If you already run a dedicated multi-model tool, `lawverbatim` hands it the same gated brief and
+audits everything it brings back. If you do not, the built-in channels run on the subscriptions you
+already have. Either way the command works, because a feature that requires installing a second,
+differently-named program is a feature most people will never actually have.
 
 ---
 
@@ -153,6 +190,26 @@ continues: "…, but do not include instances where…"*.
 | **typesetting** | your quotation is fine; the copy on disk is damaged |
 | **scattered** | every sentence is real; they are not next to each other in the source |
 | **assembled** | ellipsis quotation, all fragments in order, nothing material hidden |
+
+---
+
+## Things that already exist, and how this differs
+
+Found by the outside reviewers of this design rather than by its author, which is the honest way to
+report prior art. Feature descriptions are from each project's own page; none was tested here.
+
+| | what it does | how this differs |
+|---|---|---|
+| [eyecite](https://github.com/freelawproject/eyecite) (open source) | *"Find legal citations in any block of text"* | extraction, not verification. Excellent at the step before this one |
+| [citereview](https://github.com/kirinccchang/citereview) (open source) | validates citations against CourtListener, Cornell LII, GovInfo | checks the citation **exists**; this checks the **words** against a copy on your disk |
+| Clearbrief, ProofBrief, briefcheckr (commercial) | citation checking inside Word, backed by commercial databases | Word-integrated and database-backed; this is a local corpus you control, offline, with no per-seat licence |
+| Tracelaw (commercial) | runs several frontier models and cross-validates the findings | the closest to the second-opinion half — but the cross-validation is between models, not against primary text you hold |
+
+None of them was found to do the combination: **byte-for-byte checking against a corpus on your own
+disk, plus multi-model second opinions whose quotations are then run through that same check.** Three
+independent searches reported no confirmation of one. That is a statement about three searches, not
+proof that none exists — if you know of one, please open an issue, because using it would be less
+work than maintaining this.
 
 ---
 

@@ -390,6 +390,21 @@ def suite_prompts():
     w2 = anchor_warnings("Quote the entire section in full, all of the paragraphs in full.")
     ok("brief: an unanchored question with the in-full instruction is clean", not w2, str(w2))
 
+    # 🔴 The "quote it IN FULL" requirement is scoped, and these four cases are why. It fired on a
+    # software-architecture brief, which hands the reviewer no statutory text at all - a false
+    # positive in a safety check, which this toolkit treats as worse than a miss because it teaches
+    # the reader to dismiss the whole class by reflex.
+    ok("brief: the in-full rule stays silent when no legal text is handed over",
+       not anchor_warnings("Which architecture is right, and what does the loser cost?"))
+    ok("brief: the in-full rule fires when a citation IS handed over",
+       any("IN FULL" in why for why, _f in
+           anchor_warnings("Does 8 CFR 274a.12(c)(9) permit work before the notice?")))
+    ok("brief: the in-full rule fires on an embedded quotation of a provision",
+       any("IN FULL" in why for why, _f in anchor_warnings(
+           'The rule says "the officer may provide a simple statement of the reasons" - check it.')))
+    ok("brief: every required-phrase entry declares when it applies",
+       all(len(e) == 3 for e in __import__("lawverbatim.prompts", fromlist=["x"]).REQUIRED_PHRASES))
+
 
 def suite_bank(tmp):
     from lawverbatim.bank import candidates, in_bank, append_queue, queue_open_items
@@ -470,6 +485,120 @@ def suite_verdicts():
        set(ORDER) == set(DANGEROUS) | set(CLEAN), str(set(ORDER) ^ (set(DANGEROUS) | set(CLEAN))))
 
 
+def suite_consult(tmp):
+    """The review layer. Nothing here contacts a vendor; that is asserted, not assumed."""
+    import io as _io
+    import json as _json
+    import re as _re
+    from lawverbatim import consult as C
+
+    reg = C.load_registry()
+    chans = reg.get("channels") or {}
+    ok("consult: the shipped registry loads", bool(chans))
+
+    # Expectations are DERIVED from the file, never copied into the test. A registry with a fourth
+    # channel must not turn three correct tests red.
+    documented_kinds = set((reg.get("_kinds") or {}).keys())
+    used_kinds = {c.get("kind") for c in chans.values()}
+    ok("consult: every channel kind in use is documented in _kinds",
+       used_kinds <= documented_kinds, str(used_kinds - documented_kinds))
+    for name, ch in chans.items():
+        ok("consult: %s declares retention" % name, bool(ch.get("retains")))
+        ok("consult: %s declares a cost class" % name, bool(ch.get("cost")))
+    metered_on = [n for n, c in chans.items() if c.get("cost") == "metered" and c.get("enabled")]
+    ok("consult: no metered channel ships switched ON", not metered_on, str(metered_on))
+    # A key belongs in the environment. A registry that ships one is a registry that gets committed.
+    blob = _json.dumps(reg)
+    from lawverbatim.redact import scan as _scan
+    ok("consult: the shipped registry contains no secret-shaped value",
+       not [f for f in _scan(blob, "channels.json") if f[0] == "SECRET"])
+
+    # Every code the transports can emit must have a meaning. Otherwise a real failure prints as
+    # a bare token and the reader has to read the source to find out what happened.
+    src = _io.open(C.__file__.replace(".pyc", ".py"), encoding="utf-8").read()
+    emitted = set(_re.findall(r'\(\s*"([A-Z][A-Z_]{3,})"\s*,', src))
+    known = set(C.FAILURE_MEANING) | set(C.QUALITY_MEANING)
+    ok("consult: every emitted code has a plain-English meaning",
+       emitted <= known, str(sorted(emitted - known)))
+
+    g = reg["grounding"]
+    ok("consult: a .gov page is primary",
+       C.classify_url("https://www.ecfr.gov/current/title-8/section-274a.12", g) == "primary")
+    # 🔴 The measurement behind this test: a channel graded clean while grounded on an annual CFR
+    # edition. It is a dated snapshot, not the text in force, and it sits on a .gov domain - so the
+    # obvious "is this an official source" check passes it.
+    ok("consult: an annual edition is a snapshot, not current law",
+       C.classify_url("https://www.govinfo.gov/content/pkg/CFR-2019-title8-vol1/x.htm",
+                      g) == "snapshot")
+    ok("consult: a firm blog is not authority",
+       C.classify_url("https://www.jdsupra.com/legalnews/whatever-12345/", g) == "nonauthoritative")
+
+    clean = {"channel": "t", "text": "See https://www.ecfr.gov/current/title-8 for the text.",
+             "failures": [], "quality": []}
+    v, _q, _gr = C.triage(clean, g, retains="no")
+    ok("consult: a clean answer on a primary source grades OK", v == "OK", v)
+    v, _q, _gr = C.triage({**clean, "failures": [("TIMED_OUT", "")]}, g, retains="no")
+    ok("consult: any failure code grades FAILED", v == "FAILED", v)
+    v, q, _gr = C.triage({"channel": "t", "text": "no links here at all", "failures": [],
+                          "quality": []}, g, retains="no")
+    ok("consult: an answer citing nothing is DIRTY, not OK", v == "DIRTY", v)
+    ok("consult: ...and says why", "NO_URLS_CITED" in [c for c, _ in q], str(q))
+    v, q, _gr = C.triage(clean, g, retains="unknown")
+    ok("consult: unrecorded retention is surfaced, not assumed benign",
+       "UNKNOWN_RETENTION" in [c for c, _ in q], str(q))
+
+    # 🔴 NEGATIVE CONTROLS for the refusal detector. Each of these is a sentence a good review
+    # legitimately contains. The system this was extracted from graded the honest outcome its own
+    # brief asks for as FAILED, because its detector matched ordinary English about the law.
+    for line in ["my search found no confirmation that this rule exists",
+                 "the regulation does not set a deadline",
+                 "the firm's version is truncated and drops the condition",
+                 "I cannot find this sentence anywhere in the published text",
+                 "the agency declined to adopt the proposed comment"]:
+        ok("consult: refusal detector stays silent on %r" % line[:38],
+           not C._REFUSAL_RE.search(line))
+    ok("consult: refusal detector still catches a real policy refusal",
+       bool(C._REFUSAL_RE.search("I can't help with that request.")))
+
+    r = C._finish({"text": "x" * 2000, "failures": [], "quality": []}, "END-MARKER", 800)
+    ok("consult: a missing end marker is a FAILURE, because partial reads as complete",
+       "NO_END_MARKER" in [c for c, _ in r["failures"]])
+
+    # 🔴 The ledger records that something was sent, never what. A ledger that quietly kept the
+    # payload would be a second copy of the client's material, written by the tool that exists to
+    # stop exactly that.
+    secret_ish = "CONFIDENTIAL-CLIENT-SENTENCE-9137"
+    lp = os.path.join(tmp, "ledger.jsonl")
+    C.append_ledger(lp, "r1", "abc123", [{"channel": "t", "vendor": "v", "bytes": 10,
+                                          "payload_sha256": "deadbeef", "payload_bytes": 10,
+                                          "retains": "no", "verdict": "OK",
+                                          "text": secret_ish}], allow_pii=False)
+    body = _io.open(lp, encoding="utf-8").read()
+    ok("consult: the ledger stores hashes, never the payload", secret_ish not in body)
+    ok("consult: the ledger records which brief was sent", "abc123" in body)
+    ok("consult: the ledger records the retention answer", '"retains": "no"' in body)
+
+    rows = [{"channel": "t", "verdict": "DIRTY", "seconds": 1, "bytes": 10, "retains": "no",
+             "ground": {"total": 1, "primary": [], "snapshot": ["u"], "nonauthoritative": []},
+             "failures": [], "quality": [("DATED_EDITION_CITED", "1: u")]}]
+    ap = C.write_analytics(os.path.join(tmp, "an.md"), rows, 1.0, "abc123")
+    txt = _io.open(ap, encoding="utf-8").read()
+    ok("consult: analytics explains the code rather than printing a bare token",
+       C.QUALITY_MEANING["DATED_EDITION_CITED"][:40] in txt)
+    # 🔴 The caveat is load-bearing, not decoration. Two independent reviewers attacked this same
+    # mechanism: a URL printed in an answer comes from the same process that produces a fabricated
+    # quotation, so presenting the count as retrieval evidence manufactures corroboration out of
+    # the model's own assertion.
+    ok("consult: analytics says printing a URL is not opening it",
+       "printing is not opening" in txt.lower())
+    # An annual edition is the codification - official law, just not the text in force. Tabulating
+    # it opposite `primary` printed three government sources as `primary 0`.
+    ok("consult: a dated official edition still counts as official",
+       "| 1 | 1 |" in txt, txt.split("|---")[-1][:200])
+    ok("consult: analytics refuses to claim the answers are right",
+       "NOTHING HERE SAYS" in txt.upper())
+
+
 # ------------------------------------------------------------------------------------------------
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -493,6 +622,7 @@ def main():
         suite_config(tmp)
         suite_install(tmp)
         suite_verdicts()
+        suite_consult(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

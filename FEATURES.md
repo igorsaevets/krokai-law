@@ -764,6 +764,137 @@ is. One per round — and recorded outside the brief, or you risk absorbing your
 
 ---
 
+## consult
+
+`lawverbatim/consult.py` + `channels.json` — asking several outside models the same question, and
+distrusting all of them equally.
+
+### 🔴🔴 The architecture mistake this section exists to correct
+
+The first build of this toolkit shipped only the checker and delegated the entire second opinion to
+a separate program. The stated reason was sound and the conclusion was wrong, which is the most
+expensive combination there is.
+
+The reason: two files on one subject drift, and **the copy that is only read rots first**, because
+the executed copy is corrected by its own failures while the read-only one has no error signal.
+That is measured, and it is true — **of documentation**.
+
+The error was in what got pushed across the line along with the transport. These went out too:
+
+* deciding whether an answer is usable at all;
+* deciding whether its *sourcing* is usable, which is a different question;
+* recording what was sent, to whom, and whether that vendor keeps it;
+* stopping your own instruction files from reaching a vendor.
+
+None of those is transport. They are **trust** controls — the same family as *check the reviewer's
+quotations against the source*, which nobody proposed to move out. So the line is redrawn:
+
+| | |
+|---|---|
+| a separate harness, if you have one | **transport** — get answers back |
+| this module | **trust** — what may go out, what may be believed, and a record of both |
+
+And because a feature that requires installing a second, differently-named program is a feature most
+of the audience will never have, the built-in transports run when no harness is present. The tool is
+never a dead command.
+
+### Why the shipped channels need no API key
+
+The audience already pays for AI subscriptions and mostly does not have API keys — and should not be
+talked into getting one. A subscription is several times cheaper for the same model, cannot run up an
+unplanned bill, and is one fewer credential to leak. So the shipped channels are command-line tools
+driven over stdin, and the single metered kind ships **disabled**, with a self-test asserting that no
+metered channel is ever switched on by default.
+
+### 🔴 The grader reads machine codes, never prose
+
+The system this came from graded each channel by searching its warning text for tell-tale substrings.
+It cost twice:
+
+* the word `refusal` marked **FAILED** the exact behaviour the brief pays for — the brief tells every
+  channel that honestly writing *"my search found no confirmation"* is the second-best outcome,
+  better than anything but a verified quote;
+* `not set` matched the substantive finding *"the regulation does not set a deadline"*, and
+  `truncated` matched the good catch *"the firm's version drops the condition"*.
+
+Each is an ordinary English word a reviewer may legitimately use **about the law**. The fix there was
+a hand-curated list of distinctive strings, which works until someone adds a message. The fix here is
+structural: transports emit codes — `TIMED_OUT`, `NO_END_MARKER`, `SNAPSHOT_GROUNDING` — and the
+grader never touches prose. A code cannot collide with English. Five negative controls in the
+self-test hold the line, each one a sentence a good review legitimately contains.
+
+### Grounding derived from the answer, and labelled as derived
+
+Some channels report which pages they opened. Others report nothing at all — and *"reports nothing"*
+must never print as *"retrieved nothing"*, which is a claim nobody made. For the silent ones, every
+URL in the answer is extracted and classified. It is weaker evidence than telemetry, because a model
+can print a URL it never opened, so every table that shows it says **derived** out loud.
+
+### 🔴 An annual edition is a snapshot, not the law
+
+An annual edition of a regulation is a dated photograph, not the text in force — and it is published
+on a government domain, so *"is this an official source?"* answers yes and stops. Measured on the
+source system: a channel graded clean while grounded on a 2019 edition. Snapshot is therefore tested
+**before** primary, and the reason is written next to the code.
+
+Its own test caught the first version of this: the URL was lower-cased and the patterns were not, so
+`CFR-` could never match `cfr-`. **The check ran, reported nothing, and read as a clean result.** A
+detector that never fires is indistinguishable from a corpus with nothing to find.
+
+### 🔴 The send ledger
+
+One line per dispatch: which model, which vendor, a SHA-256 of what was sent, byte count, whether
+that vendor retains the interaction, whether personal identifiers were permitted. **The payload
+itself is never written** — and a self-test plants a distinctive sentence in a fake payload and
+asserts it is absent from the ledger file.
+
+Nobody else's harness records this. *Which client material went to which vendor, and when* is a
+question a professional can be required to answer, and reconstructing it afterwards from four
+vendors' web histories is not an answer.
+
+The hash is a fingerprint, not an archive: it proves **which** text was sent to someone who still has
+that text. It cannot reproduce it. That is the intended property — a ledger that could reproduce the
+payload would be a second copy of the client's material, created by the tool that exists to stop
+exactly that.
+
+### 🔴 The neutral working directory
+
+One agent CLI was measured injecting the instruction file of whatever directory it was launched from
+into the vendor's context, and its documented flag for suppressing that did not stop it. Asked how it
+knew a line from a project instruction file, the model answered that the file had been *"injected
+into my initial system context by the harness under a Project Context block"* — then quoted the
+sentence and located it correctly.
+
+It costs twice: a reviewer that has read your own instructions is **not a second opinion**, and in
+the first live run it cited that file back as corroboration; and the file reaches the vendor on every
+call, **outside the outbound gate**, which only ever scanned the brief. Launching from an empty
+scratch directory fixed it.
+
+### 🔴 The double-spend guard
+
+With a harness installed **and** a built-in channel enabled, the same vendor was about to be asked the
+same question twice. Caught by reading the plan before the first round, not by reading a bill after
+it. It costs twice and is worse than costing twice: two answers from one model read as two
+independent opinions agreeing, which is the single failure this whole exercise exists to prevent.
+
+The rule is deliberately blunt — if a harness runs, the built-ins stand down unless named with
+`--only`. Working out which vendors a third-party harness covers means parsing its registry, and a
+wrong guess there fails silently in the expensive direction.
+
+### The plan is printed before anything is sent
+
+Channel, vendor, transport, cost class, **retention**, and whether the binary is actually installed.
+Two facts that look like one are kept apart: *switched on* and *installed*. The first version
+collapsed them and printed a disabled-but-installed channel as `ready: yes`, which every reader takes
+to mean *will run*.
+
+`retains: unknown` is an honest value and prints as a warning, because **"we did not check" must
+never read as "no"**.
+
+`--dry-run` resolves the whole plan and spends nothing. It is a complete preflight, not a preview.
+
+---
+
 ## mutations
 
 `lawverbatim/mutations.py` — measuring how often the checker says *clean* about something that is not.
@@ -968,6 +1099,13 @@ than the design.
 | 28 | A manual unchanged for two years while the programme was suspended by other means | the two-question rule |
 | 29 | Right words, wrong pincite — headnote quoted, opinion cited | **not caught**; needs a reader |
 | 30 | A verdict list where one verdict was both dangerous and clean | a self-test invariant |
+| 31 | The second opinion split into a separate program, taking four **trust** controls with it | `consult.py`; the line redrawn |
+| 32 | A grader reading prose, marking FAILED the honest refusal its own brief asks for | machine codes + 5 negative controls |
+| 33 | Snapshot URLs lower-cased on one side only — the historical-edition check **could never fire** | lower-case both sides |
+| 34 | A harness and a built-in channel about to ask the same vendor the same question twice | the double-spend guard |
+| 35 | The completion marker not passed to the delegated harness — every complete answer would read as truncated | pass it, and say why |
+| 36 | `--harness-args` accepted and silently ignored | wired through |
+| 37 | "Quote the section IN FULL" demanded of a brief containing no statutory text at all | `applies_when` on every requirement |
 
 ---
 

@@ -183,12 +183,27 @@ ANCHOR_PATTERNS = [
      "rhetorical framing pulls toward confirming the asker's frame"),
 ]
 
+# 🔴 A REQUIREMENT THAT ALWAYS APPLIES IS A REQUIREMENT NOBODY READS.
+#
+# Each entry is `(required, why, applies_when)`. The third element is the whole point. The first
+# version had only two, so "you did not tell the reviewer to quote the section IN FULL" fired on
+# EVERY brief - including one asking for a software-architecture review, which puts no statutory
+# text in front of the reviewer and therefore has no section to quote in full.
+#
+# That is not noise, it is corrosion, and this toolkit's own doctrine says so: a false positive in
+# a safety check outranks a miss, because it teaches the reader to dismiss the class by reflex and
+# the reflex does not discriminate. Second measured instance of exactly this - the first was the
+# outbound gate firing on the sentence that documented it.
 REQUIRED_PHRASES = [
     (r"(?i)all (?:of the )?(?:paragraphs|subsections|text) .{0,30}in full"
      r"|quote the (?:entire|whole) (?:section|provision|paragraph)"
      r"|ЦЕЛИКОМ|все абзацы",
      "no instruction to quote the section IN FULL - without it a channel will only address the "
-     "fragment you handed it, which is the fragment that may already be wrong"),
+     "fragment you handed it, which is the fragment that may already be wrong",
+     # Applies only when the brief actually hands the reviewer a legal text: a citation shape, a
+     # section sign, or an embedded quotation long enough to be a provision.
+     r"(?i)\b\d+\s*(?:U\.?S\.?C\.?|C\.?F\.?R\.?)\b|§|\bMatter of [A-Z]"
+     r"|\bsections?\s+\d+[\w.\-()]*|[«\"“][^»\"”]{25,}[»\"”]"),
 ]
 
 
@@ -199,13 +214,16 @@ def anchor_warnings(brief_text):
     reviewers is not confirmation when the asker wrote the question - it measures the question.
     """
     import re
+    text = brief_text or ""
     out = []
     for pat, why in ANCHOR_PATTERNS:
-        for m in re.finditer(pat, brief_text or ""):
-            frag = " ".join((brief_text[max(0, m.start() - 60): m.start() + 90]).split())
+        for m in re.finditer(pat, text):
+            frag = " ".join((text[max(0, m.start() - 60): m.start() + 90]).split())
             out.append((why, frag[:150]))
-    for pat, why in REQUIRED_PHRASES:
-        if not re.search(pat, brief_text or ""):
+    for pat, why, applies_when in REQUIRED_PHRASES:
+        if applies_when and not re.search(applies_when, text):
+            continue
+        if not re.search(pat, text):
             out.append((why, ""))
     return out
 

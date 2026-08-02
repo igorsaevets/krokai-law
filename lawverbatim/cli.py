@@ -261,30 +261,50 @@ def cmd_brief(a):
 
 # -------------------------------------------------------------------------------- review
 def cmd_review(a):
-    """Prepare a brief, optionally delegate it, and ALWAYS audit what comes back."""
+    """Ask several outside models the same question, then check every quotation they send back.
+
+    ONE command, not two. An earlier draft had `review` for the brief and `consult` for the
+    dispatch, which is two names for one job - the same two-homes-for-one-subject defect this
+    toolkit exists to measure. The dispatch lives in `consult.py`; the verb the user types is
+    `review`, because that is what they are doing.
+    """
     from .config import load
-    from .review import prepare, run_harness, find_harness, audit_answers
+    from .consult import load_registry, find_harness, run_round, selected, plan
+    from .review import prepare, audit_answers
 
     cfg = load(a.dir)
     out = os.path.abspath(a.out or os.path.join(cfg.root, "reviews", "round"))
 
-    if a.audit:
+    def _audit(folder):
         from .corpus import Corpus
         from .citations import load_packs
         corpus = Corpus(cfg.source_dirs, skip_dirs=set(cfg["skip_dirs"]),
-                        cache_dir=cfg.cache, quiet=a.quiet)
-        rows = audit_answers(os.path.abspath(a.audit), corpus, load_packs(cfg["citation_packs"]),
+                        cache_dir=cfg.cache, quiet=True)
+        return audit_answers(folder, corpus, load_packs(cfg["citation_packs"]),
                              cfg["min_quote_length"])
-        return 0 if rows else 0
+
+    if a.audit:
+        _audit(os.path.abspath(a.audit))
+        return 0
+
+    reg = load_registry(a.registry, start=cfg.root)
+    harness = find_harness(reg, a.harness)
+
+    if a.channels:
+        # What COULD run here, including what is switched off, so "why is my channel not running"
+        # has an answer that does not require reading JSON.
+        plan(reg, selected(reg, with_disabled=True), harness=harness)
+        return 0
 
     question = a.question
     if a.file:
         question = io.open(a.file, encoding="utf-8", errors="replace").read()
     if not question:
-        print("give a question, or --file, or --audit <folder of answers>")
+        print("give a question, or --file, or --audit <folder>, or --channels")
         return 2
     material = io.open(a.material, encoding="utf-8", errors="replace").read() if a.material else ""
 
+    # The gate runs here, on the brief AND the system prompt, before the registry is even consulted.
     made = prepare(question, material, out_dir=out, marker=a.marker, tools=not a.no_tools,
                    canary=a.canary, allow_pii=a.allow_pii)
     if not made:
@@ -294,15 +314,19 @@ def cmd_review(a):
         print("\n--prepare-only: nothing was sent.")
         return 0
 
-    harness = find_harness(a.harness)
-    rc = run_harness(harness, bp, sp, out, extra=a.harness_args or ())
-    print("\n--- auditing the answers ---")
-    from .corpus import Corpus
-    from .citations import load_packs
-    corpus = Corpus(cfg.source_dirs, skip_dirs=set(cfg["skip_dirs"]),
-                    cache_dir=cfg.cache, quiet=True)
-    audit_answers(out, corpus, load_packs(cfg["citation_packs"]), cfg["min_quote_length"])
-    return rc
+    brief = io.open(bp, encoding="utf-8").read()
+    system = io.open(sp, encoding="utf-8").read()
+    rows, out = run_round(reg, system, brief, out, marker=a.marker,
+                          only=tuple(a.only or ()), skip=tuple(a.skip or ()),
+                          harness=harness, use_harness=not a.no_harness,
+                          harness_args=tuple(a.harness_args or ()),
+                          allow_pii=a.allow_pii, dry_run=a.dry_run)
+    if a.dry_run or not rows:
+        return 0
+
+    print("\n--- checking the reviewers' quotations against YOUR corpus ---")
+    _audit(out)
+    return 1 if any(r["verdict"] == "FAILED" for r in rows) else 0
 
 
 # --------------------------------------------------------------------------------- close
@@ -485,6 +509,15 @@ def build_parser():
     p.add_argument("--canary", action="store_true")
     p.add_argument("--allow-pii", action="store_true")
     p.add_argument("--prepare-only", action="store_true", help="build and gate, send nothing")
+    p.add_argument("--dry-run", action="store_true",
+                   help="resolve and print the whole plan, spend nothing. A complete preflight.")
+    p.add_argument("--channels", action="store_true",
+                   help="list every channel, including the ones switched off, and why")
+    p.add_argument("--registry", help="a channels.json other than the one next to your casefile")
+    p.add_argument("--only", nargs="*", help="run only these channels")
+    p.add_argument("--skip", nargs="*", help="run everything except these")
+    p.add_argument("--no-harness", action="store_true",
+                   help="ignore an installed harness and use the built-in transports")
     p.add_argument("--harness", help="path to a review harness (or set LAWVERBATIM_REVIEW_HARNESS)")
     p.add_argument("--harness-args", nargs="*")
     p.add_argument("--audit", help="skip everything and audit a folder of answers you already have")

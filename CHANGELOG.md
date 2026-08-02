@@ -3,6 +3,96 @@
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-08-02
+
+Corrects an architecture error in 0.1.0 that was found by a reader, not by a test.
+
+### Changed — the correction
+
+0.1.0 shipped the checker and pushed the whole second opinion into a separate program, on the
+grounds that two files covering one subject drift apart and the read-only copy rots first. That
+reasoning is sound and it was applied to the wrong boundary.
+
+What went across the line with the transport was not transport. It was **trust**: deciding whether
+an answer is usable, deciding whether its *sourcing* is usable, recording what was sent and to whom,
+and stopping your own instruction files from reaching a vendor. Those belong beside *check the
+reviewer's quotations*, which nobody proposed to move out.
+
+    a separate harness, if installed  ->  transport: get answers back
+    this toolkit                      ->  trust: what may go out, what may be believed, the record
+
+The practical cost of the old boundary fell entirely on the reader: `review` without that other
+program installed printed instructions and did nothing.
+
+### Added
+
+- **`consult.py` and `channels.json`.** Multi-model review with the channel set in configuration
+  rather than code. Shipped channels are **command-line tools on subscriptions you already pay
+  for — no API key**. The one metered kind ships disabled, and a self-test asserts that no metered
+  channel is ever enabled by default.
+- **A plan printed before anything is sent**: channel, vendor, transport, cost, **retention**, and
+  whether the binary is actually installed. `--dry-run` is a complete preflight and spends nothing.
+- **Failure grading from machine codes, never prose.** The predecessor searched warning text for
+  substrings, and marked FAILED the honest *"my search found no confirmation"* its own brief asks
+  for; `not set` matched the finding *"the regulation does not set a deadline"*. Five negative
+  controls now hold that line.
+- **Grounding classification** of every URL a reviewer cites — primary, annual-edition snapshot,
+  commentary — labelled **derived** wherever shown, because a model can print a URL it never opened.
+- **A send ledger**: one line per dispatch with a SHA-256 fingerprint, the vendor, and whether that
+  vendor retains the interaction. The payload is never written, and a self-test proves it.
+- **A neutral working directory** before dispatch, because one agent CLI was measured injecting the
+  instruction file of its launch directory into the vendor's context, outside the outbound gate.
+- **`ANALYTICS.md` written every run, unasked** — an instrument report about the reviewers that
+  states plainly it says nothing about whether they are right.
+- 42 further self-checks: **123 total**.
+
+### Changed by an outside review of this release
+
+Four independent models were sent this design. Their disagreement was the product; two of them
+converged on the same weakness, which is what made it credible.
+
+- 🔴 **"Grounding" was renamed, because the word was doing work it had not earned.** Two reviewers
+  independently attacked the same mechanism: a URL printed in an answer is produced by the *same
+  process* that produces a fabricated quotation, so it is not an independent signal — and knowing
+  that an official source ends in `.gov` is exactly the knowledge needed to mint a convincing one.
+  Presenting the count as grounding manufactures corroboration out of the model's own assertion,
+  which is this toolkit's founding failure repeated one level down. The counts stay, because *what
+  an answer asks you to rely on* is worth knowing. The word that implied retrieval is gone, and the
+  report now says **printing is not opening**.
+- 🔴 **An annual edition is official law.** It was tabulated opposite `primary`, so a channel citing
+  three government codifications printed as `primary 0` — which reads as *cited nothing official*
+  and is false. It is the codification; it is simply not the text in force. Now counted as official
+  **and** flagged as dated.
+- **The exposure a second opinion creates is now printed in the plan**: *N independent vendors will
+  each receive this material in full.* Multiplying the opinions multiplies the confidentiality risk,
+  and a ledger records that without preventing it. In the plan rather than the documentation,
+  because a warning in a README is read once.
+- **Prior art added to the README** — `eyecite`, `citereview`, and three commercial tools, none of
+  which the author had found.
+
+Recorded and **not** adopted: two reviewers proposed storing an encrypted copy of every payload so
+the ledger could reproduce it. That would create a second copy of the client's material inside the
+tool built to stop exactly that. The ledger's property is documented honestly instead: it proves
+*which* text was sent, to someone who still holds that text.
+
+### Fixed — all seven found before the first paid round, six by reading the plan
+
+- The same vendor would have been asked the same question **twice** when a harness was installed
+  alongside a built-in channel — double cost, and two answers from one model read as two independent
+  opinions agreeing.
+- The completion marker was not passed to a delegated harness, so every complete answer would have
+  been reported truncated, inviting a re-run and a second bill.
+- `--harness-args` was accepted and silently ignored.
+- The historical-edition check **could never fire**: URLs were lower-cased and the patterns were not.
+  It ran, found nothing, and read as a clean result. Its own test caught it.
+- A disabled-but-installed channel printed as `ready: yes`, which reads as *will run*.
+- *"Installed but ignored by a flag"* printed as *"none installed"*, sending the reader to look for
+  an installation problem that did not exist.
+- 🔴 **"Quote the section IN FULL" was demanded of every brief**, including one containing no
+  statutory text at all. Second measured instance of a false positive in this toolkit's own safety
+  checks — and by its own doctrine that outranks a miss, because it teaches the reader to dismiss
+  the whole class by reflex. Every requirement now declares when it applies.
+
 ## [0.1.0] — 2026-08-02
 
 First release. Extracted from a working system that had been developed against a live matter over
@@ -43,7 +133,8 @@ session. The complete list of those failures is the incident log in
   that measurably stops fabricated quotations.
 - **Reviewer-answer auditing.** `lawverbatim review --audit` runs every quotation from every outside
   reviewer through the same checker as your own drafts. This is the step an orchestration harness
-  cannot do, and it is the reason the two are separate programs.
+  cannot do. ~~And it is the reason the two are separate programs.~~ **SUPERSEDED in 0.2.0** — that
+  conclusion was wrong, and the correction is the headline of the next release.
 - **A mutation bank.** Every defect class ever paid for, applied to quotations the checker already
   blessed, counting how many it still calls clean. Holes found for free rather than in a filing.
 - **`casefile.json`.** The system this came from had absolute paths compiled into eleven scripts,
