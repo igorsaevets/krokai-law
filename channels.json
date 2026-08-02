@@ -11,7 +11,7 @@
     "delegate": "Hand the whole round to a separate review harness if one is installed. Its absence is reported as 'not installed here', never as 'does not exist'."
   },
 
-  "_retention": "🔴 `retains` is the question a lawyer has to be able to answer and nobody else's harness records: does this vendor keep what you send? It is printed in the plan BEFORE anything is sent, and written to the ledger afterwards. `unknown` is an honest value and prints as a warning, because 'we did not check' must never read as 'no'.",
+  "_retention": "🔴 `retains` is the question a lawyer has to be able to answer and nobody else's harness records: does this vendor keep what you send? It is printed in the plan BEFORE anything is sent, which is the moment the decision is actually made. `unknown` is an honest value and prints as a warning, because 'we did not check' must never read as 'no'.",
 
   "_telemetry": "Does the channel report which pages it actually opened? Where it does not, this toolkit derives grounding from the URLs in the answer text instead - and labels it as derived. `false` here makes the report print `not measured`, never `0`. Measured on the source system: a channel that had issued 61 searches printed as one that had issued none, because its count lived under a different key.",
 

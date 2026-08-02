@@ -841,21 +841,24 @@ Its own test caught the first version of this: the URL was lower-cased and the p
 `CFR-` could never match `cfr-`. **The check ran, reported nothing, and read as a clean result.** A
 detector that never fires is indistinguishable from a corpus with nothing to find.
 
-### 🔴 The send ledger
+### Considered and cut: a persistent dispatch ledger
 
-One line per dispatch: which model, which vendor, a SHA-256 of what was sent, byte count, whether
-that vendor retains the interaction, whether personal identifiers were permitted. **The payload
-itself is never written** — and a self-test plants a distinctive sentence in a fake payload and
-asserts it is absent from the ledger file.
+A file recording one line per dispatch — which model, which vendor, a fingerprint of what was sent,
+whether that vendor retains it — was built and then **removed**. It is recorded here rather than
+quietly deleted, so the next person to have the idea knows it was weighed and dropped rather than
+overlooked.
 
-Nobody else's harness records this. *Which client material went to which vendor, and when* is a
-question a professional can be required to answer, and reconstructing it afterwards from four
-vendors' web histories is not an answer.
+Two things stay, because they cost nothing and are used every round:
 
-The hash is a fingerprint, not an archive: it proves **which** text was sent to someone who still has
-that text. It cannot reproduce it. That is the intended property — a ledger that could reproduce the
-payload would be a second copy of the client's material, created by the tool that exists to stop
-exactly that.
+- the brief's SHA-256 is printed **before** dispatch, so *every channel got the same brief* is a fact
+  rather than an intention;
+- the plan names each vendor and its retention answer before anything leaves, which is the moment
+  the decision is actually made.
+
+Both are checks on **this** round. Neither accumulates a history, and a self-test asserts that no
+such file is written — because a growing record of what was sent to whom is itself a second record
+of the client's material, and its absence is a property worth testing rather than a rule to
+remember.
 
 ### 🔴 The neutral working directory
 

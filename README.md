@@ -70,8 +70,10 @@ That last step is the point: a reviewer's answer is input, not evidence.
 
 **6. Stops your client's data leaving.** Before anything is sent anywhere, an outbound gate scans it
 for credentials and personal identifiers, reports the kind and the line number, and **never prints
-the value**. Secrets have no override. And every dispatch is written to a ledger — which model,
-which vendor, what was sent (as a fingerprint, never the text), and whether that vendor keeps it.
+the value**. Secrets have no override. The redaction is deliberately partial rather than total —
+it cuts the surname and keeps the given name, cuts the house number and keeps the street and city —
+because a reviewer who cannot tell which city your client lives in will answer a more general
+question than the one you asked.
 
 **7. Makes it automatic.** Optional hooks fire when your AI writes a quotation into a document —
 not when you remember to check. This is the part that matters most, and the reason is below.

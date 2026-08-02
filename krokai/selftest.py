@@ -609,19 +609,12 @@ def suite_consult(tmp):
     ok("consult: a missing end marker is a FAILURE, because partial reads as complete",
        "NO_END_MARKER" in [c for c, _ in r["failures"]])
 
-    # 🔴 The ledger records that something was sent, never what. A ledger that quietly kept the
-    # payload would be a second copy of the client's material, written by the tool that exists to
-    # stop exactly that.
-    secret_ish = "CONFIDENTIAL-CLIENT-SENTENCE-9137"
-    lp = os.path.join(tmp, "ledger.jsonl")
-    C.append_ledger(lp, "r1", "abc123", [{"channel": "t", "vendor": "v", "bytes": 10,
-                                          "payload_sha256": "deadbeef", "payload_bytes": 10,
-                                          "retains": "no", "verdict": "OK",
-                                          "text": secret_ish}], allow_pii=False)
-    body = _io.open(lp, encoding="utf-8").read()
-    ok("consult: the ledger stores hashes, never the payload", secret_ish not in body)
-    ok("consult: the ledger records which brief was sent", "abc123" in body)
-    ok("consult: the ledger records the retention answer", '"retains": "no"' in body)
+    # 🔴 NOTHING ACCUMULATES ACROSS ROUNDS. A persistent dispatch ledger was built and cut on
+    # 2026-08-02. This asserts it stays cut: a file that quietly grows a history of what was sent
+    # to whom is a second record of the client's material, and its absence is a property worth
+    # testing rather than a thing to remember.
+    ok("consult: no cross-round ledger is written or exposed",
+       not hasattr(C, "append_ledger") and "ledger.jsonl" not in src.lower())
 
     rows = [{"channel": "t", "verdict": "DIRTY", "seconds": 1, "bytes": 10, "retains": "no",
              "ground": {"total": 1, "primary": [], "snapshot": ["u"], "nonauthoritative": []},

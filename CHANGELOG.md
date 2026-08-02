@@ -38,8 +38,6 @@ program installed printed instructions and did nothing.
   controls now hold that line.
 - **Grounding classification** of every URL a reviewer cites — primary, annual-edition snapshot,
   commentary — labelled **derived** wherever shown, because a model can print a URL it never opened.
-- **A send ledger**: one line per dispatch with a SHA-256 fingerprint, the vendor, and whether that
-  vendor retains the interaction. The payload is never written, and a self-test proves it.
 - **A neutral working directory** before dispatch, because one agent CLI was measured injecting the
   instruction file of its launch directory into the vendor's context, outside the outbound gate.
 - **`ANALYTICS.md` written every run, unasked** — an instrument report about the reviewers that
@@ -65,15 +63,23 @@ converged on the same weakness, which is what made it credible.
   **and** flagged as dated.
 - **The exposure a second opinion creates is now printed in the plan**: *N independent vendors will
   each receive this material in full.* Multiplying the opinions multiplies the confidentiality risk,
-  and a ledger records that without preventing it. In the plan rather than the documentation,
-  because a warning in a README is read once.
+  and naming it is not preventing it. In the plan rather than the documentation, because a warning
+  in a README is read once.
 - **Prior art added to the README** — `eyecite`, `citereview`, and three commercial tools, none of
   which the author had found.
 
-Recorded and **not** adopted: two reviewers proposed storing an encrypted copy of every payload so
-the ledger could reproduce it. That would create a second copy of the client's material inside the
-tool built to stop exactly that. The ledger's property is documented honestly instead: it proves
-*which* text was sent, to someone who still holds that text.
+Recorded and **not** adopted: two reviewers proposed storing an encrypted copy of every payload so a
+ledger could reproduce it. That would create a second copy of the client's material inside the tool
+built to stop exactly that. The whole ledger has since been cut — see below.
+
+### Removed before release
+
+- **The persistent dispatch ledger.** Built, documented, tested, and cut on the author's
+  instruction: *«этот функционал делать не будем»*. What replaced it is nothing — deliberately. The
+  brief's hash is still printed before dispatch and the plan still names every vendor and its
+  retention answer, so the checks that matter happen at the moment the decision is made. Nothing
+  accumulates across rounds, and a self-test asserts it stays that way: a growing record of what
+  went to whom is itself a second record of the client's material.
 
 ### Fixed — all seven found before the first paid round, six by reading the plan
 

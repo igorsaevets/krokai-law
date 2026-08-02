@@ -12,7 +12,7 @@ things that were pushed out of this program along with the transport were not tr
 
 * deciding whether an answer is usable at all;
 * deciding whether an answer's *sourcing* is usable, which is not the same question;
-* recording what was sent, to whom, and whether that vendor keeps it;
+* telling you what each vendor will receive, and what it keeps, BEFORE anything is sent;
 * stopping your own instruction files from reaching the vendor in the first place.
 
 Those are all **trust** controls, the same family as "check the reviewer's quotations against the
@@ -22,8 +22,11 @@ a hole exactly where its audience needed it most.
 So the line is now:
 
     a separate harness, if you have one  ->  TRANSPORT. Get answers back.
-    this module                          ->  TRUST. What may go out, what may be believed,
-                                             and a record of both.
+    this module                          ->  TRUST. What may go out, and what may be believed.
+
+Everything here happens in the round it belongs to. Nothing accumulates a history across rounds: a
+persistent dispatch ledger was built and cut - see the note further down - and the only durable
+artefacts are the answers themselves and the report about them, both inside the round's folder.
 
 And when no harness is installed, this module carries its own transport for command-line channels,
 because a feature that requires a second unpublished tool is a feature the reader does not have.
@@ -64,7 +67,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 __all__ = ["load_registry", "plan", "run_round", "triage", "grounding_of",
-           "write_analytics", "append_ledger", "REGISTRY_NAME"]
+           "write_analytics", "REGISTRY_NAME"]
 
 REGISTRY_NAME = "channels.json"
 
@@ -293,7 +296,7 @@ def plan(reg, chosen, harness=None, delegating=None, allow_pii=False, printer=pr
     # 🔴 THE RISK THIS FEATURE CREATES, named where it is incurred. Raised by a reviewer of this
     # very design: asking N models the same question multiplies the confidentiality exposure by N.
     # Each vendor gets the whole payload, each keeps it under its own policy, and a breach at any
-    # one of them is a breach of the lot. The ledger records that; recording is not mitigating.
+    # one of them is a breach of the lot.
     #
     # It is said here rather than in the documentation because a warning in a README is read once
     # and a warning in the plan is read every time - which is this project's oldest measurement:
@@ -302,7 +305,7 @@ def plan(reg, chosen, harness=None, delegating=None, allow_pii=False, printer=pr
     if n > 1:
         printer("  ⚠️  %d independent vendors will each receive this material in full." % n)
         printer("     Multiplying the opinions multiplies the exposure. If one is breached, the")
-        printer("     material is out - and the ledger below records that, it does not prevent it.")
+        printer("     material is out. Nothing downstream can undo that, so decide it here.")
     printer("")
     return problems
 
@@ -485,9 +488,9 @@ def absorb_delegated(out_dir, marker, floor):
 
     🔴 THIS FUNCTION EXISTS BECAUSE THE FIRST LIVE ROUND EXPOSED THE HOLE IT FILLS. With a harness
     installed the built-in transports correctly stand down - and the analytics printed
-    `OK 0 · DIRTY 0 · FAILED 0` over four real answers, while the send ledger recorded nothing at
-    all. So in the most common configuration, the layer that claims to be the trust layer saw
-    nothing and said so in a format that read like a clean result.
+    `OK 0 · DIRTY 0 · FAILED 0` over four real answers. So in the most common configuration, the
+    layer that claims to be the trust layer saw nothing and said so in a format that read like a
+    clean result.
 
     No amount of re-reading found that. Running it did, on the first attempt, which is the whole
     argument for testing a review tool by reviewing something real with it.
@@ -600,35 +603,15 @@ def triage(result, g, retains="unknown"):
     return verdict, quality, ground
 
 
-# =================================================================================================
-# The record: what was sent, to whom, and whether they keep it
-# =================================================================================================
-
-def append_ledger(path, round_id, brief_sha, rows, allow_pii):
-    """One line per channel per round. 🔴 The payload is never written - only its hash.
-
-    Nobody else's harness records this, and for this audience it is not optional. "Which client
-    material went to which vendor, and when" is a question a professional can be asked to answer
-    under a duty of confidentiality, and reconstructing it afterwards from four vendors' web
-    histories is not an answer. The hash proves WHICH text was sent without storing the text.
-    """
-    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    with io.open(path, "a", encoding="utf-8", newline="\n") as f:
-        for r in rows:
-            f.write(json.dumps({
-                "round": round_id,
-                "when": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                "channel": r["channel"],
-                "vendor": r.get("vendor"),
-                "brief_sha256": brief_sha,
-                "payload_sha256": r.get("payload_sha256"),
-                "payload_bytes": r.get("payload_bytes"),
-                "retains": r.get("retains"),
-                "pii_allowed": bool(allow_pii),
-                "verdict": r.get("verdict"),
-                "answer_bytes": r.get("bytes"),
-            }, ensure_ascii=False) + "\n")
-    return path
+# NOT HERE: a persistent record of what was sent to which vendor and when.
+#
+# A dispatch ledger was built and then removed - Igor, 2026-08-02: «этот функционал делать не
+# будем». Noted rather than silently dropped, because the next person to think of it should know it
+# was considered and cut, not overlooked.
+#
+# What survives is the part that costs nothing and is used every round: the brief's SHA-256 is
+# printed before dispatch, so "every channel got the same brief" is a fact rather than an intention.
+# That is a check on THIS round. It is not a file that accumulates.
 
 
 def write_analytics(path, rows, seconds, brief_sha, lang="en"):
@@ -802,7 +785,6 @@ def run_round(reg, system, brief, out_dir, marker="REVIEW-COMPLETE", only=(), sk
     io.open(system_path, "w", encoding="utf-8", newline="\n").write(system)
 
     brief_sha = hashlib.sha256(brief.encode("utf-8")).hexdigest()
-    round_id = time.strftime("%Y%m%d-%H%M%S")
     printer("  brief sha256 %s  (%d chars)" % (brief_sha[:16], len(brief)))
 
     origin = os.getcwd()
@@ -843,19 +825,12 @@ def run_round(reg, system, brief, out_dir, marker="REVIEW-COMPLETE", only=(), sk
                     encoding="utf-8", newline="\n").write(r["text"])
         verdict, quality, ground = triage(r, g, ch.get("retains"))
         rows.append({**r, "verdict": verdict, "quality": quality, "ground": ground,
-                     "vendor": ch.get("vendor"), "retains": ch.get("retains") or "unknown",
-                     "payload_sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
-                     "payload_bytes": len(payload.encode("utf-8"))})
+                     "vendor": ch.get("vendor"), "retains": ch.get("retains") or "unknown"})
 
     for r in delegated:
         verdict, quality, ground = triage(r, g, "unknown")
         rows.append({**r, "verdict": verdict, "quality": quality, "ground": ground,
-                     "vendor": "via harness", "retains": "unknown",
-                     # The harness owns the envelope, so what it actually sent is its record, not
-                     # this one. Claiming a payload hash here would be inventing evidence; the
-                     # brief hash below is the part this layer can honestly attest to.
-                     "payload_sha256": None,
-                     "payload_bytes": None})
+                     "vendor": "via harness", "retains": "unknown"})
 
     secs = time.time() - t0
     printer("")
@@ -879,9 +854,6 @@ def run_round(reg, system, brief, out_dir, marker="REVIEW-COMPLETE", only=(), sk
 
     ap = write_analytics(os.path.join(out_dir, "ANALYTICS.md"), rows, secs, brief_sha)
     printer("analytics written without being asked: %s" % ap)
-    lp = append_ledger(os.path.join(out_dir, "..", "consult-ledger.jsonl"),
-                       round_id, brief_sha, rows, allow_pii)
-    printer("ledger appended (hashes only, never the text): %s" % os.path.abspath(lp))
     printer("")
     printer("🔴 NOTHING ABOVE SAYS THE ANSWERS ARE RIGHT. Now check their quotations:")
     printer("     krokai review --audit %s" % out_dir)
