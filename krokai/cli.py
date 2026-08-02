@@ -98,7 +98,7 @@ def cmd_quote(a):
     """One quotation, one answer. The command you run before pasting something into a document."""
     from .config import load
     from .corpus import Corpus
-    from .verify import check
+    from .verify import check, neighbours
     from .verdicts import label, meaning
 
     cfg = load(a.dir)
@@ -118,6 +118,21 @@ def cmd_quote(a):
         print("  found in: %s" % os.path.relpath(where, cfg.root))
     if detail:
         print("  %s" % detail)
+
+    # 🔴 Shown for a quotation that PASSED, which is the whole reason it is here. A flagged quotation
+    # already sends you to the source; a verified one is the one nobody opens again. The two
+    # sentences around it are where a dropped proviso lives, and no string comparison can see one.
+    for path, before, after in neighbours(text, corpus):
+        if not (before or after):
+            continue
+        print("\n  in %s, the source reads:" % os.path.relpath(path, cfg.root))
+        if before:
+            print("    before  …%s" % before[-220:])
+        if after:
+            print("    after   %s…" % after[:220])
+        print("    🔴 Read these two. A condition sitting immediately after a quotation is a "
+              "condition\n       you have dropped, and the checker above cannot see it.")
+
     if verdict == "NOT_FOUND":
         print("""
 🔴 NOT FOUND is not the same as INVENTED. Rule them out in this order, and only the last one is a

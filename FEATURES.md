@@ -1131,6 +1131,13 @@ than the design.
 | 43 | The Russian README was two sections behind the English one — including the **prior-art table**, so it presented a tool with no precedent | the two versions must credit the same outside projects |
 | 44 | "Run the suite before you push" is a rule, and rules fire by topic | the suite runs in CI, executed by the harness |
 | 45 | The CI step checking that `doctor`'s status agrees with its exit code **died on its own first run** under `bash -e`, and the tool was fine | `cmd \|\| rc=$?`, never `cmd; rc=$?` |
+| 46 | 🔴🔴 A **substring** test on domain suffixes graded `www.milano.it`, `uscis.gov.ru`, `law.gov.cn`, `www.mil.kg` and `ecfr.i0.gov.cm` as **official law** — `.mil` is inside `milano`. `primary` is the strongest word this tool has | label-anchored suffix matching; host parsed by `urlsplit`, not by hand |
+| 47 | A citation to a **government-lookalike** host was graded `other`, which carries no warning, so the round came back `OK`. The three measured shapes are live domains, not hypotheticals | a `lookalike` bucket, threshold-free: an official *label* on a host that ends somewhere else |
+| 48 | 🔴 `NO_TELEMETRY` graded, so with an external harness installed **every** answer was `DIRTY` forever — and the console printer skipped that one code, so the verdict had no printed reason | instrument codes are reported and printed, and do not grade |
+| 49 | The analytics penalised `DATED_EDITION_CITED` while the brief never asked a reviewer to check whether a codification was in force — an instrument stricter than its instructions | every grading code must have something in the brief it grades against, asserted by a test |
+| 50 | 🔴 Two negative controls removed the corpus window clamps and the suite stayed **green**: the assertion was made where the damage is *read*, and every caller cuts the window at a sentence boundary first | clamps asserted on `Corpus`, at both ends, plus a test that the clamp is reached |
+| 51 | `VERIFIED` said *"present word for word in a primary source"* while measuring *"present in a file you put in a folder"* — this toolkit's own headline defect, turned inward. Four outside reviewers named it independently when asked what the design could not see | the verdict says which of the two it means |
+| 52 | `prove()` returned the same bare `False` for *failed* and for *nothing was asserted* — so a statute, which has no party, could never be proven and was never told why | not-checked is reported as not-checked |
 
 ---
 
@@ -1138,6 +1145,19 @@ than the design.
 
 - **Whether a rule is still in force.** The checker compares against your disk. A repealed regulation
   verifies perfectly. Nothing here touches the network.
+- 🔴 **Whether the file on your disk is what it claims to be.** This is the largest uncovered area
+  and it deserves more than a line, because four independent outside reviewers, asked separately
+  what this design was structurally unable to see about itself, all four answered with it. The
+  corpus is a set of downloads whose provenance is **asserted, never proven**: no signature check,
+  no publication-date check, no chain of custody, nothing that ties the bytes to an official origin.
+  A wrong-year edition, a silently truncated scrape, an unofficial compilation saved under an
+  official name, or a file fetched from a lookalike domain will all verify exactly as well as the
+  law does — and every mechanism added since makes that verdict *more* confident, not less: a
+  manifest fingerprints the wrong bytes faithfully, and the neighbours filler extracts context from
+  the wrong document faithfully. One reviewer put the mechanism plainly: *probing requires an
+  independent reference, and there is none in the loop.* What the tool does instead is keep the two
+  claims apart in its own vocabulary — `verified` now says *in a file in your sources folder* — and
+  make the library's retrieval dates visible. That is honesty about the gap, not a fix for it.
 - **Whether a quotation is apt.** `VERIFIED` means the string is present, not that it supports the
   proposition it is cited for.
 - **The right words under a pincite to the wrong page of the right document** (incident 29). A

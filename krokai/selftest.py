@@ -194,6 +194,30 @@ def suite_corpus(corpus, law):
     ok("corpus: a match cannot straddle two documents",
        corpus.find("classroom instruction. Volume 7") is None)
 
+    # 🔴 THE CONTEXT WINDOWS ARE CLAMPED TO THE FILE, AT BOTH ENDS - asserted here, at the level the
+    # clamp lives, and not through a caller. `window()`'s own docstring records that an earlier
+    # version clamped only the low end, so a window near the end of a document quoted the NEXT
+    # document as its continuation. There was no test. Two negative controls removed the clamps and
+    # the suite stayed green: every caller cuts the window at a sentence boundary, and that discards
+    # the overrun before any assertion downstream can see it.
+    #
+    # This is the third measured instance in this project of a guard that is correct and uncovering,
+    # and the shape repeats: the assertion was made where the damage is READ instead of where it is
+    # PRODUCED.
+    mid = corpus.paths[1]                      # the middle document, so both edges have a neighbour
+    body = corpus.text_of(mid)
+    k = corpus.paths.index(mid)
+    start, end = corpus.starts[k], corpus.ends[k]
+    for label, got in [
+            ("before, asked for far more than the file holds", corpus.before(mid, start + 5, 4000)),
+            ("after, asked past the end of the file",
+             corpus.after(mid, end - len(body) + len(body) - 5, 5, 4000)),
+            ("window, both ends past the file", corpus.window(mid, start + 5, 10, 4000, 4000))]:
+        ok("corpus: %s stays inside it" % label,
+           got in body and "\x00" not in got, repr(got[:60]) + " … " + repr(got[-60:]))
+    ok("corpus: the clamp is actually reached, so the test above can fail",
+       len(corpus.window(mid, start + 5, 10, 4000, 4000)) < 8010, "window was never truncated")
+
 
 def suite_verify(corpus):
     from krokai.verify import check
@@ -250,6 +274,54 @@ def suite_verify(corpus):
                      "and would harm students", corpus)
     ok("verdict WRONG_SPEAKER when the source is reciting a commenter",
        v == "WRONG_SPEAKER", "%s :: %s" % (v, d))
+
+    # 🔴 NEIGHBOURS. Deliberately tested on a quotation that PASSES, because that is the whole
+    # argument for the feature: a flagged quotation already sends the reader to the source, and a
+    # verified one is the one nobody opens again. `truncated_condition` cannot help here - it is a
+    # detector, it fires only mid-sentence and only on a listed limiter, and it is narrow on purpose.
+    from krokai.verify import neighbours
+    q = ("certified by a designated school official to consist of at least eighteen "
+         "clock hours of attendance a week")
+    nb = neighbours(q, corpus)
+    ok("neighbours: a located quotation yields its surroundings", bool(nb), str(nb)[:120])
+    ok("neighbours: at least one side is real text, not an empty cell",
+       any(b or af for _p, b, af in nb), str(nb)[:200])
+    ok("neighbours: an invented sentence has no neighbours rather than wrong ones",
+       neighbours("A wholly invented sentence that appears in no source on this disk", corpus) == [])
+    # The window must not run past the end of the file into the next document: that would present
+    # one authority's sentence as the continuation of another's - the defect this whole module
+    # exists to catch, produced by the tool itself.
+    #
+    # 🔴 THE OBVIOUS VERSION OF THIS TEST WAS UNCOVERING, and a negative control is what found it.
+    # It asserted that no neighbour contains the `\x00` document separator. It cannot: the neighbour
+    # is cut at a sentence boundary, and the last sentence before the separator has no `\x00` in it,
+    # so the overrun stays invisible while the assertion reads as protection. Removing the clamp in
+    # `corpus.after` left the suite fully green. The property that actually holds is stronger and
+    # simpler - every neighbour must be text of the SAME FILE the quotation was found in.
+    ok("neighbours: every neighbour is text of the file the quotation was found in",
+       all((not b or b in corpus.text_of(p)) and (not af or af in corpus.text_of(p))
+           for p, b, af in nb), str(nb)[:200])
+
+    # 🔴 AND IT MUST BE ASKED AT A DOCUMENT BOUNDARY, or the clamp is never exercised. Two negative
+    # controls removed the clamps in `corpus.before`/`after` and the suite stayed green, because the
+    # only quotation being tested sat in the middle of a file where no window could reach an edge.
+    # A test that cannot reach the condition it names is the same defect this project measured
+    # before: correct, and uncovering. The last sentence of the middle document is the case - the
+    # corpus holds three files, so it has a neighbour on the far side of the separator to steal.
+    last = ("Applicants engaged in pre- and post-production activity remain eligible under this "
+            "paragraph.")
+    nbl = neighbours(last, corpus)
+    ok("neighbours: a quotation at the END of a document has no 'after' at all",
+       bool(nbl) and all(not af for _p, _b, af in nbl), str(nbl)[:200])
+    ok("neighbours: ...and nothing from the next document leaks into it",
+       all((not af or af in corpus.text_of(p)) and "\x00" not in af for p, _b, af in nbl),
+       str(nbl)[:200])
+    first = ("Study in any other language, liberal arts, fine arts, or other nonvocational "
+             "training program")
+    nbf = neighbours(first, corpus)
+    ok("neighbours: at the HEAD of a document nothing from the previous one leaks in",
+       all((not b or b in corpus.text_of(p)) and "\x00" not in b for p, b, _a in nbf),
+       str(nbf)[:200])
 
 
 def suite_word_diff():
@@ -383,6 +455,27 @@ def suite_prompts():
     ok("brief: carries the fabrication rule", "worse than a refusal" in b.lower())
     ok("brief: carries the provenance vocabulary", "[SNIPPET]" in b)
     ok("brief: ends with the completion marker", b.rstrip().endswith("DONE-1"))
+
+    # 🔴 THE GRADER MUST NOT BE STRICTER THAN THE INSTRUCTIONS. `DATED_EDITION_CITED` has downgraded
+    # rounds for as long as the analytics have existed, while nothing in the brief ever asked a
+    # reviewer to check whether a codification was the text in force. A score against an unstated
+    # rule measures what the reviewer happened to guess, not what it did.
+    ok("brief: asks for the EFFECTIVE date, which the analytics already grade on",
+       "effective date" in b.lower() and "annual edition" in b.lower())
+    ok("brief: forbids joining two sources into a claim in neither",
+       "unsupported synthesis" in b.lower())
+    ok("brief: requires the source layer to be collected before any conclusion",
+       "two layers" in b.lower())
+    # Coverage of the pairing above, asserted rather than assumed: every quality code that can
+    # downgrade a round must correspond to something the brief actually asked for.
+    from krokai.consult import QUALITY_MEANING, INSTRUMENT_ONLY
+    graded = set(QUALITY_MEANING) - set(INSTRUMENT_ONLY)
+    asked = {"DATED_EDITION_CITED": "effective date", "COMMENTARY_CITED": "[OPENED]",
+             "NO_URLS_CITED": "url", "SEARCH_NOT_USED": "search",
+             "GOV_LOOKALIKE_CITED": "url"}
+    ok("brief: every grading code has something in the brief it grades against",
+       all(k in asked and asked[k].lower() in b.lower() for k in graded),
+       str(sorted(graded - set(asked))))
 
     w = anchor_warnings("Is there a simple statement rule in section E.8?")
     ok("brief: anchoring in the question is detected",
@@ -595,6 +688,79 @@ def suite_consult(tmp):
     ok("consult: a firm blog is not authority",
        C.classify_url("https://www.jdsupra.com/legalnews/whatever-12345/", g) == "nonauthoritative")
 
+    # 🔴🔴 THE SUBSTRING TEST THAT GRADED HOSTILE DOMAINS AS OFFICIAL LAW.
+    #
+    # The old line was `host.endswith(s) or s in host`, and the second half of it returned `primary`
+    # - the strongest endorsement this tool can give a URL, the bucket that means "this is the law
+    # itself" - for every host below. Found by execution, not by reading; nothing in the suite could
+    # have caught it, because there was no test that a NON-official domain is not official.
+    #
+    # Each of these is a real shape. `.gov.ru` / `.gov.cn` / `.gov.cm` are ordinary foreign
+    # second-level government domains, `mil.kg` likewise, and `milano.it` is a city. The hyphenated
+    # pair are typosquats of the kind a paid channel was measured grounding an answer on.
+    for host, why in [("https://www.milano.it/turismo", "`mil` inside an Italian city"),
+                      ("https://uscis.gov.ru/policy-manual", "`gov` label under .ru"),
+                      ("https://law.gov.cn/rules", "`gov` label under .cn"),
+                      ("https://www.mil.kg/news", "`mil` label under .kg"),
+                      ("https://ecfr.i0.gov.cm/current/title-8", "`gov` label under .cm"),
+                      ("https://uscisdhs-gov.us/policy-manual", "typosquat, hyphen part"),
+                      ("https://uscis-gov.co/policy-manual", "typosquat, hyphen part")]:
+        ok("consult: %s is NOT official law (%s)" % (host.split("/")[2], why),
+           C.classify_url(host, g) != "primary", C.classify_url(host, g))
+
+    # And the other direction, which is the half that makes the fix safe rather than merely strict.
+    for host in ["https://www.uscis.gov/policy-manual", "https://uscis.gov",
+                 "https://uscis.gov./trailing-root-dot", "https://UsCiS.GoV/mixed-case",
+                 "https://uscis.gov:8443/explicit-port", "https://www.gov.uk/guidance/x",
+                 "https://legislation.gov.uk/ukpga/2020/1",
+                 "https://eur-lex.europa.eu/legal-content/EN/TXT/",
+                 "https://www.courtlistener.com/opinion/1/"]:
+        ok("consult: %s is still official" % host.split("/")[2][:34],
+           C.classify_url(host, g) == "primary", C.classify_url(host, g))
+
+    # 🔴 PARSER BYPASSES. OWASP's Web Security Testing Guide lists `@`, `#` and percent-encoding as
+    # the standard ways to make a host filter read the wrong name, and a reviewer of this very change
+    # named them. A userinfo spoof puts the real domain to the LEFT of an `@`, where a naive split
+    # reads it as the host; the host here is `evil.example`.
+    for u, want, why in [
+            ("https://www.uscis.gov@evil.example/pm", "other", "userinfo before @"),
+            ("https://evil.example/#https://www.uscis.gov/pm", "other", "real name in the fragment"),
+            ("https://evil.example/?u=https://www.uscis.gov/pm", "other", "real name in the query"),
+            # Not `other`: this one wears `gov` as a whole label and ends somewhere else, which is
+            # the impersonation shape exactly. The stronger answer is the right one.
+            ("https://www.uscis.gov.evil.example/pm", "lookalike", "official name as a subdomain"),
+            ("https://user:pw@www.uscis.gov/pm", "primary", "credentials on a REAL host")]:
+        ok("consult: %s does not decide the classification" % why,
+           C.classify_url(u, g) == want, "%s -> %s" % (u[:44], C.classify_url(u, g)))
+    ok("consult: host parsing is delegated, not hand-rolled against a bypass list",
+       "urlsplit" in src)
+
+    # COVERAGE, not just correctness. This toolkit has already shipped a guard that compared
+    # accurately and matched nothing in the sentence carrying the defect, so a planted wrong value
+    # passed a clean run. Assert that the bucket exists, is reachable, and reaches the verdict.
+    look = C.grounding_of({"text": "See https://uscisdhs-gov.us/pm and https://uscis.gov.ru/x"}, g)
+    ok("consult: the lookalike bucket is populated, not merely defined",
+       len(look.get("lookalike") or []) == 2, str(look))
+    v, q, _gr = C.triage({"channel": "t", "failures": [], "quality": [],
+                          "text": "Authority: https://uscisdhs-gov.us/policy-manual"}, g)
+    ok("consult: citing a government lookalike grades DIRTY", v == "DIRTY", v)
+    ok("consult: ...and names the code", "GOV_LOOKALIKE_CITED" in [c for c, _ in q], str(q))
+
+    # 🔴 THE INSTRUMENT IS NOT THE ANSWER. `NO_TELEMETRY` is a constant property of a channel, and
+    # while it graded, every answer absorbed from an external harness was DIRTY forever - for a
+    # reason the console printer then deliberately skipped. A verdict that never varies carries no
+    # information, and an unexplained one teaches the reader to ignore the column.
+    tele = {"channel": "t", "text": "Authority: https://www.ecfr.gov/current/title-8",
+            "failures": [], "quality": [("NO_TELEMETRY", "")]}
+    v, q, _gr = C.triage(tele, g)
+    ok("consult: a good answer from a channel with no telemetry grades OK", v == "OK", v)
+    ok("consult: ...and the instrument code is still reported, not dropped",
+       "NO_TELEMETRY" in [c for c, _ in q], str(q))
+    v, _q, _gr = C.triage({**tele, "text": "Authority: https://www.jdsupra.com/x"}, g)
+    ok("consult: a real sourcing fault still grades DIRTY alongside it", v == "DIRTY", v)
+    ok("consult: the printer no longer skips the code that produces the verdict",
+       'if code == "NO_TELEMETRY":\n                continue' not in src)
+
     clean = {"channel": "t", "text": "See https://www.ecfr.gov/current/title-8 for the text.",
              "failures": [], "quality": []}
     v, _q, _gr = C.triage(clean, g)
@@ -658,6 +824,22 @@ def suite_consult(tmp):
        "| 1 | 1 |" in txt, txt.split("|---")[-1][:200])
     ok("consult: analytics refuses to claim the answers are right",
        "NOTHING HERE SAYS" in txt.upper())
+
+    # 🔴 `other` must not be the silent bucket. A live typosquat carrying no official-looking label
+    # - `ussciss.us` resolved when checked - is invisible to a label-based detector by construction,
+    # and closing that with a similarity threshold was rejected by four independent reviewers. So
+    # the hole is PRINTED rather than closed: naming what was not covered is the rule here, because
+    # a gap nobody mentions reads as coverage.
+    rows2 = [{"channel": "t", "verdict": "OK", "seconds": 1, "bytes": 10, "failures": [],
+              "quality": [], "ground": {"total": 2, "primary": [], "snapshot": [],
+                                        "lookalike": [], "nonauthoritative": [],
+                                        "other": ["https://ussciss.us/pm", "https://ussciss.us/x"]}}]
+    t2 = _io.open(C.write_analytics(os.path.join(tmp, "an2.md"), rows2, 1.0), encoding="utf-8").read()
+    ok("consult: an unrecognised host is named in the report, not swallowed by `other`",
+       "ussciss.us" in t2, t2[-400:])
+    ok("consult: ...once, as a host, not once per URL", t2.count("`ussciss.us`") == 1)
+    ok("consult: ...and the report says why no verdict is attached to it",
+       "cannot be detected mechanically" in t2)
 
 
 def suite_docs(root):

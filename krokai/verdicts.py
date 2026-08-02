@@ -106,7 +106,14 @@ LABEL["en"]["NOT_FOUND"] = "not found"
 
 MEANING = {
     "en": {
-        "VERIFIED": "present word for word in a primary source",
+        # 🔴 "in a file you put in your sources folder", NOT "in the law". Four independent reviewers
+        # of this design, asked separately what defect the analysis could not see, named the same
+        # one: the corpus is a set of downloads whose provenance is asserted and never proven, so a
+        # repealed, superseded, mis-scraped or wrong-year file verifies exactly as well as the law
+        # does. The old wording - "present word for word in a primary source" - claimed the second
+        # thing while measuring the first, which is this toolkit's own headline defect turned inward.
+        "VERIFIED": "word for word in a file in your sources folder - which is not the same as "
+                    "'in force today'",
         "TRUNCATED_CONDITION": "!! exact - but the source CONTINUES with the clause that limits it",
         "TRUNCATED_OPENING": "!! exact - but the quotation starts AFTER a negation that governs it",
         "OPERATOR": "!! the difference touches not/unless/only/may/shall - the rule may be inverted",

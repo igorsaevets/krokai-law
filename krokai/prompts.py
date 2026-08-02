@@ -87,9 +87,36 @@ QUOTE_RULES = """\
 6. NEVER assert that something does not exist because you failed to find it. Write "my search found
    no confirmation". A non-existence claim requires positive evidence of absence, with its URL.
 
-7. Name the weakest point in YOUR OWN answer, in one line, at the end.
+7. NO UNSUPPORTED SYNTHESIS. Do not join two sources into a proposition that is in neither of them.
+   If A says one thing and B says another and the conclusion you want needs both, say so explicitly:
+   "this is my inference from A and B, neither states it". An inference labelled as an inference is
+   useful. An inference wearing a citation is the most expensive kind of error here, because both
+   citations check out and the sentence between them does not exist anywhere.
+   Measured: a channel derived a document-drafting tactic from a published decision that says nothing
+   about drafting. Both the decision and the quotation were real.
+
+8. EFFECTIVE DATE, not publication date. For anything dated, say when it took EFFECT and whether it
+   is the text in force today - separately from when it was published, signed or announced.
+   🔴 An ANNUAL EDITION is a trap of exactly this kind: an annual codification of a regulation is
+   official law, it sits on a government domain, and it is a snapshot of a past year rather than the
+   text in force. Every "is this an official source?" test passes it. If you cite one, say which year
+   it is and whether the provision has changed since.
+
+9. TWO LAYERS, IN THIS ORDER, AND DO NOT MIX THEM.
+   Layer 1 - the sources: what the documents say, quoted, with addresses and dates. No conclusions.
+   Layer 2 - the conclusion: reasoning that uses ONLY what is physically written in layer 1.
+   If a step in layer 2 needs something layer 1 does not contain, that is the finding: write "layer 1
+   does not support this" rather than closing the gap with fluent prose.
+
+10. Name the weakest point in YOUR OWN answer, in one line, at the end.
 === END ===
 """
+# ^ Rules 7-9 were added after this toolkit's grader was found to punish a failure the brief never
+# warned about. `DATED_EDITION_CITED` has downgraded rounds since the analytics existed, while rule 8
+# did not: the instrument was stricter than the instructions, which makes the score a measure of what
+# the reviewer happened to guess. Rules 7 and 9 come from an operator's standing instruction and are
+# NOT measured here - said out loud, because this file's own convention is that every rule carries
+# the incident that produced it, and two of these carry an intention instead.
 
 
 RESEARCH_SYSTEM = """\

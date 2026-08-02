@@ -10,6 +10,79 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.4.0] — 2026-08-02
+
+The release where the tool that checks other people's sources was caught calling a Russian domain,
+a Chinese domain and an Italian city **official United States law**.
+
+Everything here began as a port: a separate, private matter running the same disciplines produced a
+list of improvements, and the question was which of them generalise. Answering it meant reading this
+code against that list — and the two worst findings were not on the list at all. Both were found by
+running probes; neither by reading.
+
+### Fixed
+
+- 🔴🔴 **A substring test promoted hostile domains to `primary`** — the bucket that means *this is
+  the law itself*. The line was `host.endswith(s) or s in host`, and the second half of it graded
+  `www.milano.it` (`.mil` sits inside `milano`), `uscis.gov.ru`, `law.gov.cn`, `www.mil.kg` and
+  `ecfr.i0.gov.cm` as official law. Suffix matching is now anchored to a label boundary, so `.gov`
+  matches `uscis.gov` and never `uscis.gov.ru`. The host is parsed by `urllib.parse.urlsplit`
+  rather than by hand, which closes the `@`-userinfo, fragment and query bypasses OWASP's testing
+  guide lists — that part came from a reviewer, not from the author.
+- 🔴 **A citation to a government-lookalike host graded `OK`.** Such a host landed in `other`, which
+  carried no warning at all, so nothing downgraded the round. There is now a `lookalike` bucket and
+  a `GOV_LOOKALIKE_CITED` code for a host wearing `gov`/`mil` as a whole label while ending
+  somewhere else. It is deliberately **threshold-free**: four independent reviewers were asked
+  whether a similarity score belonged here and all four said no, in four different ways — the
+  sharpest being that an edit distance can name the edit while a ratio can only say `0.75`, and
+  *that* difference is the difference between a tripwire and a superstition. The three shapes tested
+  are live domains, checked by DNS on 2026-08-02, not invented examples.
+- 🔴 **`DIRTY` with the reason withheld.** `NO_TELEMETRY` counted toward the verdict, so with an
+  external harness installed — the commonest configuration — *every* answer was `DIRTY`, always;
+  and the console printer skipped that one code when listing warnings. A flawless answer citing one
+  genuine government URL printed `[DIRTY] codex 379.0s 1620B cited 1 URL(s) (official 1)` and
+  nothing else. Instrument codes are now reported and printed, and do not grade: what the answer did
+  and what the instrument could see are two axes.
+- **`VERIFIED` claimed more than it measured.** It said *"present word for word in a primary
+  source"*; what it establishes is *word for word in a file in your sources folder*. A repealed
+  regulation, last year's edition and a truncated scrape all pass. Four reviewers, asked separately
+  what this design could not see about itself, all four named the corpus: its provenance is
+  asserted and never proven. That gap is **not closed here.** It is now stated in the verdict
+  itself, in both READMEs, and at length under *What is deliberately not covered*.
+- **`prove()` could not prove a statute, and would not say why.** It returned the same bare `False`
+  for *the identity check failed* and for *you asked me to check nothing* — and a statute, a
+  regulation or a treaty has no party name to check. Not-checked is now reported as not-checked.
+
+### Added
+
+- **The brief asks for the three things the grader was already grading on.** `DATED_EDITION_CITED`
+  has downgraded rounds for as long as the analytics have existed, while nothing in the brief ever
+  told a reviewer to distinguish the date a rule was published from the date it took effect. An
+  instrument stricter than its instructions does not measure care; it measures guessing. Added:
+  **effective date** (with the annual-edition trap named), **no unsupported synthesis** (joining two
+  real sources into a proposition present in neither — both citations check out and the sentence
+  between them exists nowhere), and **two layers in order** (collect the sources with no
+  conclusions, then conclude only from what is physically in layer one). A self-test asserts that
+  every grading code has something in the brief it grades against.
+- **`krokai quote` prints the sentence before and the sentence after** a located quotation. Shown
+  for a quotation that *passed*, which is the point: a flagged quotation already sends you to the
+  source, and a verified one is the one nobody opens again. It does not replace the
+  `truncated condition` verdict — that is a detector, deliberately narrow; this is two sentences
+  handed to a person.
+- **Unrecognised hosts are named in the round report.** A typosquat carrying no official-looking
+  label cannot be caught by a label-based detector, and closing that with a threshold was rejected.
+  So the hole is printed instead: `other` is no longer a silent bucket.
+
+### Changed
+
+- Eleven **negative controls** now exist as a separate exercise: each breaks one new check on a copy
+  of the tree and requires the suite to go red. Two did not fire on the first attempt — the corpus
+  window clamps could be deleted with the suite staying green, because the assertion had been
+  written where the damage is *read* rather than where it is *produced*, and every caller cuts the
+  window at a sentence boundary before anything downstream can see the overrun. Third measured
+  instance in this project of a guard that is correct and uncovering.
+- Self-test: 161 checks → 208.
+
 ## [0.3.1] — 2026-08-02
 
 Everything the tag `v0.3.0` did not contain, because a changelog entry describing code its own tag

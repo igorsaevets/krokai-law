@@ -99,6 +99,11 @@ FAILURE_MEANING = {
 # level down. The counts are kept, because what an answer ASKS YOU TO RELY ON is worth knowing; the
 # word that implied retrieval is gone.
 QUALITY_MEANING = {
+    "GOV_LOOKALIKE_CITED": "cites a host that wears an official label (`gov`, `mil`) as a whole "
+                           "part of its name but does NOT end in any official suffix you have "
+                           "configured. Two things look like this and both need a human: a domain "
+                           "impersonating a government site, and a real government whose suffix is "
+                           "missing from `grounding.primary` in channels.json",
     "DATED_EDITION_CITED": "cites an ANNUAL EDITION. That IS official law - a dated codification, "
                            "not a lesser source - but it is not the text in force, and it sits on "
                            "a government domain, so an 'is this official?' check passes it happily",
@@ -110,6 +115,10 @@ QUALITY_MEANING = {
                     "are therefore what the answer PRINTED, and printing is not opening",
     "SEARCH_NOT_USED": "the channel had search available and issued none, so its answer is recall",
 }
+
+# Codes that describe the INSTRUMENT rather than the answer. They are reported and printed; they do
+# not grade. See the docstring of `triage` for the measurement that separated them.
+INSTRUMENT_ONLY = {"NO_TELEMETRY"}
 
 _URL_RE = re.compile(r"https?://[^\s<>\"'\)\]\},;]+", re.I)
 
@@ -535,21 +544,105 @@ def call_delegate(harness, brief_path, system_path, out_dir, marker=None, extra=
 # Reading the answer: what did it stand on?
 # =================================================================================================
 
+# Labels that make a host look like the state speaking. A host carrying one of these as a WHOLE
+# label - or as a whole hyphen-separated part of a label - while NOT ending in any configured
+# official suffix is one of two things, and both deserve a human: a domain impersonating a
+# government site, or a real government you have not configured.
+#
+# Whole-part, never substring. That distinction is the entire fix: `mil` inside `milano.it` is the
+# first syllable of an Italian city, and `gov` inside `uscisdhs-gov.us` is a hyphen-delimited part
+# doing impersonation work. A substring test cannot tell them apart and graded both as official law.
+OFFICIAL_TOKENS = ("gov", "mil", "govt", "gouv", "gob", "govuk")
+
+
+def host_of(u):
+    """The bare host of a URL, lower-cased: no scheme, no credentials, no port, no trailing dot.
+
+    Every one of those strippings is a documented parser bypass that would otherwise walk past a
+    suffix test. `https://www.uscis.gov[@]evil.example/` has host `evil.example` - the real name sits
+    to the LEFT of the `@`, where a naive split reads it as the host. (The `@` is bracketed here on
+    purpose: written plainly, that example is email-shaped, and the outbound gate two modules over
+    blocks it. Fifth measured instance of a detector firing on the documentation of the very thing
+    it detects - and the cheap fix is always to change the DOCUMENT, never to teach the gate an
+    exception, because an exception is what the reader learns to reach for next time.)
+    `uscis.gov.` with a trailing
+    root dot is the same name to every resolver and a different string to `endswith`. OWASP's Web
+    Security Testing Guide lists `@`, `#` and percent-encoding among the standard evasions:
+    https://owasp.org/www-project-web-security-testing-guide/stable/ (retrieved 2026-08-02).
+
+    🔴 The parsing is delegated, not hand-rolled, and that was a review finding rather than my own
+    judgement. `urlsplit().hostname` already lowercases, drops userinfo and the port, and unwraps an
+    IPv6 literal - and it has been maintained against these evasions for longer than this file has
+    existed. The manual path below survives only as a fallback for a string `urlsplit` refuses, and
+    for a bare `host/path` with no scheme, where `.hostname` is None.
+    """
+    from urllib.parse import urlsplit
+    s = (u or "").strip()
+    try:
+        h = urlsplit(s).hostname or ""
+    except ValueError:                          # malformed IPv6 literal, bad port, and the like
+        h = ""
+    if not h:
+        h = s.lower().split("//", 1)[-1].split("/", 1)[0]
+        h = h.split("@")[-1].split("?")[0].split("#")[0]
+        h = h.split("]", 1)[0].lstrip("[") if h.startswith("[") else h.split(":", 1)[0]
+    return h.lower().rstrip(".")
+
+
+def suffix_match(host, entry):
+    """Label-anchored suffix test: `.gov` matches `uscis.gov` and NOT `uscis.gov.ru`.
+
+    🔴 THIS REPLACES A SUBSTRING TEST, AND THE SUBSTRING TEST WAS THE WORST BUG THIS FILE HAS HAD.
+    The old line was ``host.endswith(s) or s in host``, and the second half of that disjunction
+    graded these as OFFICIAL PRIMARY LAW, measured by execution:
+
+        www.milano.it        `.mil` is inside `milano`
+        uscis.gov.ru         `.gov` is a label, the domain is Russian
+        law.gov.cn           same shape
+        www.mil.kg           same shape
+        ecfr.i0.gov.cm       same shape
+
+    `primary` is the strongest endorsement this tool can give a URL - it is the bucket that means
+    "this is the law itself". Handing it to any host containing the three letters `gov` anywhere is
+    worse than having no classifier: a wrong answer with an official-looking citation is the exact
+    artefact the whole toolkit exists to catch, one level down.
+    """
+    e = (entry or "").lower().strip().lstrip(".")
+    return bool(e) and (host == e or host.endswith("." + e))
+
+
+def gov_lookalike(host, primary):
+    """Does this host wear an official label without being on the official list?"""
+    if not host or any(suffix_match(host, e) for e in (primary or [])):
+        return False
+    parts = set()
+    for label in host.split("."):
+        parts.add(label)
+        parts.update(label.split("-"))
+    return bool(parts.intersection(OFFICIAL_TOKENS))
+
+
 def classify_url(u, g):
-    """Which of four things is this URL, read in order of how badly it can mislead you.
+    """Which of five things is this URL, read in order of how badly it can mislead you.
 
     🔴 Both sides are lower-cased. The first version lower-cased only the URL, so every pattern
     written the way a human writes it - `CFR-`, `/Historical/` - could never match. The check ran,
     reported nothing, and read as a clean result. Its own test caught it; nothing else would have,
     because a detector that never fires looks exactly like a corpus with nothing to find.
+
+    🔴 Order. `lookalike` runs first because it is the only bucket that can be actively hostile;
+    `snapshot` runs before `primary` because an annual edition lives on a government domain, so
+    asking "is it official?" first would answer yes and stop. A real `.gov` URL can never reach the
+    lookalike test - ``gov_lookalike`` returns False for anything the official list already matches -
+    so putting it first costs nothing.
     """
     u = (u or "").lower()
-    host = u.split("//", 1)[-1].split("/", 1)[0]
-    # Snapshot BEFORE primary, deliberately: an annual edition lives on a government domain, so
-    # asking "is it official?" first would answer yes and stop.
+    host = host_of(u)
+    if gov_lookalike(host, g.get("primary") or []):
+        return "lookalike"
     if any(p.lower() in u for p in (g.get("snapshot") or [])):
         return "snapshot"
-    if any(host.endswith(s.lower()) or s.lower() in host for s in (g.get("primary") or [])):
+    if any(suffix_match(host, s) for s in (g.get("primary") or [])):
         return "primary"
     if any(s.lower() in u for s in (g.get("nonauthoritative") or [])):
         return "nonauthoritative"
@@ -570,17 +663,35 @@ def grounding_of(result, g):
         if u.lower() not in seen:
             seen.add(u.lower())
             urls.append(u)
-    buckets = {"primary": [], "snapshot": [], "nonauthoritative": [], "other": []}
+    buckets = {"primary": [], "snapshot": [], "lookalike": [], "nonauthoritative": [], "other": []}
     for u in urls:
         buckets[classify_url(u, g)].append(u)
     return {"total": len(urls), **buckets}
 
 
 def triage(result, g):
-    """FAILED / DIRTY / OK, read from codes and counts only. Never from prose."""
+    """FAILED / DIRTY / OK, read from codes and counts only. Never from prose.
+
+    🔴 INSTRUMENT CODES DO NOT MOVE THE VERDICT, and separating them is a fix, not a relaxation.
+    `NO_TELEMETRY` describes the CHANNEL, not the answer: it is constant across every run of that
+    channel and says nothing about what came back. While it graded, the most common configuration -
+    an external harness installed, so every answer absorbed - produced `DIRTY` for every answer ever,
+    for a reason the console printer then deliberately skipped. Measured: a flawless answer citing
+    one genuine government URL printed `[DIRTY] codex 379.0s 1620B cited 1 URL(s) (official 1)` and
+    no explanation at all.
+
+    A verdict that is always the same carries no information, and an unexplained one teaches the
+    reader to ignore the column - this toolkit's own oldest doctrine, applied here to itself. The
+    code is still reported, still written to the analytics file, and now actually printed; it just
+    no longer pretends to be a judgement about the answer.
+    """
     ground = grounding_of(result, g)
     quality = list(result.get("quality") or [])
 
+    if ground["lookalike"]:
+        # First in the list because it is the only finding here that can be actively hostile.
+        quality.append(("GOV_LOOKALIKE_CITED",
+                        "%d: %s" % (len(ground["lookalike"]), "; ".join(ground["lookalike"][:3]))))
     if ground["snapshot"]:
         quality.append(("DATED_EDITION_CITED",
                         "%d: %s" % (len(ground["snapshot"]), "; ".join(ground["snapshot"][:3]))))
@@ -591,7 +702,8 @@ def triage(result, g):
     if ground["total"] == 0 and (result.get("text") or "").strip():
         quality.append(("NO_URLS_CITED", ""))
 
-    verdict = "FAILED" if result.get("failures") else ("DIRTY" if quality else "OK")
+    about_the_answer = [q for q in quality if q[0] not in INSTRUMENT_ONLY]
+    verdict = "FAILED" if result.get("failures") else ("DIRTY" if about_the_answer else "OK")
     return verdict, quality, ground
 
 
@@ -620,8 +732,8 @@ def write_analytics(path, rows, seconds, lang="en"):
          "`FAILED` no usable answer · `DIRTY` readable, sourcing suspect · `OK` nothing flagged.",
          "",
          "| channel | verdict | sec | answer B | URLs cited | official | of those, dated | "
-         "commentary |",
-         "|---|---|---|---|---|---|---|---|"]
+         "commentary | 🔴 lookalike |",
+         "|---|---|---|---|---|---|---|---|---|"]
 
     def f(x):
         return "—" if x is None else x
@@ -633,13 +745,40 @@ def write_analytics(path, rows, seconds, lang="en"):
         # printed as `primary 0` - which reads as "cited no official source" and is simply false.
         # An annual edition is the codification; it is just not the text in force.
         dated = len(gr.get("snapshot") or [])
-        L.append("| %s | **%s** | %s | %s | %s | %s | %s | %s |" % (
+        L.append("| %s | **%s** | %s | %s | %s | %s | %s | %s | %s |" % (
             r["channel"], r["verdict"], f(r.get("seconds")), f(r.get("bytes")),
             gr.get("total", 0), len(gr.get("primary") or []) + dated, dated or "",
-            len(gr.get("nonauthoritative") or []) or ""))
+            len(gr.get("nonauthoritative") or []) or "",
+            len(gr.get("lookalike") or []) or ""))
+
+    # 🔴 Every host the classifier did not recognise, listed by name. It changes no verdict - there
+    # is no threshold here and no accusation - but it stops `other` being the silent bucket.
+    #
+    # The reason it cannot be a verdict: the detector above is threshold-free because it looks for an
+    # official LABEL, and a typosquat carrying no such label is invisible to it by construction.
+    # `ussciss.us` is the measured example, and it is not hypothetical - it resolved to a live host
+    # when checked on 2026-08-02, as did `uscisdhs-gov.us` and `uscis-gov.co`. Catching that third
+    # shape needs a list of the domains YOU rely on, which a general tool does not have. So the hole
+    # is left open and printed instead of being closed with a similarity threshold that four
+    # independent reviewers rejected. Naming what was not covered is the rule; a silent gap reads
+    # as coverage.
+    unknown = sorted({host_of(u) for r in rows for u in (r.get("ground") or {}).get("other") or []})
+    if unknown:
+        L += ["",
+              "**Hosts this tool does not recognise** (no verdict attached - read them yourself; a "
+              "typosquat that carries no `gov`-like label cannot be detected mechanically here):",
+              ""] + ["* `%s`" % h for h in unknown[:25]]
+        if len(unknown) > 25:
+            L.append("* … and %d more" % (len(unknown) - 25))
 
     L += ["",
           "«—» means NOT MEASURED, never «zero».",
+          "",
+          "🔴 The **lookalike** column counts hosts wearing an official label (`gov`, `mil`) that do "
+          "not end in a configured official suffix. It is never zero-by-default: it was added after "
+          "a substring test graded `www.milano.it`, `uscis.gov.ru` and `law.gov.cn` as official law. "
+          "A count above zero is either a domain impersonating a government or a real government "
+          "missing from `grounding.primary` - and the two are told apart by a person, not here.",
           "",
           "🔴 **These are URLs the answer PRINTED. Printing is not opening.** The count is not "
           "evidence of retrieval and must not be read as corroboration: the same process that "
@@ -828,15 +967,21 @@ def run_round(reg, system, brief, out_dir, marker="REVIEW-COMPLETE", only=(), sk
     printer("=" * 78)
     for r in rows:
         gr = r["ground"]
-        printer("[%s] %-8s %ss  %sB  cited %d URL(s) (official %d%s%s)" % (
+        printer("[%s] %-8s %ss  %sB  cited %d URL(s) (official %d%s%s%s)" % (
             r["verdict"], r["channel"], r.get("seconds"), r.get("bytes"), gr["total"],
             len(gr["primary"]) + len(gr["snapshot"]),
             ", of those dated %d" % len(gr["snapshot"]) if gr["snapshot"] else "",
-            ", commentary %d" % len(gr["nonauthoritative"]) if gr["nonauthoritative"] else ""))
+            ", commentary %d" % len(gr["nonauthoritative"]) if gr["nonauthoritative"] else "",
+            ", 🔴 LOOKALIKE %d" % len(gr["lookalike"]) if gr["lookalike"] else ""))
         for code, detail in r["failures"]:
             printer("    FAIL %-22s %s" % (code, FAILURE_MEANING.get(code, "")))
         for code, detail in r["quality"]:
-            if code == "NO_TELEMETRY":
+            # 🔴 Nothing is silently skipped here any more. The one code that used to be skipped was
+            # the only code that could produce the verdict on the line above, so the most common
+            # configuration printed a judgement with its reason deliberately withheld.
+            if code in INSTRUMENT_ONLY:
+                printer("    inst %-22s does not affect the verdict: %s"
+                        % (code, "this channel reports nothing about which pages it opened"))
                 continue
             printer("    warn %-22s %s" % (code, detail or QUALITY_MEANING.get(code, "")))
     counts = {v: sum(1 for r in rows if r["verdict"] == v) for v in ("OK", "DIRTY", "FAILED")}

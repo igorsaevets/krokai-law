@@ -179,7 +179,7 @@ continues: "…, but do not include instances where…"*.
 
 | | |
 |---|---|
-| **verified** | the words are in a primary source, exactly |
+| **verified** | the words are, exactly, in a file **in your sources folder** — read the warning under this table |
 | **truncated condition** | 🔴 exact — and the source goes on with the clause that limits it |
 | **truncated opening** | 🔴 exact — but a negation stands in front of it that you cut off |
 | **operator** | 🔴 a word like *not*, *unless*, *only*, *may*, *shall* differs |
@@ -194,6 +194,19 @@ continues: "…, but do not include instances where…"*.
 | **typesetting** | your quotation is fine; the copy on disk is damaged |
 | **scattered** | every sentence is real; they are not next to each other in the source |
 | **assembled** | ellipsis quotation, all fragments in order, nothing material hidden |
+
+> 🔴 **What `verified` does not mean.** It means the words are in a file you put in your sources
+> folder. It does not mean the rule is in force, that the file is the current edition, that the
+> download completed, or that the site you took it from was the real one. A repealed regulation
+> verifies perfectly. So does last year's annual edition, and so does a chapter that lost two of its
+> six bullet points on the way to your disk.
+>
+> This is the tool's own headline defect pointed at itself, and it is not a guess: four independent
+> outside reviewers were asked, separately, what this design could not see about itself, and all
+> four answered with this — the corpus is a set of downloads whose provenance is **asserted and
+> never proven**. Nothing here checks a signature, a publication date, or a chain of custody.
+> `krokai library` tells you what you have and when you fetched it. Deciding that it is still the
+> law is a lawyer's job, and this tool does not do it.
 
 ---
 

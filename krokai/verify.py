@@ -12,7 +12,7 @@ import re
 
 from .normalize import normalise, alnum, dehyph, ellipsis_parts
 
-__all__ = ["check", "word_diff", "OPERATORS"]
+__all__ = ["check", "word_diff", "neighbours", "OPERATORS"]
 
 # ------------------------------------------------------------------------------------------------
 # Words whose loss or substitution inverts a legal sentence.
@@ -214,6 +214,44 @@ def leading_cut(quote_n, corpus):
         if bad:
             return path, ", ".join(bad), " ".join(cut.split())[-140:]
     return None, None, None
+
+
+def neighbours(quote, corpus, cap=3, window=420):
+    """The sentence before and the sentence after a located quotation, in the source's own words.
+
+    Returns `[(path, before, after), ...]`, one entry per occurrence, `cap` at most.
+
+    🔴 WHY THIS IS NOT THE SAME THING AS ``truncated_condition``, WHICH ALREADY EXISTS.
+    That function decides, and it decides conservatively: it fires only when the quotation stops
+    mid-sentence AND the next words open with one of a listed set of limiters. It is a **detector**,
+    so it must not cry wolf, so it is deliberately narrow. This is not a detector. It hands a person
+    the two sentences and lets them read - which catches the whole class the detector's word list
+    does not contain, at the cost of catching nothing on its own.
+
+    Both are needed and neither replaces the other. Measured in a sister project the day the
+    equivalent was built: the very first entry it was pointed at was a regulation quoted up to
+    ``...before the decision is rendered``, immediately followed in the source by
+    ``, except as provided in paragraphs (b)(16)(ii), (iii), and (iv) of this section``. Reading the
+    exceptions showed the conclusion survived - but "the conclusion survives" was a guess until
+    somebody opened them, and nothing in the pipeline had ever asked.
+
+    🔴 It is offered for a VERIFIED quotation, which is the counter-intuitive part and the point. A
+    flagged quotation already sends you to the source. A verified one is the one you stop looking at.
+    """
+    n = normalise(quote)
+    out = []
+    for path, off in corpus.find_all_pos(n, cap=cap):
+        head = corpus.before(path, off, window)
+        tail = corpus.after(path, off, len(n), window)
+        # Last complete sentence before; first complete sentence after. A leading fragment is dropped
+        # rather than shown, because half a sentence out of context is how a reader is misled by a
+        # tool that was trying to help.
+        prev = [s for s in re.split(r"(?<=[.!?;:])\s+", head) if s.strip()]
+        nxt = re.split(r"(?<=[.!?])\s+", tail.lstrip(" ,;:-"))
+        before = " ".join(prev[-1].split()) if len(prev) > 1 else ""
+        after = " ".join(nxt[0].split()) if nxt else ""
+        out.append((path, before, after))
+    return out
 
 
 def wrong_speaker(quote_n, corpus):

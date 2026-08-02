@@ -125,6 +125,14 @@ def prove(text, party=None, subject=None):
     of law discusses the same statute.
 
     Returns `(ok, reasons)`.
+
+    🔴 NOTHING ASSERTED IS NOT THE SAME AS NOT PROVEN, and the first version returned the same
+    `False` for both - with an empty reason list, so the caller was told "unproven" and given no
+    way to find out why. That matters far outside case law: a statute, a regulation, an executive
+    order and a treaty have no party at all, so for most primary sources there is nothing to assert
+    and the honest answer is "you asked me to check nothing". Named by a reviewer who was arguing
+    that a party-and-subject test cannot be a general requirement. It cannot; it is an optional
+    test that must say when it did not run.
     """
     reasons = []
     low = (text or "").lower()
@@ -137,6 +145,9 @@ def prove(text, party=None, subject=None):
     if len(low.strip()) < 2000:
         reasons.append(("file is suspiciously short (%d chars) - possible stub or login page"
                         % len(low.strip()), False))
+    if not (party or subject):
+        reasons.append(("no party and no subject were given, so identity was NOT checked - "
+                        "correct for a statute or regulation, and not proof of anything", False))
     return all(ok for _t, ok in reasons) and bool(reasons), reasons
 
 
