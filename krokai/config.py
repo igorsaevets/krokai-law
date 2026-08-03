@@ -35,6 +35,7 @@ DEFAULTS = {
     "fabrication_register": "case/FABRICATION-REGISTER.md",
     "library_index": "law/INDEX.md",
     "citation_packs": ["us-federal"],
+    "surnames": [],
     "language": "en",
     "min_quote_length": 45,
     "drop_cyrillic_quotes": False,
@@ -76,6 +77,18 @@ TEMPLATE = {
 
     "_citation_packs": "Which bodies of law you cite. Run `krokai packs` to list what ships.",
     "citation_packs": ["us-federal"],
+
+    "_surnames": "🔴 The family names the outbound gate must never send. NO PATTERN CAN TELL A "
+                 "SURNAME FROM A GIVEN NAME, and one that guesses cuts the wrong token in a "
+                 "document full of judges', agencies' and statutes' names - so this is the one "
+                 "piece of redaction you configure by hand, here, where the matter is already "
+                 "identified. Given names, streets and cities are kept on purpose: a reviewer who "
+                 "sees `Maria [SURNAME], Studio City, 91604` can still reason about jurisdiction "
+                 "and local rules; one who sees `[NAME], [ADDRESS]` answers the general question "
+                 "instead of yours. LEAVING THIS EMPTY IS A CHOICE, and `krokai gate` prints that "
+                 "no surname was looked for - it used to print `clean` instead, which is how the "
+                 "feature stayed unimplemented for five releases.",
+    "surnames": [],
 
     "language": "en",
     "min_quote_length": 45,
@@ -134,6 +147,15 @@ class Config(object):
         for d in self.data["drafts"]:
             out.append((d.get("tier", "?"), d.get("label", ""), self.abs(d["path"])))
         return sorted(out, key=lambda t: t[0])
+
+    @property
+    def surnames(self):
+        """Family names the gate must catch. A tuple, so a caller cannot mutate the config.
+
+        Entries under two characters are dropped by `redact.name_patterns`, which would otherwise
+        redact half the document; the filtering lives there so every caller inherits it.
+        """
+        return tuple(s for s in (self.data.get("surnames") or []) if isinstance(s, str) and s.strip())
 
     @property
     def cache(self):

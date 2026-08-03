@@ -44,6 +44,10 @@ python -c "import fitz"  2>&1 | tail -1
 python -c "import mammoth" 2>&1 | tail -1
 ```
 
+On Windows, run the `python` commands exactly as written - they are identical in PowerShell; only
+the shell idioms around them (`tail`, `ls -R | head`) have PowerShell equivalents, and you know
+them. Do not tell the user the instructions "are for Linux".
+
 Only Python itself is required. The three libraries are optional and each absence means one file type
 reads as empty:
 
@@ -91,6 +95,12 @@ You are looking for three things:
 
 Then say what you found and what you are about to configure, before you configure it.
 
+🔴 **One command form works from anywhere, and it is the one this file uses from here on:**
+`python <clone>/krokai <command>`. The `-m` form (`python -m krokai …`) only works while the clone
+itself is the working directory - and from Step 4 onward you are working in the MATTER folder,
+which is not it. An assistant that mixes the two gets `No module named krokai` and concludes the
+install failed.
+
 ## Step 4 — initialise
 
 ```bash
@@ -101,11 +111,19 @@ python ~/tools/krokai/krokai init .
 This writes a commented `casefile.json` plus `law/`, `case/`, `guides/`, `research/`, a quote-bank
 template and a library index. It refuses to overwrite an existing `casefile.json` without `--force`.
 
+🔴 **It also appends a marked block to the matter's `CLAUDE.md`** (creating the file if there is
+none, appending - never replacing - if there is), with the working commands for this machine
+rendered in. Say to the user WHY that block matters: a project-root `CLAUDE.md` is the one
+instruction surface that is re-read at every session start **and after every `/compact`** - so
+your successor session still knows how this matter works after your context is gone. Everything
+you were told in chat will not survive that; this block and the hooks will. `--no-claude-md`
+skips it; `krokai init . --claude-md-only` refreshes just the block later.
+
 Now edit `casefile.json` to match reality:
 
 - `sources` — folders holding **only** primary sources. 🔴 Re-read point 2 above.
 - `drafts` — tier `A` for what gets filed, `B` for guides, `C` for research.
-- `citation_packs` — run `python -m krokai packs` and pick. `us-federal` is the base and belongs in
+- `citation_packs` — run `python ~/tools/krokai/krokai packs` and pick. `us-federal` is the base and belongs in
   almost every list; add `us-immigration` or `us-tax` alongside it, not instead.
 - `language` — `en` or `ru`, for verdict labels.
 - `drop_cyrillic_quotes` — `true` when the user writes in Russian but the law is in English. It stops
@@ -114,7 +132,7 @@ Now edit `casefile.json` to match reality:
 ## Step 5 — make the PDFs searchable
 
 ```bash
-python -m krokai sidecar
+python ~/tools/krokai/krokai sidecar
 ```
 
 Your own file-search tool does not read PDFs, and it does not tell you so. In one measured library
@@ -129,7 +147,7 @@ see the page.
 ## Step 6 — the first check
 
 ```bash
-python -m krokai check
+python ~/tools/krokai/krokai check
 ```
 
 Read the output before you summarise it:
@@ -151,8 +169,8 @@ rounds where the task was strategy — rounds that produced new quotations. **Ru
 by rule.** A hook is executed by the harness, and topic cannot influence it.
 
 ```bash
-python -m krokai install-hooks --dry-run     # look at the diff first
-python -m krokai install-hooks
+python ~/tools/krokai/krokai install-hooks --dry-run     # look at the diff first
+python ~/tools/krokai/krokai install-hooks
 ```
 
 Default scope is the project's `.claude/settings.json`. Use `--scope user` for the global one only if
@@ -172,12 +190,16 @@ The installer backs up the existing file, prints what it will change, is idempot
 ## Step 8 — verify, then report
 
 ```bash
-python -m krokai doctor
-python -m krokai close
+python ~/tools/krokai/krokai doctor
+python ~/tools/krokai/krokai close
 ```
 
 `doctor` must end with `STATUS: READY`. 🔴 If it prints `READY` and exits non-zero, that is a bug —
 report it. A status line that contradicts its own exit code teaches people to ignore both.
+
+`doctor` also reports the two pieces that keep working after a `/compact` — the **hooks** wiring
+and the **assistant block** in `CLAUDE.md` — each with the exact command to run if it is absent.
+If either line is red, run that command; do not improvise.
 
 Then tell the user, using **numbers you just saw**:
 
@@ -187,6 +209,7 @@ Self-test: N/N.
 Corpus: N source files, N MB. N excluded as your own writing: <list>. N with no text layer: <list>.
 First check: N quotations, N needing a human in the filed tier.
 Hooks: 3 registered in <path to settings.json>, backup at <path>.
+Assistant block: written into <path to CLAUDE.md> — it survives session restarts and /compact.
 🔴 Hooks start working at your NEXT session, not this one.
 Not checked: whether any rule is still in force, and whether any quotation is apt.
 ```

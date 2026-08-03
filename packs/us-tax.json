@@ -5,6 +5,9 @@
 
   "primary_hint": "I\\.?R\\.?C|26\\s*U\\.?\\s?S\\.?\\s?C|Treas\\.?\\s?Reg|26\\s*C\\.?\\s?F\\.?\\s?R|Rev\\.?\\s?(?:Rul|Proc)|T\\.?\\s?C\\.?\\s|\\bPLR\\b|Notice\\s+\\d{4}-\\d",
 
+  "_official_domains": "Merged into the review grounding by `krokai review`; teaches the lookalike detector the names worth impersonating (`irs.com` is a live commercial site that is NOT the agency).",
+  "official_domains": ["irs.gov", "ustaxcourt.gov", "treasury.gov"],
+
   "aliases": {
     "_doc": "IRC § 162 IS 26 U.S.C. § 162 — the same provision under two names, exactly like INA/8 U.S.C. No map is needed because the section numbers are identical; only the title prefix is added. Absence of a `map` key means pass the captured value straight through.",
     "irc": {"to_kind": "usc", "to_prefix": ["26"], "on": 0},
@@ -14,16 +17,19 @@
   "shapes": [
     {
       "_what": "IRC § 162(a) / I.R.C. § 1202 — becomes ('usc','26',<section>).",
+      "sample": "deductible under I.R.C. § 162(a) as an",
       "regex": "\\b(?:I\\.?\\s?R\\.?\\s?C\\.?)\\s*§*\\s*(\\d+[A-Za-z]?)(?:\\([^()\\s]{1,8}\\))*",
       "address": {"kind": "irc", "groups": [1], "label": "I.R.C. § %s"}
     },
     {
       "_what": "Treas. Reg. § 1.162-4 — the part number is what precedes the first dot (here, 1).",
+      "sample": "under Treas. Reg. § 1.162-4 repairs are",
       "regex": "\\bTreas\\.?\\s?Reg\\.?\\s*§*\\s*(\\d{1,3})\\.[\\d-]+(?:\\([^()\\s]{1,8}\\))*",
       "address": {"kind": "treasreg", "groups": [1], "label": "Treas. Reg. part %s"}
     },
     {
       "_what": "Rev. Rul. 99-6 / Rev. Proc. 2024-12 — published IRS guidance.",
+      "sample": "the treatment in Rev. Rul. 99-6 controls",
       "regex": "\\bRev\\.?\\s?(Rul|Proc)\\.?\\s*(\\d{2,4})-(\\d{1,3})",
       "address": {
         "kind": "revguide",
@@ -38,6 +44,7 @@
     },
     {
       "_what": "Notice 2023-64 / Announcement 2024-3.",
+      "sample": "interim guidance in Notice 2023-64 asks",
       "regex": "\\b(?:Notice|Announcement)\\s+(\\d{4})-(\\d{1,3})",
       "address": {
         "kind": "irsnotice",
@@ -56,6 +63,7 @@
     },
     {
       "_what": "PLR 202412008 — a private letter ruling. 🔴 Recognised on purpose so that the report can show it, because IRC § 6110(k)(3) says it may not be used or cited as precedent. Seeing it in a draft is the point.",
+      "sample": "the service agreed in PLR 202412008 that",
       "regex": "\\bPLR\\s*(\\d{9,11})",
       "address": {
         "kind": "plr",

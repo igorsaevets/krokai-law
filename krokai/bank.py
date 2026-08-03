@@ -36,9 +36,10 @@ import re
 import time
 
 from .normalize import normalise, strip_markdown, latin_share
-from .verdicts import CLEAN
+from .verdicts import CLEAN, UNCHECKABLE
 
-__all__ = ["read_bank", "in_bank", "append_queue", "queue_open_items", "candidates", "BANK_HEADER"]
+__all__ = ["read_bank", "in_bank", "bank_quotes", "append_queue", "queue_open_items",
+           "candidates", "BANK_HEADER"]
 
 BANK_HEADER = """# Quote bank
 
@@ -114,6 +115,19 @@ def read_bank(path):
         return ""
 
 
+_BQ_BLOCK_RE = re.compile(r"(?m)^(?:>.*\n?)+")
+
+
+def bank_quotes(bank_text):
+    """Every blockquote in the bank as one normalised, lower-cased string per block."""
+    out = set()
+    for m in _BQ_BLOCK_RE.finditer(bank_text or ""):
+        q = normalise(strip_markdown(m.group(0))).lower()
+        if q:
+            out.add(q)
+    return out
+
+
 def in_bank(quote, bank_text):
     """Normalised containment, both sides.
 
@@ -125,9 +139,24 @@ def in_bank(quote, bank_text):
     if not bank_text:
         return False
     n = normalise(strip_markdown(quote)).lower()
-    if len(n) < 20:
+    # 🔴 40, not 20. An outside review traced a 25-character stock phrase ("in his discretion
+    # grant the…") to a containment hit anywhere in the bank, silently keeping a NEW quotation
+    # out of the queue. The extraction pipeline's own floor is 45, so nothing legitimate arrives
+    # shorter - and the failure directions are asymmetric: a false "not banked" is one visible
+    # queue line, a false "banked" is a quotation nobody ever decides about.
+    if len(n) < 40:
         return False
-    return n[:60] in normalise(bank_text).lower()
+    # 🔴 EQUALITY against the bank's own quotations, not containment in the whole file. Two
+    # containment defects were traced by execution on the same day this was rewritten:
+    #   * two different quotations sharing an opening formula collapsed into one under a
+    #     first-60-characters key, so the second never reached the queue;
+    #   * worse, a TRUNCATED variant of a banked quotation is a substring of the full one, so
+    #     containment blessed exactly the cut-off-condition shape this toolkit exists to catch -
+    #     the full quotation was banked, the truncated copy walked in under its name.
+    # So the bank's `> ` blocks are extracted (consecutive lines joined, so a hand-wrapped entry
+    # still counts as one quotation) and the candidate must EQUAL one of them. A drafter quoting
+    # a legitimate subset gets one visible queue line - the cheap direction.
+    return n in bank_quotes(bank_text)
 
 
 def candidates(text, min_len=55, min_latin_share=0.75):
@@ -165,7 +194,11 @@ def append_queue(path, rows, dropped=0, cap=0, stamp=None):
     stamp = stamp or time.strftime("%Y-%m-%d %H:%M")
     out = ["\n## %s - %d quotation(s) not in the bank\n" % (stamp, len(rows))]
     for quote, verdict, src, detail in rows:
-        mark = "🟢" if verdict in CLEAN else ("🔴" if verdict in ("NOT_FOUND", "ERROR") else "🔴🔴")
+        # `?` for the uncheckable one: it is not green, and marking it 🔴🔴 would put "you have
+        # not downloaded this yet" above a dropped proviso in the reader's eye.
+        mark = ("🟢" if verdict in CLEAN else
+                "?" if verdict in UNCHECKABLE else
+                "🔴" if verdict in ("NOT_FOUND", "ERROR") else "🔴🔴")
         out.append("- [ ] %s **%s** · source: `%s`" % (mark, verdict, src or "—"))
         if detail:
             out.append("      detail: %s" % detail[:220])

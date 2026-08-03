@@ -15,5 +15,5 @@ comparison, and everything else here exists to make the comparison happen withou
 remember to run it.
 """
 
-__version__ = "0.4.0"
+__version__ = "0.6.0"
 __all__ = ["__version__"]

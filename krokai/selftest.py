@@ -146,6 +146,39 @@ def suite_normalise():
     ok("strip_markdown removes [sic] so either convention verifies",
        "[sic]" not in strip_markdown("the dates o[f] receipt [sic]"))
 
+    # --- the CFR omitted-text marker is TEXT, and the quote side used to eat it -----------------
+    from krokai.normalize import prepare_quote
+    ok("strip_markdown KEEPS the CFR omission marker `* * *`",
+       prepare_quote("prescribe. * * * (d) Limitation.") == "prescribe. * * * (d) Limitation.",
+       prepare_quote("prescribe. * * * (d) Limitation."))
+    # Verbatim, not canonicalised: the corpus keeps whatever spelling it has, so the quote must
+    # match itself rather than a tidied version of itself.
+    for spelling in ("* * *", "* * * *", "*   *   *"):
+        ok("strip_markdown restores the marker VERBATIM: %r" % spelling,
+           prepare_quote("before %s after" % spelling) == "before %s after" % spelling,
+           prepare_quote("before %s after" % spelling))
+    # 🔴 And with PUNCTUATION around it, which is what a quotation actually looks like. The first
+    # version of this rule required whitespace on both sides; a reviewer found that
+    # `prescribe (* * *) and then` came out as `prescribe (  ) and then` - the marker deleted by
+    # the closing bracket. Confirmed by execution before the fix, and locked here in five shapes.
+    for wrapped in ("prescribe. * * *.", "prescribe (* * *) and then", 'he wrote "* * *" there',
+                    "prescribe. * * *, and then", "line ends with * * *"):
+        ok("strip_markdown keeps the marker with punctuation around it: %r" % wrapped[:28],
+           "* * *" in prepare_quote(wrapped), prepare_quote(wrapped))
+    # 🔴 The negative control that kills the obvious implementation. `\*(\s*\*)+` matches the `* *`
+    # standing BETWEEN two bolded words, protects it, and leaves the fragment in the text.
+    ok("strip_markdown still strips two ADJACENT bold spans (the `* *` between them is not a marker)",
+       prepare_quote("**alpha** **beta** gamma") == "alpha beta gamma",
+       prepare_quote("**alpha** **beta** gamma"))
+    ok("strip_markdown does not treat an asterisk glued to a word as a marker",
+       prepare_quote("x*y and z*w") == "xy and zw", prepare_quote("x*y and z*w"))
+    ok("strip_markdown still strips single-asterisk emphasis",
+       prepare_quote("the *alien* shall") == "the alien shall")
+    # Applied twice by two entry points in the same call chain, so it has to be a no-op the second
+    # time or `check()` would quietly differ from `extract_quotes` again, the other way round.
+    for s in ("**bold** text", "> quoted", u"«wrapped»", "a * * * b", "see [x](https://e.com) now"):
+        ok("prepare_quote is idempotent: %r" % s, prepare_quote(prepare_quote(s)) == prepare_quote(s))
+
 
 def suite_extract():
     from krokai.extract import extract_quotes, blocks
@@ -188,9 +221,20 @@ def suite_corpus(corpus, law):
     ok("corpus: our own analysis inside a sources folder is EXCLUDED",
        any("OUR-ANALYSIS" in p for p in corpus.excluded_derived),
        "a quotation copied out of it would otherwise verify against it")
-    ok("corpus: a stub is reported, not indexed",
-       any("stub" in p for p in corpus.excluded_stub))
-    ok("corpus: real sources are indexed", len(corpus.paths) == 3)
+    # 🔴 Rewritten 2026-08-03, and the old assertion was wrong in a way worth recording. It said a
+    # short markdown file must be EXCLUDED. That is right about a placeholder and wrong about a real
+    # short provision - a definition, a savings clause - and the tool cannot tell them apart from
+    # the length. Excluding turned a correct quotation of short law into NOT_FOUND, which is this
+    # tool's fabrication signal: the checker built to catch invented law reported real law as
+    # invented. So the two signals are separated - warn and index, rather than exclude.
+    ok("corpus: a short text source is INDEXED, not thrown away",
+       any("stub" in p for p in corpus.short_sources)
+       and not any("stub" in p for p in corpus.excluded_stub),
+       "short=%s excluded=%s" % (len(corpus.short_sources), len(corpus.excluded_stub)))
+    ok("corpus: and it is still reported, so a placeholder is noticed",
+       len(corpus.short_sources) >= 1)
+    ok("corpus: a quotation from a SHORT source verifies", corpus.find("placeholder") is not None)
+    ok("corpus: real sources are indexed", len(corpus.paths) == 4)
     ok("corpus: a match cannot straddle two documents",
        corpus.find("classroom instruction. Volume 7") is None)
 
@@ -221,10 +265,32 @@ def suite_corpus(corpus, law):
 
 def suite_verify(corpus):
     from krokai.verify import check
+    from krokai.extract import extract_quotes
 
     v, _w, _d = check("certified by a designated school official to consist of at least eighteen "
                       "clock hours of attendance a week", corpus)
     ok("verdict VERIFIED on an exact, complete quotation", v == "VERIFIED", v)
+
+    # --- the two entry points must agree, whatever the drafter pasted ---------------------------
+    # 🔴 The regression lock for the composition drift. `krokai check` reaches this function
+    # through `extract_quotes`, which strips markdown; `krokai quote` calls it directly. Five of
+    # six realistic inputs disagreed, and not as found-vs-missing: a quotation stopping one clause
+    # short of a limiter came back TRUNCATED_CONDITION one way and PUNCTUATION the other, which
+    # downgrades the most dangerous verdict this tool has into a cosmetic one.
+    #
+    # These four shapes are what a model emits and therefore what a person pastes.
+    truncated = ("The district director may consider reinstating a student who makes a request "
+                 "for reinstatement")
+    for label, pasted in [
+            ("guillemets", u"«%s»" % truncated),
+            ("bold inside the span", truncated.replace("may consider", "**may consider**")),
+            ("a provenance tag", "%s [OPENED]" % truncated),
+            ("a blockquote marker", "> %s" % truncated)]:
+        direct = check(pasted, corpus)[0]                     # the `krokai quote` door
+        got = extract_quotes('"%s"' % pasted.replace('"', ""), min_len=20)
+        through = check(got[0], corpus)[0] if got else "NO QUOTE"   # the `krokai check` door
+        ok("pipeline: both entry points agree when the paste carries %s" % label,
+           direct == through == "TRUNCATED_CONDITION", "quote=%s check=%s" % (direct, through))
 
     v, _w, d = check("The district director may consider reinstating a student who makes a request "
                      "for reinstatement", corpus)
@@ -398,9 +464,36 @@ def suite_address(corpus, law):
     ok("address: the PM part letter is respected (A.8 is not B.8)",
        a["status"] != "MATCHED", str(a))
 
+    # --- "not downloaded" told apart from "invented" ---------------------------------------------
+    from krokai.address import fold
+    # 26 CFR is a real citation and there is no tax file in this corpus: nothing to check against.
+    v, p, d, ad = fold("a sentence that is nowhere in this corpus at all", "NOT_FOUND", None, "",
+                       ["26 CFR 1.61-1"], corpus, km, packs)
+    ok("address: a miss whose source is NOT on disk becomes NO_SOURCE_ON_DISK",
+       v == "NO_SOURCE_ON_DISK" and ad and ad["status"] == "ADDRESS_NOT_IN_CORPUS",
+       "%s / %s" % (v, ad))
+    ok("address: and it names what to download, and refuses to read as a pass",
+       "26 CFR" in d and "not a pass" in d, d)
+
+    # 🔴🔴 THE CONTROL THAT MATTERS MORE THAN THE FEATURE. If the cited source IS on disk and the
+    # words are not in it, that is the fabrication shape - the verdict must NOT soften. Without this
+    # assertion the new bucket is an escape hatch: cite something you do not have, get a shrug.
+    v2, _p2, d2, _a2 = fold("a sentence that is nowhere in this corpus at all", "NOT_FOUND", None,
+                            "", ["8 CFR 214.2"], corpus, km, packs)
+    ok("address: a miss whose source IS on disk stays NOT_FOUND",
+       v2 == "NOT_FOUND", v2)
+    ok("address: and the report says the source was present, which is the stronger accusation",
+       "IS on disk" in d2, d2)
+
+    # And with no citation at all there is nothing to resolve, so nothing changes.
+    v3, _p3, _d3, a3 = fold("a sentence that is nowhere in this corpus at all", "NOT_FOUND", None,
+                            "", [], corpus, km, packs)
+    ok("address: with no nearby citation a miss is still just a miss", v3 == "NOT_FOUND", v3)
+    ok("address: and no address is invented for it", a3 is None, str(a3))
+
 
 def suite_redact():
-    from krokai.redact import self_test, gate, scan, SECRET_PATTERNS, PII_PATTERNS
+    from krokai.redact import self_test, gate, scan, SECRET_PATTERNS, PII_PATTERNS, FICTIONAL
     out = []
     ok("gate: all detectors have probes and no negative control fires",
        self_test(printer=out.append), " ".join(out))
@@ -408,15 +501,31 @@ def suite_redact():
     rc = gate([("brief", "key = sk-ant-api03-" + "A" * 40)], printer=lambda *_a: None)
     ok("gate: a secret blocks and has no override", rc == 2, str(rc))
 
-    rc = gate([("brief", "d.o.b. April 12, 1988")], allow_pii=False, printer=lambda *_a: None)
+    dob = "d.o.b. " + FICTIONAL["DATE_OF_BIRTH"]
+    rc = gate([("brief", dob)], allow_pii=False, printer=lambda *_a: None)
     ok("gate: personal data blocks without --allow-pii", rc == 3, str(rc))
-    rc = gate([("brief", "d.o.b. April 12, 1988")], allow_pii=True, printer=lambda *_a: None)
+    rc = gate([("brief", dob)], allow_pii=True, printer=lambda *_a: None)
     ok("gate: --allow-pii lets personal data through", rc == 0, str(rc))
 
     rc = gate([("brief", "blocks a labelled date of birth unless you pass --allow-pii")],
               printer=lambda *_a: None)
     ok("gate: does NOT fire on its own documentation (the false positive that kills a gate)",
        rc == 0, str(rc))
+
+    # --- a credential broken across a line, including inside a markdown quote block -------------
+    # 🔴 Briefs are markdown and briefs wrap. The first version of the whole-text pass stripped
+    # whitespace only, so a `> ` on the continuation line broke the pattern and the key went
+    # through - traced by a reviewer, confirmed by probe, and the shape it names is the LIKELY one.
+    _k = "sk-" + "ant-api03-" + "B" * 30
+    for label, blob in [("plain wrap", _k[:10] + "\n" + _k[10:]),
+                        ("wrapped inside a blockquote", _k[:10] + "\n> " + _k[10:]),
+                        ("wrapped inside a list item", _k[:10] + "\n- " + _k[10:])]:
+        ok("gate: a key wrapped across lines is caught (%s)" % label,
+           "ANTHROPIC_KEY" in [k for s, k, _n, _l in scan(blob, "d") if s == "SECRET"], label)
+    # The control: folding must not invent a secret out of ordinary prose.
+    ok("gate: folding lines does not manufacture a secret from prose",
+       not [k for s, k, _n, _l in scan("Authorization:\nBearer of this certificate shall be "
+                                       "admitted to the hearing room.\n", "d") if s == "SECRET"])
 
     findings = scan("sk-ant-api03-" + "A" * 40)
     ok("gate: reports kind and line, never the value",
@@ -540,6 +649,47 @@ def suite_config(tmp):
     ok("config: missing folders are reported rather than created",
        len(cfg.missing_paths()) >= 1)
 
+    # --- the surname reaches the GATE, not merely the detector -----------------------------------
+    # 🔴 This one runs the CLI in a subprocess on purpose. The defect it locks was invisible to
+    # every in-process probe for five releases: `name_patterns()` was correct, `scan()` accepted
+    # surnames, the documentation named `casefile.json` as the place to configure them - and no
+    # caller passed any, because `gate()` had no parameter and `config` had no key. Every existing
+    # test called `scan(..., surnames=(...))` directly, so the probe supplied what the product did
+    # not, and verified only itself. An outside reviewer found it by tracing call sites.
+    #
+    # So the assertion is end to end: a real config file, a real brief, the real command, the exit
+    # code a user would see. Nothing in this block may import `redact`.
+    import subprocess as _sp
+    gate_root = os.path.join(tmp, "gate-matter")
+    os.makedirs(gate_root, exist_ok=True)
+    cfgdata = dict(TEMPLATE)
+    cfgdata["surnames"] = ["Kowalczyk"]
+    _j.dump(cfgdata, io.open(os.path.join(gate_root, "casefile.json"), "w", encoding="utf-8"))
+    brief_path = os.path.join(gate_root, "brief.md")
+    io.open(brief_path, "w", encoding="utf-8").write(
+        "Counsel for Maria Kowalczyk asks the reviewer to confirm the statute text.\n")
+    pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = dict(os.environ, PYTHONPATH=pkg_root, PYTHONIOENCODING="utf-8")
+
+    def _gate(cwd, path):
+        r = _sp.run([sys.executable, "-m", "krokai", "gate", path], cwd=cwd, env=env,
+                    stdout=_sp.PIPE, stderr=_sp.PIPE, timeout=120)
+        return r.returncode, (r.stdout or b"").decode("utf-8", "replace")
+
+    rc, outtxt = _gate(gate_root, brief_path)
+    ok("config: a CONFIGURED surname blocks the real `krokai gate`, end to end",
+       rc == 3 and "SURNAME" in outtxt, "rc=%s" % rc)
+
+    # The negative control, and it is the more important half: the same brief with no surname
+    # configured must NOT block - otherwise the check would pass by blocking everything.
+    plain_root = os.path.join(tmp, "gate-plain")
+    os.makedirs(plain_root, exist_ok=True)
+    _j.dump(TEMPLATE, io.open(os.path.join(plain_root, "casefile.json"), "w", encoding="utf-8"))
+    rc2, out2 = _gate(plain_root, brief_path)
+    ok("config: with no surname configured the same brief passes", rc2 == 0, "rc=%s" % rc2)
+    ok("config: and the gate SAYS no surname was looked for, instead of printing `clean`",
+       "no surnames configured" in out2, out2.strip()[-120:])
+
 
 def suite_install(tmp):
     from krokai.install import build_block, merge
@@ -573,10 +723,26 @@ def suite_verdicts():
         ok("verdicts: every verdict has a %s label" % lang, not missing, str(missing))
         missing = [v for v in ORDER if v not in MEANING[lang]]
         ok("verdicts: every verdict has a %s explanation" % lang, not missing, str(missing))
+    from krokai.verdicts import UNCHECKABLE
     ok("verdicts: dangerous and clean do not overlap",
        not (set(DANGEROUS) & set(CLEAN)), str(set(DANGEROUS) & set(CLEAN)))
+    ok("verdicts: UNCHECKABLE overlaps neither - it is not a pass and not an accusation",
+       not (set(UNCHECKABLE) & (set(DANGEROUS) | set(CLEAN))), str(UNCHECKABLE))
+    allbuckets = set(DANGEROUS) | set(CLEAN) | set(UNCHECKABLE)
     ok("verdicts: every verdict is classified somewhere",
-       set(ORDER) == set(DANGEROUS) | set(CLEAN), str(set(ORDER) ^ (set(DANGEROUS) | set(CLEAN))))
+       set(ORDER) == allbuckets, str(set(ORDER) ^ allbuckets))
+
+    # 🔴 The EXIT CODE is the surface a hook and a CI job read, and it used to see only the
+    # dangerous count. `print_summary` returns BOTH numbers now; asserting the arity is what stops
+    # a later refactor quietly dropping the second one back to invisible.
+    import inspect as _insp
+    from krokai import run as _run
+    _src = _insp.getsource(_run.print_summary)
+    ok("run: print_summary reports the uncheckable count as well as the dangerous one",
+       "return ab_bad, ab_unknown" in _src, _src.strip().splitlines()[-1])
+    _cli = _insp.getsource(__import__("krokai.cli", fromlist=["cmd_check"]).cmd_check)
+    ok("cli: --strict fails on an uncheckable item too, with its own code",
+       "bad, unknown = print_summary" in _cli and "return 4" in _cli)
 
 
 def suite_consult(tmp):
@@ -960,6 +1126,433 @@ def suite_docs(root):
            not (ru - en), "only in README.ru.md: " + ", ".join(sorted(ru - en)))
 
 
+def suite_pipeline_samples():
+    """Every citation shape that declares an address must be REACHABLE through the real pipeline.
+
+    🔴 Ported from a measured incident in a sister project: an address kind was added to the key
+    parser, verified by calling the parser directly, and recorded as fixed - while the recogniser
+    that feeds the parser never matched that citation style, so the key existed and was never once
+    created in a live run. A probe into a function cannot see a hole in the pipeline that feeds
+    it. So every address-bearing shape carries a `sample` sentence, and this suite pushes each one
+    through find_positions -> keys - the same two steps the scanner uses - and requires the
+    declared kind (or its alias target) to come out the other end. A shape without a sample fails
+    here by design: that is the coverage assertion, not an inconvenience.
+    """
+    from krokai.citations import load_packs, available_packs
+    packs = load_packs(available_packs())
+    for p in packs.packs:
+        alias_target = {k: v.get("to_kind") for k, v in (p.aliases or {}).items()
+                        if isinstance(v, dict)}
+        for sh in p.shapes:
+            a = sh.get("address")
+            if not a:
+                continue
+            kind = a["kind"]
+            sample = sh.get("sample")
+            if not ok("packs: %s shape %r carries a pipeline sample" % (p.id, kind), bool(sample)):
+                continue
+            found = [t for t, _pos in packs.find_positions(sample)]
+            got = {k[0] for k in packs.keys(found)}
+            want = {kind, alias_target.get(kind)} - {None}
+            ok("packs: %s sample for %r survives find->keys, the scanner's own path"
+               % (p.id, kind), bool(found) and bool(got & want),
+               "found=%r got=%r want=%r" % (found[:3], sorted(got), sorted(want)))
+
+
+def suite_ported(tmp):
+    """The 2026-08-03 port round: every check here is a defect CONFIRMED BY PROBE that day,
+    either in this tree or in the sister project this toolkit was extracted from. Deleting any of
+    the round's fixes must turn at least one of these red."""
+    from krokai.citations import load_packs
+    from krokai.readers import _choose_extraction
+    from krokai.bank import in_bank
+    from krokai.redact import scan, FICTIONAL
+    from krokai.consult import classify_url, agency_labels
+    from krokai.run import mixed_provisions
+
+    packs = load_packs(["us-federal", "us-immigration", "us-tax"])
+
+    # --- filename matching: number tokens, not substrings ---------------------------------------
+    # Measured cost of the substring in the sister project: a 7 KB EOIR twin shown as the primary
+    # source for the most-cited provision of the filing, while the real 205 KB file sat beside it.
+    ok("citations: part 245 does not match inside 1245",
+       not packs.file_matches(("cfr", "8", "245"), "8CFR-1245.2-EOIR.xml", ""))
+    ok("citations: the real part-245 file still matches",
+       packs.file_matches(("cfr", "8", "245"), "8CFR-part-245-ecfr-2026-07-01.xml", ""))
+    ok("citations: a dotted section name still matches its part",
+       packs.file_matches(("cfr", "8", "214"), "8CFR-214.2-f-16.xml", ""))
+    ok("citations: part 245 does not claim the part-245a file",
+       not packs.file_matches(("cfr", "8", "245"), "8cfr-part-245a-ecfr.xml", ""))
+    ok("citations: part 245a still claims its own file",
+       packs.file_matches(("cfr", "8", "245a"), "8cfr-part-245a-ecfr.xml", ""))
+    ok("citations: usc 255 does not match inside 1255",
+       not packs.file_matches(("usc", "8", "255"), "8USC-1255-uscode.xml", ""))
+    ok("citations: a fully glued name still matches weakly",
+       packs.file_matches(("cfr", "8", "214"), "8cfr_214.xml", ""))
+    # The dashed-needle defect was pre-existing and invisible: the captured `602-0199` kept its
+    # dash, the flattened filename lost its own, and the name rule had never fired once.
+    ok("citations: a dashed memorandum number meets a dashed filename at all",
+       packs.file_matches(("pmnum", "602-0199"), "PM-602-0199-AdjustmentOfStatus.md", ""))
+    ok("citations: ...and does not match inside a longer digit run",
+       not packs.file_matches(("pmnum", "602-0199"), "PM-1602-01991-notes.md", ""))
+
+    # --- a filled PDF form reads as a blank one -------------------------------------------------
+    # 🔴 The values of a fillable PDF live in /AcroForm /Fields as /V, not in the page content, so
+    # a completed agency form and an empty one produce the same text layer. Measured in the sister
+    # project on the actually-filed I-485: 765 fields, 455 filled, none of them extractable.
+    # A real form is built here rather than mocked, because the whole defect is about what the
+    # library actually returns for a real file.
+    from krokai.readers import read_pdf, _form_values, no_text_layer
+    try:
+        import fitz as _fitz
+    except Exception:
+        ok("readers: (skipped) PyMuPDF not installed, cannot build a form fixture", True)
+    else:
+        fpath = os.path.join(tmp, "filled-form.pdf")
+        doc = _fitz.open()
+        pg = doc.new_page()
+        pg.insert_text((72, 90), "Part 8. Item 16. Have you EVER worked without authorization?")
+        for nm, val in (("Pt8Line16_YesNo", "No"),
+                        ("Pt1Line1a_FamilyName", "Kowalczyk"),
+                        ("Pt2Line3_MiddleName", "")):        # the blank one must NOT be invented
+            wd = _fitz.Widget()
+            wd.field_name = nm
+            wd.field_type = _fitz.PDF_WIDGET_TYPE_TEXT
+            wd.rect = _fitz.Rect(400, 150, 540, 172)
+            wd.field_value = val
+            pg.add_widget(wd)
+        doc.save(fpath)
+        doc.close()
+
+        layer = ""
+        try:
+            import pypdf as _pypdf
+            layer = "\n".join((p.extract_text() or "") for p in _pypdf.PdfReader(fpath).pages)
+        except Exception:
+            pass
+        ok("readers: the control holds - the ANSWER is genuinely absent from the text layer",
+           "Kowalczyk" not in layer and "worked without authorization" in layer,
+           "len(layer)=%d" % len(layer))
+
+        full = read_pdf(fpath, None)
+        ok("readers: read_pdf recovers a FILLED form field value", "Kowalczyk" in full)
+        ok("readers: and keeps the item number, which is the only trustworthy pairing",
+           "Pt8Line16_YesNo" in full)
+        ok("readers: an EMPTY field is not invented into the corpus",
+           "Pt2Line3_MiddleName" not in full)
+
+        # 🔴 `/Off` with the slash is an unticked checkbox; `Off` without it is a word somebody
+        # typed into a text field, and dropping it deleted a real answer. Reviewer-traced.
+        opath = os.path.join(tmp, "off-form.pdf")
+        odoc = _fitz.open()
+        opg = odoc.new_page()
+        for nm, val in (("Mode_Text", "Off"), ("Name_Text", "Kowalczyk")):
+            wd = _fitz.Widget()
+            wd.field_name = nm
+            wd.field_type = _fitz.PDF_WIDGET_TYPE_TEXT
+            wd.rect = _fitz.Rect(100, 100, 300, 120)
+            wd.field_value = val
+            opg.add_widget(wd)
+        odoc.save(opath)
+        odoc.close()
+        ok("readers: a TEXT field whose value is the word 'Off' is kept",
+           "Mode_Text" in _form_values(opath), _form_values(opath).replace("\n", " | "))
+        ok("readers: a form PDF is not diagnosed as a scan needing OCR",
+           no_text_layer(fpath) is False)
+        ok("readers: a PDF with no form at all yields no field text",
+           _form_values(os.path.join(tmp, "does-not-exist.pdf")) == "")
+
+    # --- the two extension tuples must agree -----------------------------------------------------
+    # 🔴 `.docx` sat in EXTRACTED_EXT and not in DEFAULT_EXT for a whole release, so `read_docx` -
+    # written, tested, documented at length - was never reached: `walk()` yielded no `.docx`. A
+    # decision saved as Word was invisible and every quotation of it read as fabricated. Derived,
+    # not copied, so adding a format to one tuple forces the question about the other.
+    from krokai.corpus import DEFAULT_EXT, EXTRACTED_EXT
+    orphans = [e for e in EXTRACTED_EXT if e not in DEFAULT_EXT]
+    ok("corpus: no format is declared EXTRACTED without being walked at all", not orphans,
+       str(orphans))
+
+    # --- extraction choice: truncation by characters, splitting by tokens -----------------------
+    whole = ("word " * 5000).strip()
+    split = ("wo rd " * 5000).strip()
+    trunc = ("word " * 50).strip()
+    ok("readers: a truncated-but-alive primary loses to a complete alternate",
+       _choose_extraction(trunc, whole)[0] is whole)
+    ok("readers: a word-splitting primary loses to a clean alternate",
+       _choose_extraction(split, whole)[0] is whole)
+    ok("readers: a complete primary beats a word-splitting alternate",
+       _choose_extraction(whole, split)[0] is whole)
+    ok("readers: equal extractions keep the primary", _choose_extraction(whole, whole)[0] is whole)
+    ok("readers: a dead primary loses", _choose_extraction("x", whole)[0] is whole)
+    # 🔴 The two findings an outside review confirmed by execution on 2026-08-03: the split rule
+    # used to fire in the WRONG DIRECTION (a truncated ALTERNATE beat a complete primary, because
+    # "more tokens" read as "split words"), and a 45 % loss sat under a lone 2x threshold.
+    trunc_alt = ("word " * 2600).strip()
+    ok("readers: a complete primary beats a truncated ALTERNATE (direction control)",
+       _choose_extraction(whole, trunc_alt)[0] is whole)
+    p45 = ("word " * 2750).strip()
+    ok("readers: a 45%-loss primary loses to the complete alternate",
+       _choose_extraction(p45, whole)[0] is whole)
+    # A reviewer's counter-case for the 1.01 hair trigger: two line-break-hyphen artefacts must
+    # not hand the round to an alternate that is missing a paragraph.
+    near_complete = ("word " * 98).strip() + " regu lation stat ute"          # 102 tokens
+    short_alt = ("word " * 100).strip()[:-20]                                 # ~100 tokens, shorter
+    ok("readers: two split-word artefacts do not flip the choice to a shorter text",
+       _choose_extraction(near_complete, short_alt)[0] is near_complete)
+
+    # --- the bank check compares the WHOLE quotation --------------------------------------------
+    shared = "The Secretary may in his discretion and under such regulations as he may prescribe "
+    qa = shared + "adjust the status of an alien admitted or paroled."
+    qb = shared + "deny the application without prejudice to renewal."
+    bank = "### S-1\n\n> " + qa + "\n"
+    ok("bank: a banked quotation is recognised", in_bank(qa, bank))
+    ok("bank: a DIFFERENT quotation sharing the first 60 characters is not",
+       not in_bank(qb, bank))
+    cut = qa.rfind(" ", 0, 60)
+    wrapped = "### S-2\n\n> " + qa[:cut] + "\n> " + qa[cut + 1:] + "\n"
+    ok("bank: a quotation wrapped across blockquote lines is still recognised",
+       in_bank(qa, wrapped))
+    # 🔴 A TRUNCATED variant of a banked quotation is a substring of the full one - under
+    # containment it read as banked, which is exactly the cut-off-condition shape this toolkit
+    # exists to catch. Reviewer-traced, equality-fixed.
+    ok("bank: a truncated variant of a banked quotation is NOT banked",
+       not in_bank(qa[:len(qa) - 18], bank))
+    ok("bank: a short boilerplate fragment is NOT banked",
+       not in_bank("in his discretion and under such regulations", bank))
+
+    # --- grouped identifiers reach the gate ------------------------------------------------------
+    # 🔴 These five fixtures used to be the applicant's REAL numbers, copied here out of the sister
+    # project's leak report so that the probe would exercise "the exact shape that got through".
+    # They are now built from `redact.FICTIONAL`, which is the only place in this tree allowed to
+    # hold an identifier-shaped literal, and `suite_no_real_identifiers` enforces that.
+    #
+    # Two ways this block leaked, not one: the values sat in the file, AND the failure detail
+    # printed the whole probe line to the console. A test that prints its fixture is a publishing
+    # channel whenever it goes red - so the detail names the shape and never the line.
+    for line, kind, shape in [
+            (FICTIONAL["ALIEN_NUMBER"], "ALIEN_NUMBER", "A-nnn-nnn-nnn"),
+            (FICTIONAL["ALIEN_NUMBER_HASH"], "ALIEN_NUMBER", "A# nnnnnnnnn"),
+            (FICTIONAL["ALIEN_NUMBER_LOWER"], "ALIEN_NUMBER", "a-nnnnnnnnn"),
+            (FICTIONAL["USCIS_RECEIPT"], "USCIS_RECEIPT", "MSC-nnn-nnn-nnn-n"),
+            (FICTIONAL["USCIS_RECEIPT_IOE"], "USCIS_RECEIPT", "IOE-nnnn-nnn-nnn"),
+            (FICTIONAL["USCIS_RECEIPT_FUSED"], "USCIS_RECEIPT", "MSCnnnnnnnnnn")]:
+        sentence = "the notice shows %s today" % line
+        ok("redact: grouped form is caught: %s (%s)" % (kind, shape),
+           kind in [k for _s, k, _n, _l in scan(sentence)], shape)
+    ok("redact: a lettered unit number (Apt A-1) is caught",
+       "UNIT_NUMBER" in [k for _s, k, _n, _l in scan("at 732 S Spring St Apt A-1 today")])
+    ok("redact: a single-capital unit (Suite B) is caught",
+       "UNIT_NUMBER" in [k for _s, k, _n, _l in scan("offices at Suite B downtown")])
+    ok("redact: all-caps prose is NOT a unit (UNIT OF MEASUREMENT)",
+       "UNIT_NUMBER" not in [k for _s, k, _n, _l in scan("THE UNIT OF MEASUREMENT IS THE HOUR")])
+
+    # --- the lookalike detector knows configured NAMES, not only gov/mil labels -----------------
+    g = {"primary": [".gov", ".mil"] + packs.official_domains,
+         "snapshot": [], "nonauthoritative": []}
+    ok("consult: the exact agency name in a foreign zone is flagged",
+       classify_url("https://www.uscis.com/i-485", g) == "lookalike")
+    ok("consult: a three-letter agency name still counts (irs.com is live and commercial)",
+       classify_url("https://irs.com/refund", g) == "lookalike")
+    ok("consult: an agency name as a subdomain of a stranger is flagged",
+       classify_url("https://uscis.phishing.example/form", g) == "lookalike")
+    ok("consult: the real agency stays primary",
+       classify_url("https://www.uscis.gov/i-485", g) == "primary")
+    ok("consult: names do not fire on unrelated hosts",
+       classify_url("https://status.com/page", g) == "other" and
+       classify_url("https://www.milano.it/", g) == "other")
+    ok("consult: two-letter fragments are never derived as names",
+       "us" not in agency_labels(packs.official_domains))
+    ok("consult: a www-prefixed entry still teaches its name",
+       "uscis" in agency_labels(["www.uscis.gov"]))
+    from krokai.consult import gov_lookalike
+    ok("consult: an upper-case host does not slip a DIRECT gov_lookalike call",
+       gov_lookalike("USCIS.COM", ["uscis.gov"]))
+    ok("citations: a dotted no-separator name cannot hand part 245a to part 245",
+       not packs.file_matches(("cfr", "8", "245"), "8cfr245a.xml", ""))
+    # Tested as an ABSENCE, the same discipline as the cut features: `ice` is an English word, a
+    # whole-label match on it would flag a commodities exchange, and the pack left it out on
+    # purpose. If it reappears, this fails and the reasoning in the pack file gets re-read.
+    ok("packs: ice.gov stays out of official_domains on purpose",
+       "ice.gov" not in packs.official_domains)
+    ok("packs: the immigration pack teaches uscis.gov",
+       "uscis.gov" in packs.official_domains)
+
+    # --- one provision, two texts ----------------------------------------------------------------
+    rows = [
+        {"verdict": "VERIFIED", "near": ["8 CFR 214.2(f)(16)"], "sites": [], "quote": "full"},
+        {"verdict": "TRUNCATED_CONDITION", "near": ["8 CFR 214.2(f)(16)"], "sites": [],
+         "quote": "cut"},
+        {"verdict": "VERIFIED", "near": ["8 CFR 103.2(b)(8)"], "sites": [], "quote": "clean"},
+    ]
+    mixed = mixed_provisions(rows, packs)
+    ok("run: the same provision quoted clean AND flagged is paired", len(mixed) == 1,
+       repr([m[0] for m in mixed]))
+    ok("run: a provision quoted only clean is not accused",
+       all("103" not in m[0] for m in mixed))
+
+    # --- init writes the assistant block, idempotently -------------------------------------------
+    from krokai.cli import write_claude_block, CLAUDE_BEGIN
+    root = os.path.join(tmp, "matter")
+    os.makedirs(root, exist_ok=True)
+    io.open(os.path.join(root, "CLAUDE.md"), "w", encoding="utf-8").write(
+        "# My matter\n\nHouse rules stay.\n")
+    target, action1 = write_claude_block(root)
+    text1 = io.open(target, encoding="utf-8").read()
+    ok("cli: the assistant block is appended, not replacing the existing file",
+       "House rules stay." in text1 and CLAUDE_BEGIN in text1, action1)
+    ok("cli: the block is rendered with a real command, no placeholder left",
+       "{KROKAI}" not in text1 and 'python "' in text1)
+    _t, action2 = write_claude_block(root)
+    text2 = io.open(target, encoding="utf-8").read()
+    ok("cli: a second run refreshes in place - exactly one block",
+       text2.count(CLAUDE_BEGIN) == 1 and "House rules stay." in text2, action2)
+    ok("cli: the rendered block does not carry the template's meta-comment",
+       "Paste this into" not in text2)
+
+    # --- write_claude_block refuses the states it cannot edit safely -----------------------------
+    # All three vectors were traced by an outside reviewer from the quoted code, before a client
+    # paid for any of them: an orphaned marker would have deleted the user's text under the word
+    # "refreshed"; a non-UTF-8 file would have been transcoded wholesale to U+FFFD; a CRLF file
+    # would have flipped to LF end to end for a three-line change.
+    orph = os.path.join(tmp, "orphan-matter")
+    os.makedirs(orph, exist_ok=True)
+    orphan_text = "# Matter\n\nKeep me.\n\n" + CLAUDE_BEGIN + "\nhand-damaged block, END deleted\n"
+    io.open(os.path.join(orph, "CLAUDE.md"), "w", encoding="utf-8").write(orphan_text)
+    try:
+        write_claude_block(orph)
+        ok("cli: an orphaned marker is refused, not repaired", False)
+    except SystemExit:
+        after = io.open(os.path.join(orph, "CLAUDE.md"), encoding="utf-8").read()
+        ok("cli: an orphaned marker is refused, not repaired", after == orphan_text)
+
+    enc = os.path.join(tmp, "cp1251-matter")
+    os.makedirs(enc, exist_ok=True)
+    raw1251 = ("# Дело\n\nРукописный текст клиента.\n").encode("cp1251")
+    open(os.path.join(enc, "CLAUDE.md"), "wb").write(raw1251)
+    try:
+        write_claude_block(enc)
+        ok("cli: a non-UTF-8 CLAUDE.md is refused, never transcoded", False)
+    except SystemExit:
+        ok("cli: a non-UTF-8 CLAUDE.md is refused, never transcoded",
+           open(os.path.join(enc, "CLAUDE.md"), "rb").read() == raw1251)
+
+    crlf = os.path.join(tmp, "crlf-matter")
+    os.makedirs(crlf, exist_ok=True)
+    open(os.path.join(crlf, "CLAUDE.md"), "wb").write(b"# Matter\r\n\r\nKeep.\r\n")
+    write_claude_block(crlf)
+    out_bytes = open(os.path.join(crlf, "CLAUDE.md"), "rb").read()
+    ok("cli: a CRLF file keeps its line endings after the block is added",
+       b"\r\n" in out_bytes and b"Keep." in out_bytes and
+       CLAUDE_BEGIN.encode() in out_bytes and b"\n\n" not in out_bytes.replace(b"\r\n", b"\r"),
+       "len=%d" % len(out_bytes))
+    write_claude_block(crlf)
+    out2 = open(os.path.join(crlf, "CLAUDE.md"), "rb").read()
+    ok("cli: ...and a refresh on the CRLF file stays a single block",
+       out2.count(CLAUDE_BEGIN.encode()) == 1)
+
+    # --- the documented invocation actually runs -------------------------------------------------
+    # 🔴 `python <clone>/krokai <cmd>` was in the install document from the first release and had
+    # NEVER worked: directory-run gives `__main__.py` no parent package, and the relative import
+    # died. Found 2026-08-03 by executing the document end to end in a scratch folder - reading it
+    # had proven nothing. This is the regression lock: run the package DIRECTORY from a foreign
+    # working directory, exactly as the document tells the client's assistant to.
+    import subprocess
+    pkg = os.path.dirname(os.path.abspath(
+        __import__("krokai.cli", fromlist=["main"]).__file__))
+    r = subprocess.run([sys.executable, pkg, "--version"], cwd=root,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+    ok("cli: directory-run (`python <clone>/krokai`) works from a foreign cwd",
+       r.returncode == 0 and b"krokai" in r.stdout,
+       (r.stderr or b"").decode("utf-8", "replace")[:160])
+
+
+def suite_no_real_identifiers(root):
+    """No identifier-shaped literal exists in this tree except the documented fictional ones.
+
+    🔴 This is the negative control for incident 65, and it is the one the previous 292 assertions
+    could not have been. The write-up of the grouped-identifier defect quoted the applicant's real
+    A-number and receipt number, and the SAME numbers were the positive fixtures for
+    `ALIEN_NUMBER` - so the detector fired on them, the suite went green, and the green run is what
+    kept the values in the file. **A passing test was evidence for the leak.**
+
+    Three design choices, each of them a rule this project already paid for:
+
+    1. **The allow-list is a set of VALUES, never a set of filenames.** `redact.py` legitimately
+       contains identifier shapes; exempting `redact.py` would have exempted the two real numbers
+       sitting in its comment. The same mistake, made with a filename, kept a wrong copyright line
+       in `LICENSE` for this repository's entire life while the build reported clean.
+    2. **Coverage is asserted, not assumed.** A scanner that silently scans nothing is a green
+       light with no eyes - measured three times in this project. So the suite fails unless it
+       actually opened the four files that have historically carried a value.
+    3. **The scanner is proved to work by planting one.** A control string is scanned in the same
+       call, and the suite fails if the scan does not flag it.
+
+    The value is never printed - not in a pass, not in a failure. A failure names kind, file, line
+    and a SHA-256 prefix, which is enough to find it with `grep -n` and not enough to publish it.
+    """
+    import hashlib
+    from krokai.redact import PII_PATTERNS, FICTIONAL, ALLOWED_NON_FICTIONAL, SECRET_PATTERNS
+
+    # The classes that identify a PERSON by number. Addresses are deliberately out: the street and
+    # the city are geography by this project's own redaction rule, and they appear in prose on
+    # nearly every page, so including them would make this check cry wolf - the failure mode
+    # `normalize.py` names as the one that kills a tool.
+    WATCHED = ("EMAIL", "US_PHONE", "SSN", "ALIEN_NUMBER", "USCIS_RECEIPT", "SEVIS_ID",
+               "PASSPORT_NUMBER", "DATE_OF_BIRTH", "PAYMENT_CARD", "BANK_ACCOUNT")
+    pats = [(k, rx) for k, rx in PII_PATTERNS if k in WATCHED] + list(SECRET_PATTERNS)
+    allowed = set(FICTIONAL.values()) | set(ALLOWED_NON_FICTIONAL)
+
+    def offenders(text):
+        out = []
+        for lineno, line in enumerate(text.splitlines(), 1):
+            for kind, rx in pats:
+                for m in rx.finditer(line):
+                    val = m.group(0)
+                    if val in allowed or any(val in a for a in allowed):
+                        continue
+                    out.append((kind, lineno, hashlib.sha256(val.encode("utf-8")).hexdigest()[:10]))
+        return out
+
+    # (3) the planted control, scanned by the same code path as the tree.
+    # 🔴 Assembled from fragments, and the reason is that the first version was NOT: this scanner's
+    # very first run flagged its own probe line. A detector whose test data trips the detector
+    # cannot be run over its own source, which is how a check quietly acquires a file exemption -
+    # the exemption this suite exists to avoid. Concatenation keeps the runtime match and leaves no
+    # literal on disk, the same move the secret probes make in `redact.py`.
+    planted = offenders("the notice shows A-123" + "-456-789 and receipt EAC" + "1234567890 today")
+    ok("publish: the tree scanner flags a planted identifier",
+       {k for k, _l, _d in planted} == {"ALIEN_NUMBER", "USCIS_RECEIPT"},
+       str(sorted({k for k, _l, _d in planted})))
+    ok("publish: the tree scanner does not flag a documented fictional value",
+       not offenders("the notice shows %s and receipt %s today"
+                     % (FICTIONAL["ALIEN_NUMBER"], FICTIONAL["USCIS_RECEIPT"])))
+
+    scanned, findings = [], []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames
+                       if d not in (".git", "__pycache__", ".pytest_cache", ".venv", "runs")]
+        for fn in sorted(filenames):
+            path = os.path.join(dirpath, fn)
+            rel = os.path.relpath(path, root).replace("\\", "/")
+            try:
+                with io.open(path, encoding="utf-8") as fh:
+                    text = fh.read()
+            except (UnicodeDecodeError, OSError, ValueError):
+                continue                      # binary or unreadable: not a place a literal hides
+            scanned.append(rel)
+            for kind, lineno, dig in offenders(text):
+                findings.append("%s %s:%d sha=%s" % (kind, rel, lineno, dig))
+
+    # (2) coverage, asserted rather than hoped for
+    MUST_SEE = ("krokai/redact.py", "krokai/selftest.py", "CHANGELOG.md", "FEATURES.md")
+    missing = [m for m in MUST_SEE if m not in scanned]
+    ok("publish: the tree scan actually opened the files that have carried a value",
+       not missing and len(scanned) >= 30, "missing=%s scanned=%d" % (missing, len(scanned)))
+
+    ok("publish: no undocumented identifier or secret literal anywhere in the tree",
+       not findings, "; ".join(findings[:6]))
+
+
 def suite_rename(root):
     """A rename is survivable only if the old stamp is still recognised.
 
@@ -1001,6 +1594,9 @@ def main():
         suite_install(tmp)
         suite_verdicts()
         suite_consult(tmp)
+        suite_pipeline_samples()
+        suite_ported(tmp)
+        suite_no_real_identifiers(root)
         suite_rename(root)
         suite_docs(root)
     finally:

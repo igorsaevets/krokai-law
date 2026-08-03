@@ -37,7 +37,21 @@ DERIVED_DEFAULT = (r"ANALYSIS|SUMMARY|DIGEST|NOTES?|OUTLINE|CHECKLIST|STRATEG|ME
                    r"DRAFT|REPORT|OUR-|РАЗБОР|АНАЛИЗ|ВЫПИСКА|СВОДКА|ЗАМЕТ|конспект|ЧЕК-ЛИСТ|"
                    r"СТРАТЕГИ|ПРОВЕРКА|ИТОГ|отч[её]т|бриф|рецензи|наш[аи]?-")
 
-DEFAULT_EXT = (".txt", ".xml", ".md", ".html", ".htm", ".pdf")
+# 🔴 `.docx` was missing here until 2026-08-03, and `read_any` had dispatched it the whole time.
+# So `read_docx` existed, was tested, carried a long docstring about the tables the popular
+# one-liner drops - and no `.docx` in a sources folder was ever opened, because `walk()` never
+# yielded one. A quotation from a decision saved as Word came back NOT_FOUND, which is this tool's
+# fabrication signal. Found by a reviewer noticing that the two tuples below disagreed.
+DEFAULT_EXT = (".txt", ".xml", ".md", ".html", ".htm", ".pdf", ".docx", ".doc")
+
+# Formats whose text is EXTRACTED by an engine that can fail. For these, and only these, a very
+# short result means the extraction failed rather than that the document is short. The rest of
+# DEFAULT_EXT is already text and is taken at whatever length it has.
+EXTRACTED_EXT = (".pdf", ".docx", ".doc")
+
+
+def _extracted_format(path):
+    return path.lower().endswith(EXTRACTED_EXT)
 
 
 def walk(roots, exts, skip_dirs=()):
@@ -77,6 +91,7 @@ class Corpus(object):
                  skip_dirs=(), cache_dir=None, quiet=False, sentinel=None):
         self.paths, self.starts, self.astarts, self.hstarts = [], [], [], []
         self.excluded_derived, self.excluded_stub, self.unreadable = [], [], []
+        self.excluded_empty, self.short_sources = [], []
         drx = re.compile(derived_re, re.I) if derived_re else None
         # One string or several. Several, because a renamed tool must still recognise the stamp it
         # wrote under its old name - see the note beside SENTINELS in run.py.
@@ -96,11 +111,44 @@ class Corpus(object):
             if any(s in t[:400] for s in sents):
                 self.excluded_derived.append(p)      # stamped as this toolkit's own output
                 continue
-            if len(t.strip()) < MIN_TEXT_LAYER:
-                # A scan without OCR, or a stub page. Reported, never silently indexed as empty:
-                # a quotation from such a file produces a NOT FOUND that blames the quotation.
-                self.excluded_stub.append(p)
+            # 🔴 THE FLOOR APPLIES ONLY WHERE IT MEANS WHAT IT SAYS.
+            #
+            # `MIN_TEXT_LAYER` answers one question: *did the extraction fail?* That question
+            # exists for a PDF or a DOCX, where 40 characters out of a 20-page document means the
+            # text layer is a scan and needs OCR. It does not exist for a `.txt` or a `.md`: those
+            # are exactly as long as they are, and plenty of real law is short - a definition, a
+            # savings clause, a one-paragraph proclamation, a two-sentence policy update.
+            #
+            # Applied to every format alike, the floor threw a perfectly readable 71-character
+            # provision out of the corpus and then advised the user to OCR it. A correct quotation
+            # of that provision came back NOT FOUND, which in this tool's vocabulary is the
+            # fabrication signal. **The check that exists to catch invented law was reporting real
+            # law as invented**, with a diagnosis that could not be acted on.
+            #
+            # Found the way these things are found: a test fixture of mine fell under the floor
+            # twice in two rounds. The first time I lengthened the fixture. The second time I asked
+            # why the floor was there - and a trap that catches the author of the tests twice is a
+            # defect in the tool, not in the tests.
+            # 🔴 And the fix is NOT "drop the floor for text". Two useful signals were riding on
+            # one test and the merge cost the more important one:
+            #   * "your extraction failed, OCR it"      - must EXCLUDE: the text is not there.
+            #   * "this looks like a downloaded placeholder rather than the real chapter"
+            #                                            - must WARN AND INDEX: it may equally be
+            #                                              a real short provision, and excluding it
+            #                                              makes a correct quotation unverifiable.
+            # Excluding on the second signal is how a true statement about a placeholder became a
+            # false statement about a savings clause.
+            if _extracted_format(p):
+                if len(t.strip()) < MIN_TEXT_LAYER:
+                    self.excluded_stub.append(p)
+                    continue
+            elif not t.strip():
+                # A plain-text source is indexed whatever its length; only a genuinely EMPTY one is
+                # excluded, and it gets its own bucket so the advice printed is the true advice.
+                self.excluded_empty.append(p)
                 continue
+            elif len(t.strip()) < MIN_TEXT_LAYER:
+                self.short_sources.append(p)         # warned below, and indexed all the same
             at, ht = alnum(t), dehyph(t)
             self.paths.append(p)
             self.starts.append(pos)
@@ -137,6 +185,22 @@ class Corpus(object):
                 print("     %s" % p)
             print("     A quotation from these produces a FALSE miss. OCR them with a real OCR "
                   "engine - never by asking a language model to read the image.")
+        if self.excluded_empty:
+            # A separate bucket with separate advice. Telling someone to OCR a `.md` file is worse
+            # than saying nothing: it is a diagnosis they cannot act on, for a cause that is not
+            # theirs, and it sends them away from the real one.
+            print("  EMPTY source file (no text at all) - %d:" % len(self.excluded_empty))
+            for p in self.excluded_empty:
+                print("     %s" % p)
+            print("     These are empty, not unreadable - a failed download or a placeholder. "
+                  "Re-fetch them; no OCR will help.")
+        if self.short_sources:
+            print("  SHORT text source (INDEXED, but check it) - %d:" % len(self.short_sources))
+            for p in self.short_sources:
+                print("     %s" % p)
+            print("     Under %d characters. Either a real short provision - a definition, a "
+                  "savings clause - or a placeholder you downloaded instead of the chapter. "
+                  "It IS searchable either way; open it and decide." % MIN_TEXT_LAYER)
         for p, err in self.unreadable:
             print("  !! unreadable: %s (%s)" % (p, err))
 

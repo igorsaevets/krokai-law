@@ -32,7 +32,7 @@ from .citations import load_packs
 from .corpus import Corpus, walk
 from .extract import extract_quotes, citation_window
 from .readers import read_any
-from .verdicts import ORDER, DANGEROUS, MEANING, label, meaning
+from .verdicts import ORDER, DANGEROUS, UNCHECKABLE, MEANING, label, meaning
 from .verify import check
 
 __all__ = ["scan_matter", "write_report", "SENTINEL", "SENTINELS"]
@@ -146,8 +146,46 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
         grid[_tier_of(r)][r["verdict"]] += 1
 
     return {"rows": rows, "grid": grid, "per_file": per_file, "corpus": corpus,
-            "packs": packs, "seconds": round(time.time() - t0, 1),
+            "packs": packs, "mixed": mixed_provisions(rows, packs),
+            "seconds": round(time.time() - t0, 1),
             "tier_labels": {t: l for t, l, _p in cfg.draft_tiers}}
+
+
+# Verdicts that read as "this quotation is fine" for the purposes of the pairing below.
+_CLEANISH = ("VERIFIED", "PUNCTUATION", "TYPESETTING", "ASSEMBLED", "SCATTERED")
+
+
+def mixed_provisions(rows, packs):
+    """The SAME provision quoted both clean and flagged across the matter.
+
+    🔴 Ported from a measured incident in a sister project, 2026-08-02: a round's correction was
+    applied to the body of a memorandum and NOT to the exhibit caption three lines below, so one
+    file quoted the same regulation both complete and truncated - and the truncated copy sat
+    exactly where the adjudicating officer looks first. A per-quotation report shows both rows,
+    pages apart, and nothing connects them; a person fixes the first hit and stops. The rule this
+    check enforces is *fix every occurrence, not the first*.
+
+    Grouping is by the ADDRESS KEY of the citations printed beside each quotation, because the
+    address is the only thing the clean copy and the truncated copy still share. Quotations with no
+    nearby citation cannot join a group - which is one more consequence of an address never
+    written down.
+
+    Returns `[(label, clean_rows, flagged_rows)]`, largest flagged count first.
+    """
+    groups = {}
+    for r in rows:
+        for k in packs.keys(r.get("near") or []):
+            g = groups.setdefault(k, ([], []))
+            if r["verdict"] in _CLEANISH:
+                g[0].append(r)
+            elif r["verdict"] in DANGEROUS:
+                g[1].append(r)
+    out = []
+    for k, (clean, flagged) in groups.items():
+        if clean and flagged:
+            out.append((packs.label(k), clean, flagged))
+    out.sort(key=lambda t: -len(t[2]))
+    return out
 
 
 def _tier_of(row):
@@ -170,6 +208,22 @@ def print_summary(res, lang="en", printer=print):
     ab_bad = sum(grid[t][s] for t in "AB" for s in DANGEROUS)
     printer("\n🔴 needs a human in tiers A+B: %d" % ab_bad)
 
+    # 🔴 Counted and printed SEPARATELY, never folded into either total. Reporting it with the
+    # red count buries the real misses - measured at 20 of 37 on a real filing - and reporting it
+    # with the green count would call "I could not check this" a pass. It is its own line because
+    # it is its own fact, and it comes with the only action that resolves it.
+    ab_unknown = sum(grid[t][s] for t in "AB" for s in UNCHECKABLE)
+    if ab_unknown:
+        printer("? NOT CHECKED in tiers A+B: %d - the address beside them names sources you have "
+                "not downloaded. This is neither a pass nor an accusation; get the sources and "
+                "run again. `krokai library` lists what is missing." % ab_unknown)
+
+    for lbl, clean, flagged in res.get("mixed") or []:
+        printer("🔴 %s is quoted both CLEAN (%d) and FLAGGED (%d) in this matter - the flagged "
+                "copies are the same provision. Fix EVERY occurrence, not the first: measured, a "
+                "correction landed in a memo body and missed the exhibit caption below it."
+                % (lbl, len(clean), len(flagged)))
+
     astat = {}
     for r in res["rows"]:
         a = r.get("address")
@@ -180,7 +234,12 @@ def print_summary(res, lang="en", printer=print):
                 + " · ".join("%s %d" % (k, v) for k, v in sorted(astat.items())))
         printer("   NO_NEARBY_CITATION on something you file means DO NOT award a green: there is "
                 "no address to check.")
-    return ab_bad
+    # 🔴 BOTH numbers, because the EXIT CODE is the surface a hook and a CI job read, and it used
+    # to be driven by `ab_bad` alone. A reviewer put it precisely: cite a source you do not have,
+    # and a fabricated quotation lands in `NO_SOURCE_ON_DISK`, the headline count reads
+    # "needs a human: 0", and `krokai check --strict` exits 0. The separate line was visible to a
+    # person and invisible to the machine, which is the half that actually gates anything.
+    return ab_bad, ab_unknown
 
 
 def write_report(res, cfg, out_dir, lang="en"):
@@ -217,6 +276,22 @@ def write_report(res, cfg, out_dir, lang="en"):
                "A scan without OCR, or a stub. A quotation from these yields a FALSE miss. "
                "🔴 Run them through a real OCR engine - never a language model.", ""]
         md += ["* `%s`" % os.path.relpath(p, cfg.root) for p in c.excluded_stub] + [""]
+
+    if res.get("mixed"):
+        md += ["## 🔴 One provision, two texts", "",
+               "The same provision is quoted both clean and flagged somewhere in this matter. "
+               "These pairs are invisible in a per-quotation list - the two copies can sit pages "
+               "or files apart - and the measured way this happens is a correction applied to one "
+               "occurrence and not the others. **Fix every occurrence, not the first.** "
+               "(A quotation with several citations beside it joins each group - read the pair "
+               "before editing anything; this section prompts a comparison, it does not accuse.)",
+               ""]
+        for lbl, clean, flagged in res["mixed"]:
+            md += ["### %s — clean ×%d, flagged ×%d" % (lbl, len(clean), len(flagged)), ""]
+            for r in flagged[:4]:
+                files = ", ".join(sorted({s["file"] for s in r["sites"]})[:3])
+                md += ["* **%s** in %s" % (r["verdict"], files),
+                       "  > %s" % r["quote"][:220].replace("\n", " "), ""]
 
     for st in ORDER:
         if st in ("VERIFIED", "ASSEMBLED"):

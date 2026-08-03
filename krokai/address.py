@@ -121,6 +121,32 @@ def fold(quote, verdict, path, detail, near_cites, corpus, keymap, packs):
     it as one produced accusations against innocent documents in the first build of this layer.
     """
     if not path:
+        # 🔴 THE MISS THAT IS NOT A MISS. Until 2026-08-03 the address layer was skipped entirely
+        # whenever the text was not located - so a quotation of a source the user simply does not
+        # have was graded exactly like one the authority never wrote. `NOT_FOUND`'s own meaning
+        # string admitted the ambiguity ("either the source is not downloaded, or invented") and
+        # the tool had what it needed to resolve it sitting right there: the citation printed
+        # beside the quotation.
+        #
+        # Measured in the sister project on a real filing: 20 of 37 flagged items were quotations
+        # of agency press releases and FAQ pages, whose sources are not in a corpus of law by
+        # construction. Two thirds of the list was unactionable, and the genuine misses were
+        # hiding in it.
+        #
+        # 🔴 The guard against this becoming an escape hatch is the `ADDRESS_NOT_IN_CORPUS` test,
+        # not a softer word. If the cited authority IS on disk and the words are not in it, that is
+        # the fabrication shape and the verdict stays `NOT_FOUND` - said louder, not quieter.
+        if verdict == "NOT_FOUND" and near_cites:
+            a = address_check(near_cites, None, keymap, packs)
+            if a["status"] == "ADDRESS_NOT_IN_CORPUS":
+                return ("NO_SOURCE_ON_DISK", None,
+                        "not checked: %s is not in your sources folder. Download it and run again "
+                        "- this is not a pass" % "; ".join(a["keys"]), a)
+            if a["status"] in ("MISMATCH", "MATCHED"):
+                names = a.get("keys") or []
+                detail = ("the cited source IS on disk (%s) and these words are not in it%s"
+                          % ("; ".join(names), (" - " + detail) if detail else ""))
+                return verdict, path, detail, a
         return verdict, path, detail, None
     if not near_cites:
         return verdict, path, detail, {"status": "NO_NEARBY_CITATION", "keys": []}

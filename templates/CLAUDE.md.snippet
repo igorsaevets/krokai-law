@@ -1,5 +1,11 @@
 <!--
-Paste this into the CLAUDE.md / AGENTS.md of a matter that uses `krokai`.
+Paste this into the CLAUDE.md / AGENTS.md of a matter that uses `krokai` - or let `krokai init`
+do it: it appends everything below this comment between marker lines, replaces `{KROKAI}` with
+the real command for the machine, and refreshes the block in place on a re-run.
+
+Why this block matters at all: a project-root CLAUDE.md is re-read at every session start AND
+after every /compact - it is the one instruction surface that survives a compaction on the
+client's machine. A nested file or a chat instruction does not.
 
 🔴 Keep it SHORT. This file is loaded in full on every request and competes for attention with the
 task in front of the assistant. The long-form reasoning belongs in the toolkit's own FEATURES.md,
@@ -31,10 +37,10 @@ the round — and three things are checked, not one:
 3. 🔴 was a **condition** cut off (`If` / `Where` / `Unless` / `provided that` / `, but`).
 
 ```
-python -m krokai quote "<the quotation>"     one, right now
-python -m krokai check                        everything, before anything is filed
-python -m krokai close                        end of session
-python -m krokai gate <file>                  before pasting anything into another AI
+{KROKAI} quote "<the quotation>"     one, right now
+{KROKAI} check                        everything, before anything is filed
+{KROKAI} close                        end of session
+{KROKAI} gate <file>                  before pasting anything into another AI
 ```
 
 ### 🔴 `NOT_FOUND` is not `INVENTED` — four causes, in this order

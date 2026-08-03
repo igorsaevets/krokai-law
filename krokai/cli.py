@@ -28,6 +28,113 @@ ROOT = os.path.dirname(HERE)
 
 
 # ---------------------------------------------------------------------------------- init
+CLAUDE_BEGIN = "<!-- krokai:snippet:begin -->"
+CLAUDE_END = "<!-- krokai:snippet:end -->"
+
+
+def _krokai_command():
+    """The command that runs THIS copy of the toolkit from ANY working directory.
+
+    🔴 `python -m krokai` only works while the clone is the working directory or on `sys.path` -
+    and the client's assistant works in the MATTER folder, which is neither. Running the package
+    DIRECTORY (`python <clone>/krokai`) goes through `__main__.py` and works from anywhere, so
+    that is the form everything user-facing is rendered with. The path is quoted: real installs
+    sit under folders with spaces.
+    """
+    return 'python "%s"' % os.path.abspath(HERE)
+
+
+def _render_snippet():
+    tpl_path = os.path.join(ROOT, "templates", "CLAUDE.md.snippet")
+    tpl = io.open(tpl_path, encoding="utf-8", errors="replace").read()
+    # The leading HTML comment is instructions for the person pasting by hand. Rendered into a
+    # client's CLAUDE.md it would be loaded into context on every request while saying nothing to
+    # the assistant - so the renderer strips it.
+    stripped = tpl.lstrip()
+    if stripped.startswith("<!--"):
+        end = stripped.find("-->")
+        if end >= 0:
+            tpl = stripped[end + 3:]
+    return tpl.strip().replace("{KROKAI}", _krokai_command())
+
+
+def write_claude_block(root, printer=print):
+    """Append or refresh the krokai block in the matter's CLAUDE.md, between markers.
+
+    WHY THIS IS PART OF `init` AND NOT A MANUAL STEP. The block lives in the matter's ROOT
+    CLAUDE.md because that is the one instruction surface that is re-read at every session start
+    AND after every /compact on the client's machine. The hooks are the mechanism that cannot be
+    forgotten; this block is the standing reminder of how the matter works - and before this
+    existed, the template shipped in `templates/` and nothing in the install path ever placed it,
+    so the piece that survives a compaction was exactly the piece nobody installed.
+
+    Target: the matter's `CLAUDE.md`, or `AGENTS.md` when only that exists. Idempotent by
+    markers: outside the markers the TEXT is not modified (the append path trims trailing blank
+    space at end-of-file, and the file's own line-ending style is preserved), a re-run refreshes
+    only the block, and an existing file is appended to rather than replaced. States this
+    function cannot edit safely - an orphaned or duplicated marker, a non-UTF-8 file - are
+    refused with instructions, never repaired by guesswork.
+    """
+    body = (CLAUDE_BEGIN + "\n"
+            + "<!-- Everything between these two marker lines is REWRITTEN by `krokai init`. "
+              "Put your own notes outside the markers, or they will not survive a refresh. -->\n"
+            + _render_snippet() + "\n" + CLAUDE_END)
+    target = os.path.join(root, "CLAUDE.md")
+    if not os.path.exists(target) and os.path.exists(os.path.join(root, "AGENTS.md")):
+        target = os.path.join(root, "AGENTS.md")
+    cur, raw = "", b""
+    if os.path.exists(target):
+        raw = io.open(target, "rb").read()
+        # 🔴 STRICT decode, refuse on failure. The first draft read with errors="replace" and
+        # wrote the result back - which would have rewritten every non-UTF-8 byte in the USER'S
+        # OWN text as U+FFFD, file-wide, while reporting success. A reviewer traced it before a
+        # client paid for it. This tool edits its block; it has no licence to transcode the file.
+        try:
+            cur = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            raise SystemExit(
+                "%s is not UTF-8, and rewriting it would corrupt your own text outside the "
+                "krokai block. Nothing was written. Convert the file to UTF-8 (or run with "
+                "--no-claude-md and paste templates/CLAUDE.md.snippet by hand)." % target)
+        cur = cur.replace("\r\n", "\n")
+    if cur.count(CLAUDE_BEGIN) > 1 or cur.count(CLAUDE_END) > 1:
+        # A marker string pasted INSIDE the block as an example makes the refresh cut at the
+        # wrong boundary - reviewer-traced. Duplicates are a state this function cannot edit
+        # safely, so it refuses rather than guessing which marker is real.
+        raise SystemExit(
+            "%s contains a krokai marker more than once - probably pasted as an example. "
+            "Nothing was written. Remove the extra marker line(s), then re-run." % target)
+    has_b, has_e = CLAUDE_BEGIN in cur, CLAUDE_END in cur
+    if has_b != has_e:
+        # 🔴 An orphaned marker means a human edited inside the block. With one marker missing,
+        # the refresh path would have swallowed everything between the surviving marker and
+        # wherever the partner next appeared - the user's text, deleted, under the word
+        # "refreshed". Reviewer-traced. A file in an unexpected state is refused, not repaired.
+        raise SystemExit(
+            "%s contains one krokai marker but not the other - a hand edit removed %s. Nothing "
+            "was written. Restore or delete the remaining marker line, then re-run."
+            % (target, CLAUDE_END if has_b else CLAUDE_BEGIN))
+    if has_b and has_e:
+        pre, _b, rest = cur.partition(CLAUDE_BEGIN)
+        _m, _e, post = rest.partition(CLAUDE_END)
+        new, action = pre + body + post, "refreshed in"
+    elif cur.strip():
+        new, action = cur.rstrip() + "\n\n" + body + "\n", "appended to"
+    else:
+        new, action = body + "\n", "created"
+    # Preserve the file's own line endings: a CRLF file silently flipped to LF is a whole-file
+    # diff in the client's version control for a three-line change. Ours stay \n internally.
+    # And the write is ATOMIC - temp file, then os.replace - because `open(..., "w")` truncates
+    # first, and a crash between the truncation and the write would have cost the client their
+    # whole CLAUDE.md (reviewer-named; this module's own sibling gateways already wrote that way).
+    nl = "\r\n" if b"\r\n" in raw else "\n"
+    tmp_path = target + ".krokai-tmp"
+    with io.open(tmp_path, "w", encoding="utf-8", newline="") as fh:
+        fh.write(new.replace("\n", nl) if nl != "\n" else new)
+    os.replace(tmp_path, target)
+    return target, action
+
+
 def cmd_init(a):
     from .config import TEMPLATE, CONFIG_NAME
     from .bank import BANK_HEADER
@@ -37,7 +144,16 @@ def cmd_init(a):
     cfgp = os.path.join(root, CONFIG_NAME)
     if os.path.exists(cfgp) and not a.force:
         print("%s already exists. Nothing was touched. Use --force to overwrite." % cfgp)
+        print("(the assistant block can still be refreshed on its own: `krokai init . --claude-md-only`)")
+        if getattr(a, "claude_md_only", False):
+            target, action = write_claude_block(root)
+            print("assistant block %s %s" % (action, target))
+            return 0
         return 1
+    if getattr(a, "claude_md_only", False):
+        target, action = write_claude_block(root)
+        print("assistant block %s %s" % (action, target))
+        return 0
 
     made = []
     for rel in ("law", "case", "guides", "research"):
@@ -56,6 +172,10 @@ def cmd_init(a):
             os.makedirs(os.path.dirname(p), exist_ok=True)
             io.open(p, "w", encoding="utf-8", newline="\n").write(header)
             made.append(rel)
+
+    if not getattr(a, "no_claude_md", False):
+        target, action = write_claude_block(root)
+        made.append("%s (assistant block %s)" % (os.path.basename(target), action))
 
     print("created in %s:" % root)
     for m in made:
@@ -84,13 +204,22 @@ def cmd_check(a):
     res = scan_matter(cfg, only=a.only, tiers=a.tiers, quiet=a.quiet)
     if res is None:
         return 2
-    bad = print_summary(res, cfg["language"])
+    bad, unknown = print_summary(res, cfg["language"])
     out = a.out or os.path.join(cfg.root, "reports",
                                 "check-" + __import__("time").strftime("%Y-%m-%d-%H%M"))
     path = write_report(res, cfg, out, cfg["language"])
     print("\nreport -> %s" % path)
     print("took %.0f s" % res["seconds"])
-    return 1 if (bad and a.strict) else 0
+    # 🔴 `--strict` fails on EITHER, and with distinct codes so a hook can tell them apart:
+    # 1 = read these, 4 = you cannot check these until you download something. The exit code used
+    # to ignore the second entirely, so a quotation citing a source you do not have exited 0 - and
+    # the exit code is what a hook and a CI job read. A number a person can see and a machine
+    # cannot is half a signal.
+    if a.strict and bad:
+        return 1
+    if a.strict and unknown:
+        return 4
+    return 0
 
 
 # --------------------------------------------------------------------------------- quote
@@ -231,6 +360,24 @@ def cmd_mutate(a):
 
 
 # ---------------------------------------------------------------------------------- gate
+def _configured_surnames():
+    """Surnames from `casefile.json`, or none if there is no config here.
+
+    🔴 The gate must work with no configuration at all - it is the command a stranger runs first,
+    on a file, before `krokai init` has ever been called. So a missing config is not an error; it
+    is zero surnames, and `gate()` says so out loud rather than printing `clean`.
+    """
+    try:
+        from .config import load
+        cfg = load(required=False)
+        return cfg.surnames if cfg else ()
+    except (SystemExit, Exception):                                 # noqa: BLE001
+        # `SystemExit` does not derive from `Exception`, and it is this codebase's idiom for a
+        # fatal user message - so a malformed casefile.json would otherwise kill `krokai gate`,
+        # the one command whose job is to run when things are wrong.
+        return ()
+
+
 def cmd_gate(a):
     from .redact import gate, self_test
     if a.self_test:
@@ -240,7 +387,7 @@ def cmd_gate(a):
         parts.append((os.path.basename(p), io.open(p, encoding="utf-8", errors="replace").read()))
     if not parts:
         parts = [("stdin", sys.stdin.read())]
-    return gate(parts, allow_pii=a.allow_pii)
+    return gate(parts, allow_pii=a.allow_pii, surnames=_configured_surnames())
 
 
 # --------------------------------------------------------------------------------- brief
@@ -305,6 +452,19 @@ def cmd_review(a):
     reg = load_registry(a.registry, start=cfg.root)
     harness = find_harness(reg, a.harness)
 
+    # The packs teach the grounding the NAMES of the official bodies this matter cites.
+    # `grounding.primary` deliberately holds short generic suffixes (".gov"), and a generic suffix
+    # cannot tell the lookalike detector that `uscis` is a name worth impersonating - measured in a
+    # sister project: `uscis.com`, the exact agency name in a foreign zone, walked straight past a
+    # labels-only detector. Merging here changes no classification of real .gov URLs (the specific
+    # domains are already inside the generic suffix); it only arms the lookalike test.
+    from .citations import load_packs
+    g = reg.setdefault("grounding", {})
+    have = {str(x).lower().strip().lstrip(".") for x in (g.get("primary") or [])}
+    extra = [d for d in load_packs(cfg["citation_packs"]).official_domains if d not in have]
+    if extra:
+        g["primary"] = list(g.get("primary") or []) + extra
+
     if a.channels:
         # What COULD run here, including what is switched off, so "why is my channel not running"
         # has an answer that does not require reading JSON.
@@ -320,8 +480,9 @@ def cmd_review(a):
     material = io.open(a.material, encoding="utf-8", errors="replace").read() if a.material else ""
 
     # The gate runs here, on the brief AND the system prompt, before the registry is even consulted.
+    surnames = _configured_surnames()
     made = prepare(question, material, out_dir=out, marker=a.marker, tools=not a.no_tools,
-                   canary=a.canary, allow_pii=a.allow_pii)
+                   canary=a.canary, allow_pii=a.allow_pii, surnames=surnames)
     if not made:
         return 3
     bp, sp = made
@@ -335,7 +496,7 @@ def cmd_review(a):
                           only=tuple(a.only or ()), skip=tuple(a.skip or ()),
                           harness=harness, use_harness=not a.no_harness,
                           harness_args=tuple(a.harness_args or ()),
-                          allow_pii=a.allow_pii, dry_run=a.dry_run)
+                          allow_pii=a.allow_pii, dry_run=a.dry_run, surnames=surnames)
     if a.dry_run or not rows:
         return 0
 
@@ -508,6 +669,65 @@ def cmd_doctor(a):
         print("   sources: %s" % ", ".join(cfg["sources"]))
         print("   packs:   %s" % ", ".join(cfg["citation_packs"]))
 
+        # The two things that keep working AFTER the client's next /compact - reported as facts,
+        # with the exact command when absent, because "minimum manual setup" means the tool names
+        # its own missing pieces rather than leaving them to be discovered by failure.
+        from .install import _is_ours
+        root = os.path.dirname(cfg_path)
+        wired = {"project": 0, "user": 0}
+        for scope, sp in (("project", os.path.join(root, ".claude", "settings.json")),
+                          ("user", os.path.join(os.path.expanduser("~"), ".claude",
+                                                "settings.json"))):
+            try:
+                data = json.load(io.open(sp, encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            for _ev, gs in (data.get("hooks") or {}).items():
+                for g in gs or []:
+                    wired[scope] += sum(1 for h in (g.get("hooks") or []) if _is_ours(h, ""))
+        total = wired["project"] + wired["user"]
+        if total:
+            print("   hooks:   %d wired (project %d, user %d) - they fire regardless of what the "
+                  "session remembers" % (total, wired["project"], wired["user"]))
+        else:
+            print("   🔴 hooks: NOT wired - run `krokai install-hooks`. The hooks are the "
+                  "mechanism; a written rule fires by topic and a hook fires every time.")
+        block_in, block_text, blocks_found = "", "", []
+        for fn in ("CLAUDE.md", "AGENTS.md"):
+            p = os.path.join(root, fn)
+            try:
+                t = io.open(p, encoding="utf-8", errors="replace").read()
+            except OSError:
+                continue
+            if CLAUDE_BEGIN in t:
+                blocks_found.append(fn)
+                if not block_in:
+                    block_in, block_text = fn, t
+        if len(blocks_found) > 1:
+            # The block landed in AGENTS.md before a CLAUDE.md existed, then again in CLAUDE.md -
+            # two managed blocks age independently and the assistant obeys whichever it read
+            # last. Reviewer-named sequence; the doctor is where it becomes visible.
+            print("   🔴 block: TWO managed blocks (%s) - they will drift apart. Keep the one in "
+                  "CLAUDE.md and delete the marker block from the other file."
+                  % " and ".join(blocks_found))
+        if block_in:
+            print("   block:   assistant block present in %s - re-read at every session start "
+                  "and after every /compact" % block_in)
+            # The block bakes in the toolkit's absolute path; a moved clone leaves the client's
+            # assistant invoking a path that no longer exists. Raised by an outside review; the
+            # doctor is the natural place to notice, because it is the command the client runs
+            # when something feels wrong.
+            import re as _re
+            m = _re.search(r'python "([^"]+)"', block_text)
+            if m and not os.path.isdir(m.group(1)):
+                print("   🔴 block: the toolkit path inside the block no longer exists (%s) - "
+                      "the clone was moved. Run `krokai init . --claude-md-only` to re-render it."
+                      % m.group(1))
+        else:
+            print("   🔴 block: no assistant block in CLAUDE.md - run `krokai init . "
+                  "--claude-md-only`. Without it, everything the assistant was told about this "
+                  "matter is gone after its next /compact.")
+
     print()
     ok = self_test(printer=lambda s: print("   " + s))
     # 🔴 The status line and the exit code must agree. Measured elsewhere: a doctor printed READY
@@ -546,9 +766,14 @@ def build_parser():
         p.add_argument("--quiet", action="store_true")
         return p
 
-    p = sub.add_parser("init", help="create casefile.json and the folder skeleton")
+    p = sub.add_parser("init", help="create casefile.json, the folder skeleton, and the "
+                                    "assistant block in CLAUDE.md")
     p.add_argument("path", nargs="?", default=".")
     p.add_argument("--force", action="store_true")
+    p.add_argument("--no-claude-md", action="store_true",
+                   help="do not touch CLAUDE.md/AGENTS.md")
+    p.add_argument("--claude-md-only", action="store_true",
+                   help="only append/refresh the assistant block; touch nothing else")
     p.set_defaults(fn=cmd_init)
 
     p = common(sub.add_parser("check", help="check every quotation in everything you wrote"))

@@ -72,6 +72,14 @@ class Pack(object):
         # A citation shape that promises a PRIMARY SOURCE - used to split a miss into "the source
         # must be on this disk" and "this was never going to be on this disk". See verify.py.
         self.primary_hint = data.get("primary_hint", "")
+        # The official domains of the bodies this pack describes. The pack is the right home for
+        # them: `channels.json` deliberately keeps its `grounding.primary` to short generic
+        # suffixes (".gov"), and a generic suffix cannot teach the lookalike detector that `uscis`
+        # is a name worth impersonating. Measured in a sister project: `uscis.com` - the exact
+        # agency name in a foreign zone, not a typo - walked straight past a detector that only
+        # knew the `gov`/`mil` labels. `krokai review` merges these into the grounding it uses.
+        self.official_domains = [str(d).lower().strip().lstrip(".")
+                                 for d in (data.get("official_domains") or []) if d]
         self._rx = []
         for sh in self.shapes:
             self._rx.append((sh, re.compile(sh["regex"], 0 if sh.get("case_sensitive") else re.I)))
@@ -164,20 +172,64 @@ class Pack(object):
         if not a:
             return False
         groups = list(key[1:])
-        flat = re.sub(r"[-_ ]", "", os.path.basename(filename).lower())
+        base = os.path.basename(filename).lower()
+        flat = re.sub(r"[-_ ]", "", base)
+        # The SECOND form of the same name, with every separator - including the dot - turned into
+        # a space. Two forms, not one, is the ported lesson: the flattened form is needed because
+        # `602-0199` glues while filenames split, and the separator form is needed because
+        # flattening welds `245a` to the next word (`245aecfr`) and destroys the very boundary
+        # that tells part 245 from part 245a. Each form covers the other's blind side.
+        sep = re.sub(r"[^0-9a-zа-яё]+", " ", base).strip()
         head = (body or "")[:8000].lower()
         for rule in a.get("file_match", []):
-            if _rule_holds(rule, flat, body or "", head, groups):
+            if _rule_holds(rule, flat, sep, body or "", head, groups):
                 return True
         return False
 
 
 error_group = KeyError
 
+# A needle ENDING in a number, possibly with a single-letter part suffix: "245", "245a" - and
+# also "part245", "91fr45324". The trailing number is where the collision lives, so the boundary
+# test applies to every needle that has one, not only to bare numbers: the first version gated on
+# bare numbers and the pack's own second rule ("part{g2}") walked the substring match straight
+# back in - caught by this round's verification suite, not by reasoning.
+_NUM_TAIL_RE = re.compile(r"\d+[a-z]?$")
 
-def _rule_holds(rule, flat, body, head, groups):
-    hay = {"filename_flat": flat, "body": body, "body_head": head}.get(
-        rule.get("where", "filename_flat"), flat)
+
+def _num_token(needle, hay):
+    """A pure-number needle must match as a NUMBER TOKEN of the flattened filename, never as a
+    substring.
+
+    🔴 Measured by probe, 2026-08-03, three cases at once - and it is the same defect twice over,
+    once in a sister project and once here:
+
+        key ("cfr","8","245")  matched  `8CFR-1245.2-EOIR.xml`   - "245" sits inside "1245"
+        key ("usc","8","255")  matched  `8USC-1255-uscode.xml`   - same shape
+        key ("cfr","8","245")  matched  `8cfr-part-245a-ecfr.xml` - part 245a is a DIFFERENT part
+
+    The first is the expensive direction: the address layer BLESSES the wrong file, so a quotation
+    found in the EOIR twin under a part-245 pincite reads as MATCHED. In the sister project the
+    equivalent bug showed a seven-kilobyte EOIR twin as the primary source for the most-cited
+    provision of the whole filing while the real 205 KB file sat in the same folder.
+
+    Three boundaries, each earning its keep:
+      * no digit on either side       - "245" never matches inside "1245" or "2450";
+      * no SINGLE trailing letter     - "245" does not match "245a" (a different part), while
+        "245ecfr" still matches, because "ecfr" is a glued separator word, not a part suffix;
+      * letters BEFORE the number are fine - "part245", "8cfr214" are how real files are named.
+
+    Known residual, stated rather than hidden: a name like `8CFR-214-f-16.xml` flattens to
+    `8cfr214f16`, where "f" looks like a part suffix and the match is refused. Real downloads keep
+    the dot (`214.2-f-16`), and the pack's other rules (body match, `part{g2}`) still apply.
+    """
+    rx = re.compile(r"(?<![0-9])%s(?![0-9])(?![a-z](?![a-z]))" % re.escape(needle))
+    return rx.search(hay) is not None
+
+
+def _rule_holds(rule, flat, sep, body, head, groups):
+    where = rule.get("where", "filename_flat")
+    hay = {"filename_flat": flat, "body": body, "body_head": head}.get(where, flat)
 
     # A negative guard runs first: if the file's own header names a DIFFERENT subdivision, reject
     # outright. Measured on agency policy manuals, where volume 7 *part A* chapter 8 and volume 7
@@ -190,11 +242,51 @@ def _rule_holds(rule, flat, body, head, groups):
             return False
 
     low = hay.lower()
+
+    def _has(needle):
+        n = _fmt(needle, groups).lower()
+        if where != "filename_flat":
+            # Body matching stays a substring on purpose - "deliberately lazy" softness catches
+            # reprints, and the cost asymmetry is different there: a mention in a body is a weak
+            # yes, a number inside a longer number in a FILENAME is a wrong file presented as the
+            # source.
+            return n in low
+        # 1. STRICT: the separator form, boundaries at any alphanumeric. This is where a dashed
+        #    needle (`602-0199` -> `602 0199`) meets a dashed name, and where `245` refuses
+        #    `245a` because the file's own separators are still standing.
+        n_sep = re.sub(r"[^0-9a-zа-яё]+", " ", n).strip()
+        if n_sep and re.search(r"(?<![0-9a-zа-яё])%s(?![0-9a-zа-яё])"
+                               % re.escape(n_sep), sep):
+            return True
+        # 2. WEAK: the flattened form, for names whose separators are simply gone (`8cfr214.xml`,
+        #    `PM6020199…`). The NEEDLE is flattened the same way the filename was, or the two can
+        #    never meet: a captured `602-0199` keeps its dash while the flattened name lost all of
+        #    its own, so the name rule for numbered policy memoranda had never once fired - found
+        #    by the verification suite for a DIFFERENT fix, which is the usual way.
+        nf = re.sub(r"[-_ .]", "", n)
+        if _NUM_TAIL_RE.search(nf):
+            tail = _NUM_TAIL_RE.search(nf).group(0)
+            # 🔴 The veto that flattening cannot see: if the separator form of the NAME carries
+            #    this very number WITH a one-letter part suffix (`… 245a …`, or glued as
+            #    `part245a`), the file is a DIFFERENT part and the weak path must not bless it.
+            #    Flattening welds `245a-ecfr` into `245aecfr`, where the suffix is
+            #    indistinguishable from a glued word - the separator form still knows.
+            #    The lookbehind is DIGIT-only, not alphanumeric: an outside reviewer traced
+            #    `part245a` (no separator between the word and the number) walking past a
+            #    token-initial veto, because `245a` there is preceded by the letter `t`. Letters
+            #    before the number are unit words; only a digit before it means a different
+            #    number, which the boundary in `_num_token` already refuses.
+            if tail.isdigit() and re.search(r"(?<![0-9])%s[a-z](?![0-9a-zа-яё])"
+                                            % re.escape(tail), sep):
+                return False
+            return _num_token(nf, low)
+        return nf in low
+
     for needle in rule.get("all", []):
-        if _fmt(needle, groups).lower() not in low:
+        if not _has(needle):
             return False
     anyv = rule.get("any", [])
-    if anyv and not any(_fmt(n, groups).lower() in low for n in anyv):
+    if anyv and not any(_has(n) for n in anyv):
         return False
     for probe in rule.get("regex_all", []):
         try:
@@ -245,6 +337,16 @@ class PackSet(object):
 
     def file_matches(self, key, filename, body):
         return any(p.file_matches(key, filename, body) for p in self.packs)
+
+    @property
+    def official_domains(self):
+        out, seen = [], set()
+        for p in self.packs:
+            for d in p.official_domains:
+                if d not in seen:
+                    seen.add(d)
+                    out.append(d)
+        return out
 
     def is_primary(self, cite):
         """Does this citation promise a document that OUGHT to be in a corpus of primary sources?

@@ -5,6 +5,9 @@
 
   "primary_hint": "USCIS-PM|\\b\\d{1,2}\\s*PM\\b|\\bFAM\\b|I\\s?&\\s?N\\s*Dec|\\bINA\\b|Matter of|\\bPM-\\d{3}-\\d{4}|HQ[A-Z]{2,6}",
 
+  "_official_domains": "The agencies this pack's citations resolve to. Merged into the review grounding so `uscis.com` - the exact agency name in a foreign zone, measured walking past a labels-only detector - is flagged for a human. Registrable domains only: `travel.state.gov` is already covered by `state.gov` for suffix purposes, and deriving `travel` as a name would put a warning on `travel.com`. 🔴 `ice.gov` is left out ON PURPOSE: `ice` is an English word and a whole-label match on it would flag a commodities exchange and half of Iceland; ICE pages still classify as official through the `.gov` suffix - only the name-impersonation warning is not extended to it.",
+  "official_domains": ["uscis.gov", "justice.gov", "state.gov", "dhs.gov", "cbp.gov"],
+
   "aliases": {
     "_doc": "An INA section and a U.S. Code section are the same provision under two numbering systems. Without this table `INA 245` and `8 U.S.C. 1255` are simply different addresses, and a correct pincite reads as a mismatch. In the original project exactly one reviewer of four supplied this; the other three missed it.",
     "ina": {
@@ -26,11 +29,13 @@
   "shapes": [
     {
       "_what": "INA § 245(k) — mapped to 8 U.S.C. above.",
+      "sample": "under INA § 245(k) the applicant",
       "regex": "\\bINA\\b\\s*§*\\s*(\\d{3}[a-c]?)(?:\\([^()\\s]{1,8}\\))*",
       "address": {"kind": "ina", "groups": [1], "label": "INA § %s"}
     },
     {
       "_what": "7 USCIS-PM B.8 / 1 PM E.8 — volume, part letter, chapter.",
+      "sample": "see 7 USCIS-PM B.8 for the bars",
       "regex": "\\b(\\d{1,2})\\s*(?:USCIS-)?PM\\s*([A-L])\\.?\\s?(\\d{1,2})(?:\\([^()\\s]{1,8}\\))*",
       "address": {
         "kind": "pm",
@@ -56,6 +61,7 @@
     },
     {
       "_what": "9 FAM 302.8 — State Department Foreign Affairs Manual. A DIFFERENT standard from the USCIS manual on the same subject, not a duplicate of it.",
+      "sample": "the standard in 9 FAM 302.8 differs",
       "regex": "\\b(\\d{1,2})\\s*FAM\\s*(\\d{3})(?:\\.\\d+)*(?:-[A-Z]\\b)?",
       "address": {
         "kind": "fam",
@@ -69,6 +75,7 @@
     },
     {
       "_what": "15 I&N Dec. 626 — Board of Immigration Appeals precedent.",
+      "sample": "held in 15 I&N Dec. 626 that the",
       "regex": "\\b(\\d{1,3})\\s*I\\s?&\\s?N\\s*Dec\\.?\\s*(?:at\\s*)?(\\d+)",
       "address": {
         "kind": "indec",
@@ -84,6 +91,7 @@
     {
       "_what": "Matter of Blas. Single-party style; the two-party `X v. Y` shape lives in us-federal.",
       "case_sensitive": true,
+      "sample": "held in Matter of Blas that the",
       "regex": "\\bMatter\\s+of\\s+([A-Z][A-Za-z'\\-]+)",
       "address": {
         "kind": "matter",
@@ -97,6 +105,7 @@
     },
     {
       "_what": "PM-602-0199 — a numbered USCIS policy memorandum.",
+      "sample": "policy PM-602-0199 governs the count",
       "regex": "\\bPM-(\\d{3}-\\d{4})",
       "address": {
         "kind": "pmnum",

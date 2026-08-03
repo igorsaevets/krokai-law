@@ -14,7 +14,8 @@ import re
 
 from .normalize import normalise, strip_scrape_artifacts
 
-__all__ = ["read_any", "read_pdf", "read_docx", "no_text_layer", "engines_available"]
+__all__ = ["read_any", "read_pdf", "read_docx", "no_text_layer", "engines_available",
+           "_choose_extraction", "_form_values"]
 
 _PAGE_MARK = re.compile(r"\[\[Page\s+[\w.-]+\]\]")
 _MD_FOOTNOTE = re.compile(r"\[\\?\[[^\]]*\\?\]\]\([^)]*\)")
@@ -45,6 +46,94 @@ def _alpha_tokens(s):
     return len(re.findall(r"[A-Za-z]+", s))
 
 
+def _form_values(path):
+    """`field name = value` for every FILLED field of an AcroForm PDF. Empty string if none.
+
+    🔴 The name, not the position. A reviewer of the sister project's equivalent left one warning
+    worth carrying: the field NAME contains the item number (`Pt8Line16_YesNo`) and can be trusted;
+    the on-page reading order cannot. On page 10 of an I-485 a naive text read shifts items 14-17 by
+    one, which is the difference between *"have you worked without authorization"* and *"have you
+    violated the terms of your status"*. So the pairing here is name-to-value and never
+    position-to-value, and the name is emitted with the value so a human can see which is which.
+
+    Checkboxes whose value is `/Off` are dropped: an unticked box is the absence of an answer, and
+    writing "Off" into the corpus invents a word the document does not contain - the same class as
+    a scraper artefact, which is why this reader exists.
+    """
+    try:
+        import pypdf
+    except Exception:
+        return ""
+    try:
+        fields = pypdf.PdfReader(path).get_fields() or {}
+    except Exception:
+        return ""                      # not a form, encrypted, or malformed: silent is right here
+    out = []
+    for name, f in fields.items():
+        try:
+            v = f.get("/V")
+        except Exception:
+            continue
+        if v is None:
+            continue
+        v = str(v).strip()
+        # 🔴 `/Off` with the slash, and nothing else. A reviewer found the earlier form dropping
+        # `"Off"` too - and `Off` is a legitimate value for a TEXT field ("Mode: Off"), so a real
+        # answer disappeared from the corpus with no warning. The slash is what makes it a PDF name
+        # object, i.e. the unticked state of a checkbox rather than a word somebody typed.
+        if not v or v == "/Off":
+            continue
+        out.append("%s = %s" % (name, v.lstrip("/")))
+    if not out:
+        return ""
+    return "[FORM FIELDS: %d filled]\n" % len(out) + "\n".join(out)
+
+
+def _choose_extraction(primary, alt):
+    """Which of two extractions of the SAME pages to keep, and why. Returns `(text, reason)`.
+
+    Two opposite failure modes share this decision, and a rule tuned for one silently hands wins to
+    the other:
+
+    * **splitting** - the engine breaks words apart (`resu lt`), which INFLATES its token count.
+      Measured on a real 66-PDF corpus: worst case +51 %, on a controlling opinion.
+    * **truncation** - the engine returns a fragment that is still long enough to look alive.
+      Measured in a sister project: a 50-word extraction beat a 5 000-word one, because the rule
+      only knew "fewer tokens means fewer split words".
+
+    🔴 Confirmed by probe against THIS file, 2026-08-03: a 50-token primary above the dead-text
+    floor was kept over a 5 000-token alternate. The two failure modes are told apart on two
+    DIFFERENT axes: truncation by character count (splitting only inserts spaces, so it cannot
+    double the length; losing pages can), splitting by token count. A single shared threshold was
+    tried first and a control sat exactly on it - the axes, not the number, are the fix.
+    """
+    p, a = primary.strip(), alt.strip()
+    if len(p) < MIN_TEXT_LAYER <= len(a):
+        return alt, "primary extraction dead"
+    if not a or not p:
+        return primary, ""
+    tp, ta = _alpha_tokens(primary), _alpha_tokens(alt)
+    # 🔴 Truncation needs BOTH axes to agree, and it is tested in BOTH directions. Two findings
+    # from one outside review, each confirmed by execution before it was believed:
+    #   * an alternate 1.8x longer (primary lost ~45 %) sat under a lone 2x character threshold;
+    #   * worse, the split rule fired in the WRONG DIRECTION: with a complete primary and a
+    #     truncated ALTERNATE, "more tokens than the other side" read as "primary split words"
+    #     and the truncated copy won. "More tokens" means MORE TEXT unless the characters say
+    #     otherwise - so the split diagnosis only stands when the character counts are close.
+    # Splitting inserts separators: tokens rise, characters barely move. Losing text moves both.
+    if len(a) > len(p) * 1.3 and ta > tp * 1.3:
+        return alt, "primary truncated: %d chars against %d" % (len(p), len(a))
+    if len(p) > len(a) * 1.3 and tp > ta * 1.3:
+        return primary, ""                    # the ALTERNATE is the truncated one
+    # 1.15, not 1.01. A reviewer built the counter-case for the hair trigger: a complete primary
+    # with TWO line-break-hyphen splits (+2 tokens) lost to an alternate missing a whole
+    # paragraph, because 102 > 101.0. Real word-splitting inflates tokens by half (measured
+    # +51 %); a couple of artefacts is ~2 % and must never flip the choice to a shorter text.
+    if tp > ta * 1.15:
+        return alt, "primary split words: %d tokens against %d" % (tp, ta)
+    return primary, ""
+
+
 def read_pdf(path, cache_dir=None):
     """Extract with **both** available engines and keep the one that did not break words apart.
 
@@ -64,8 +153,11 @@ def read_pdf(path, cache_dir=None):
        is exactly what invites *"must be an extraction artefact"* - and that phrase is a
        **conclusion, not an explanation**. It is the bin where real errors hide.
 
-       Fewer tokens over the same pages means fewer split words, so the engine reporting fewer
-       alphabetic tokens is the better reading. That is the whole test.
+       Fewer tokens over the same pages means fewer split words - UNLESS the shortfall is so large
+       that it means lost text instead. Both readings of "fewer" are real and they point at
+       opposite choices, so the decision lives in ``_choose_extraction`` with the arithmetic that
+       separates them; the measured split inflation tops out near +51 %, while truncation loses
+       text by multiples.
 
     🔴 A near-empty result is **never cached**. An earlier version wrote the empty result and keyed
     the cache on (path, size, mtime) alone, so installing the second engine tomorrow would change
@@ -94,12 +186,23 @@ def read_pdf(path, cache_dir=None):
     except Exception:
         alt = ""
 
-    text = primary
-    if len(text.strip()) < MIN_TEXT_LAYER <= len(alt.strip()):
-        text = alt                                  # primary dead, alternate alive
-    elif alt.strip() and text.strip():
-        if _alpha_tokens(text) > _alpha_tokens(alt) * 1.01:
-            text = alt                              # primary split words
+    text, _why = _choose_extraction(primary, alt)
+
+    # 🔴 A FILLED FORM IS NOT A BLANK ONE, AND THE TEXT LAYER CANNOT TELL THEM APART.
+    #
+    # In a fillable PDF - which is what every USCIS form is - the labels are in the page content and
+    # the ANSWERS are not: they live in `/AcroForm /Fields` as `/V`. Extract the text layer alone
+    # and a completed I-485 reads exactly like a blank one. Measured in the sister project on the
+    # actually-filed form: **765 fields, 455 of them filled, none in the text layer.**
+    #
+    # Two consequences, and the second is the one that made this worth doing here. The obvious one
+    # is that the content is missing. The quieter one is that a form PDF has a *thin* text layer, so
+    # `no_text_layer()` calls it a scan and the tool advises OCR - advice that cannot work, for a
+    # cause that is not the user's, on a file that has no image in it at all. That is the same
+    # wrong-diagnosis shape as the short-source bug fixed the same day, in a different reader.
+    fields = _form_values(path)
+    if fields:
+        text = (text or "") + "\n\n" + fields
 
     if cache_dir and len(text.strip()) >= MIN_TEXT_LAYER:
         os.makedirs(cache_dir, exist_ok=True)
@@ -185,6 +288,13 @@ def no_text_layer(path, cache_dir=None):
             return len(io.open(path, encoding="utf-8", errors="replace").read().strip()) < MIN_TEXT_LAYER
         except OSError:
             return True
+    # 🔴 A FILLED FORM IS NOT A SCAN. A blank fillable PDF carries only its labels, so its text
+    # layer is thin - and this function used to answer "OCR it", which is advice that cannot be
+    # followed: there is no image. Since `read_pdf` now appends the field values, the length test
+    # below already sees them; the explicit check is here so the answer is right even when only the
+    # labels are short and the fields carry everything.
+    if _form_values(path):
+        return False
     return len(read_pdf(path, cache_dir).strip()) < MIN_TEXT_LAYER
 
 

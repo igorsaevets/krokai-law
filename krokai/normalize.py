@@ -28,7 +28,7 @@ import re
 
 __all__ = [
     "normalise", "alnum", "dehyph", "strip_markdown", "strip_scrape_artifacts",
-    "ellipsis_parts", "latin_share", "is_mostly_cyrillic",
+    "prepare_quote", "ellipsis_parts", "latin_share", "is_mostly_cyrillic",
 ]
 
 # Typography a model re-types differently from the source while meaning the identical thing.
@@ -81,6 +81,21 @@ _SCRAPE_LINK_RE = re.compile(r"\s*\[link\]\([^)]*\)", re.I)
 # Printing artefacts that sit INSIDE a sentence in official text dumps.
 _PAGE_MARK_RE = re.compile(r"\[\[Page\s+[\w.-]+\]\]")
 
+# The omitted-text marker of CFR and the Federal Register: asterisks SEPARATED BY WHITESPACE, and
+# not glued to a word or to another asterisk. Both conditions are load-bearing - see the comment in
+# `strip_markdown`, where a version without them ate the formatting it was meant to leave alone.
+#
+# 🔴 The boundary is `[*\w]`, not `\s`. The first version required WHITESPACE on both sides, and a
+# reviewer found what that costs: `(* * *)`, `"* * *"` and `* * *.` all failed the lookahead on the
+# closing bracket, quote or full stop, and the marker was stripped - `prescribe (* * *) and then`
+# became `prescribe (  ) and then`. Measured, not argued. Punctuation around a marker is ordinary
+# in a quotation, and it is exactly what distinguishes a quotation from raw source text.
+#
+# What the boundary must still exclude is an adjacent asterisk (`**bold** **bold**`, where the
+# `* *` between the two spans is formatting) and a word character (`x*y`). Those are the two the
+# control tests assert, in both directions.
+_OMIT_RE = re.compile(r"(?<![*\w])\*(?:[ \t]+\*){1,8}(?![*\w])")
+
 
 def normalise(s: str) -> str:
     """Fold whitespace, line-break hyphenation and typography. Nothing else, ever.
@@ -129,6 +144,27 @@ def strip_markdown(s: str) -> str:
     """
     if not s:
         return ""
+    # 🔴 THE OMISSION MARKER IS TEXT, NOT FORMATTING - and this is the half of the asymmetry that
+    # shipped. `strip_scrape_artifacts` already reasons about it from the CORPUS side and refuses
+    # to touch `*` there, because CFR and the Federal Register print `* * *` where text is left
+    # out. But `strip_markdown` runs on the QUOTE and did strip it, so a drafter quoting a
+    # provision *including* its omission marker had the marker deleted on one side of the
+    # comparison and kept on the other.
+    #
+    # Two details, each of which a simpler version gets wrong:
+    #   * the marker requires WHITESPACE between the asterisks. `\\*(\\s*\\*)+` also matches the
+    #     `**` of bold, and worse, it matches the `* *` sitting between two bolded words
+    #     (`**a** **b**`), which protects a fragment of the formatting and leaves it in the text.
+    #   * the span is restored VERBATIM, not rewritten to a canonical `* * *`. A source that
+    #     prints four asterisks, or two spaces between them, must still match itself: the corpus
+    #     side keeps whatever it has, so the quote side may not normalise.
+    held = []
+
+    def _hold(m):
+        held.append(m.group(0))
+        return "\x00%d\x00" % (len(held) - 1)
+
+    s = _OMIT_RE.sub(_hold, s)
     s = _MD_LINK_RE.sub(r"\1", s)
     s = re.sub(r"\*\*|__|\*|`", "", s)
     s = _TAG_RE.sub("", s)
@@ -144,7 +180,34 @@ def strip_markdown(s: str) -> str:
             s = t[:-1]
         else:
             break
-    return s.strip()
+    s = s.strip()
+    for i, span in enumerate(held):
+        s = s.replace("\x00%d\x00" % i, span)
+    return s
+
+
+def prepare_quote(s: str) -> str:
+    """Everything a QUOTATION passes through before it is compared with a source.
+
+    🔴 There is exactly one normaliser in this package and there was still a drift, because the
+    drift was never in the normaliser - it was in the COMPOSITION. Measured 2026-08-03 by an
+    outside reviewer and reproduced here: `krokai check` reached `verify.check` through
+    `extract_quotes`, which strips markdown; `krokai quote` handed the user's raw text straight to
+    `verify.check`, which does not. Five of six realistic inputs got two different answers.
+
+    And the answers were not "found" versus "not found", which would at least look like a bug. A
+    quotation that stops one clause short of `except as provided in paragraph (k)` came back
+    **TRUNCATED_CONDITION** through one entry point and **PUNCTUATION** through the other: the
+    markdown residue turned the most dangerous verdict this tool has into a cosmetic one. Rows 1-4
+    of that measurement are what a person actually pastes, because they are what a model emits -
+    guillemets, bold for emphasis, the provenance tag the brief itself demands, a blockquote
+    marker - and `krokai quote` is documented as the first command a new user runs.
+
+    So the fix is not "remember to call `strip_markdown` in the other place too". `check()` calls
+    this itself, and no caller can forget. Solving the retyped-function problem left the
+    assembled-pipeline problem standing; they are the same defect wearing a different coat.
+    """
+    return strip_markdown(s or "")
 
 
 def strip_scrape_artifacts(s: str) -> str:

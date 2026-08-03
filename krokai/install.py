@@ -157,10 +157,13 @@ def main(a):
         print("removed %d hook registration(s)." % len(removed))
     else:
         print("registered %d hook(s)." % len(added))
+    # The exact command for THIS machine, not the `-m` shorthand: from the matter folder - which
+    # is where the user is standing - `-m` cannot find the package, and a closing message that
+    # names a command that fails is worse than none.
     print("""
 🔴 settings.json is read when a SESSION STARTS. These hooks do nothing in the session that
    installed them. Start a new session, then confirm with:
 
-       python -m krokai doctor
-""")
+       python "%s" doctor
+""" % os.path.dirname(os.path.abspath(__file__)))
     return 0

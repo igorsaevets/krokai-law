@@ -10,7 +10,7 @@ from __future__ import annotations
 import difflib
 import re
 
-from .normalize import normalise, alnum, dehyph, ellipsis_parts
+from .normalize import normalise, alnum, dehyph, ellipsis_parts, prepare_quote
 
 __all__ = ["check", "word_diff", "neighbours", "OPERATORS"]
 
@@ -237,8 +237,12 @@ def neighbours(quote, corpus, cap=3, window=420):
 
     🔴 It is offered for a VERIFIED quotation, which is the counter-intuitive part and the point. A
     flagged quotation already sends you to the source. A verified one is the one you stop looking at.
+
+    Same preparation as `check`, and for the same reason: `krokai quote` calls both with the user's
+    raw text, so a difference between them shows up as "the checker found it and the neighbours are
+    blank" - which reads as "there is nothing after it" and is the opposite of the truth.
     """
-    n = normalise(quote)
+    n = normalise(prepare_quote(quote))
     out = []
     for path, off in corpus.find_all_pos(n, cap=cap):
         head = corpus.before(path, off, window)
@@ -280,7 +284,13 @@ def check(quote, corpus):
     The order of the tree is the design. An exact match is tested first and then **immediately
     interrogated for completeness**, because "it is an exact substring" is the answer that hides the
     two most expensive defects. Only after that do the near-miss classifiers run, cheapest first.
+
+    🔴 `prepare_quote` is called HERE rather than trusted to the callers. It used to be applied by
+    `extract_quotes` and by `bank`, and simply not applied by `krokai quote` - so the same text got
+    different verdicts depending on which door it came through. A rule that every caller must
+    remember is a rule that one caller will forget, and this one had.
     """
+    quote = prepare_quote(quote)
     n = normalise(quote)
     if not n:
         return "NOT_FOUND", None, ""

@@ -10,6 +10,167 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.6.0] — 2026-08-03
+
+The release that came from being reviewed by the project this one was extracted from. It found
+three defects by reading the source, and the sharpest one is the reason 0.5.0 is withdrawn.
+
+### 🔴 0.5.0 IS WITHDRAWN — tag and release deleted, history rewritten
+
+The 0.5.0 write-up of the grouped-identifier defect illustrated it **with the applicant's real
+A-number and receipt number**, in four tracked files including two self-test fixtures. Those
+values were published for roughly six hours in a single commit that was also the release tag.
+
+They are gone from every reachable ref, but **treat them as disclosed**: GitHub can serve an
+unreferenced object by its SHA until garbage collection, and anything that mirrored the repository
+in that window kept a copy.
+
+Two details worth carrying, because neither is obvious:
+
+- **The self-test was what kept the values in the file.** They were the positive fixtures for
+  `ALIEN_NUMBER`, so the detector fired on them and the suite went green. A passing test was
+  evidence *for* the leak.
+- **The probe line was printed on failure**, so the block leaked twice over: once by sitting in
+  the file, once by publishing its fixture to the console whenever it went red.
+
+The control that would have caught it now exists and is permanent — see *Added*.
+
+### Fixed
+
+- 🔴🔴 **The surname redaction did not exist.** `README` feature #6 promised the surname was cut;
+  `FEATURES.md` explained it was configured per matter. In the code `gate()` had no `surnames`
+  parameter, `config` had no such key, and no caller ever passed any. A brief carrying the
+  client's full name passed the gate, which printed `clean`. Worse than a missed detection: the
+  output asserted the opposite of what happened. Traced by an outside reviewer through the call
+  chain; confirmed here by execution. `surnames` is now threaded from `casefile.json` through
+  `gate`, `prepare` and `run_round`, the gate prints how many are configured — **including zero**
+  — and the regression test runs the real CLI end to end, because every earlier probe called
+  `scan()` directly and so supplied what the product did not.
+- 🔴🔴 **`krokai quote` and `krokai check` disagreed on five of six realistic inputs.** One
+  normaliser, three pipelines: the `check` path stripped markdown, the `quote` path did not. And
+  the disagreement was not found-versus-missing — a quotation stopping one clause short of a
+  limiter came back `TRUNCATED_CONDITION` one way and `PUNCTUATION` the other, so markdown residue
+  **downgraded the most dangerous verdict this tool has into a cosmetic one**. `check()` now
+  prepares the quotation itself and no caller can forget.
+- 🔴 **`strip_markdown` deleted the CFR omitted-text marker `* * *` from quotations** while the
+  corpus side deliberately kept it — the asymmetry `strip_scrape_artifacts` reasons about, seen
+  from one side only. Markers are now preserved verbatim, and the negative control is that two
+  adjacent bold spans are still stripped: the obvious pattern protects the `* *` between them.
+- 🔴 **A source file under 200 characters was dropped from the corpus and the user was told to
+  OCR it.** The floor answers "did the extraction fail?", which is a question about PDFs; applied
+  to `.txt` and `.md` it threw out perfectly readable short provisions — a definition, a savings
+  clause — and every quotation of them came back `NOT_FOUND`, which is this tool's fabrication
+  signal. Short text sources are now indexed and reported separately, so a downloaded placeholder
+  is still noticed without a real short provision being called invented.
+- 🔴 **A filled PDF form read as a blank one.** Field values live in `/AcroForm /Fields` as `/V`,
+  not in the page content, so a completed agency form and an empty one produced the same text.
+  `read_pdf` now appends `field name = value` for every filled field, empty fields are not
+  invented, and such a file is no longer diagnosed as a scan needing OCR.
+- 🔴 **An exception message and a channel's stderr reached the report unscrubbed**, cut to 200
+  characters — and this project's own gate docstring records that truncation is not a mask. Both
+  now go through `scrub()`. This is what `scrub()` was written for; the port had dropped its call
+  sites, which is why it looked like dead code.
+- Secrets are scanned a second time over the whole payload with line breaks folded, because real
+  briefs wrap and a key broken across a newline was invisible to every per-line pattern. Secrets
+  only: for the class with an override, a manufactured adjacency would teach the `--allow-pii`
+  reflex.
+- The SSN probe used a value whose area code is real and issued, while the module claimed it was
+  "in a range that was never issued". Replaced with one that violates three separate rules of
+  SSA POMS RM 10201.035, cited in place.
+
+### Added
+
+- **`NO_SOURCE_ON_DISK` — a third bucket, because `NOT_FOUND` meant two things** and its own
+  explanation said so: *"either the source is not downloaded, or invented."* Measured in the
+  sister project on a real filing: **20 of 37 flagged items** were quotations of agency press
+  releases whose sources are not in a corpus of law by construction. The genuine misses were
+  hiding in them. A miss whose cited authority resolves to nothing on disk is now reported
+  separately, counted separately, and never as a pass — and if the cited source **is** on disk,
+  the verdict stays `NOT_FOUND` and says so, which is the stronger accusation.
+- **A self-test that scans every file in the repository with the project's own detectors** and
+  permits only the documented fictional values. The allow-list is a set of VALUES, never of
+  filenames: exempting `redact.py` would have exempted the leak. It asserts its own coverage, and
+  it proves it works by scanning a planted identifier in the same call. It caught the first draft
+  of its own explanatory comment.
+- `redact.FICTIONAL` — one home for every identifier-shaped literal in the tree, stating for each
+  whether it is *documented invalid* by a primary source or merely *constructed implausible*.
+- Every secret probe is assembled from fragments, so no key-shaped literal exists in the source.
+  A reviewer measured their own scanner stripping five values out of this file before their model
+  saw it; a `PUBLISH-AUDIT: PATTERN-SOURCE` declaration is prose, and no scanner reads prose.
+
+## [0.5.0] — 2026-08-03 — WITHDRAWN, see 0.6.0
+
+The release where the documented install command turned out to have never worked - found by
+finally EXECUTING the install document in an empty folder instead of reading it - and where five
+silent defects were confirmed by probe in one afternoon, every one of them a class already paid
+for in the sister project this toolkit was extracted from.
+
+### Fixed
+
+- 🔴 **`python <clone>/krokai <command>` - the form INSTALL-FOR-AI.md prescribes - crashed with a
+  relative-import error since the first release.** Directory-run gives `__main__.py` no parent
+  package. Every earlier test had run `-m` from inside the clone, where the working directory
+  quietly supplies what the documented command does not. `__main__.py` now bootstraps `sys.path`
+  itself, and the self-test runs the package directory from a foreign working directory as a
+  permanent regression lock.
+- 🔴 **A citation could claim a neighbouring part's file.** `file_matches` compared numbers as
+  substrings, so part 245 matched `8CFR-1245.2-EOIR.xml` and `part-245a`, and `usc 255` matched
+  inside `1255` - and the address layer then BLESSED the wrong file. Numbers now match as tokens,
+  in two name forms at once (separator-preserving and flattened), because each form is blind where
+  the other sees: flattening finds `PM6020199…`, separators tell part 245 from part 245a.
+- 🔴 **The name rule for numbered policy memoranda had never fired once**: the captured `602-0199`
+  kept its dash while the flattened filename lost its own. Found by the verification suite for a
+  different fix, which is the usual way.
+- 🔴 **A truncated-but-alive PDF extraction beat a complete one.** The engine chooser only knew
+  "fewer tokens = fewer split words", so 50 words could win over 5 000. Truncation is now measured
+  in characters and splitting in tokens - splitting inserts spaces and cannot double the length;
+  losing pages can - so the two failure modes cannot shadow each other.
+- 🔴 **Two different quotations sharing their first 60 characters read as one banked entry.**
+  Regulatory prose is full of shared openings ("The Secretary may in his discretion…"), and the
+  second quotation silently never reached the queue. `in_bank` now compares the whole quotation,
+  and a bank entry wrapped across several `> ` lines still matches.
+- 🔴 **Alien numbers and receipt numbers written WITH separators walked through the outbound
+  gate.** Real notices hyphenate them into groups; the rules and their probes both assumed the
+  fused spelling, and a probe built from the same assumption as the rule verifies only itself.
+  Grouped forms are now caught by rule, probe and negative control, and `Apt A-1` style unit
+  numbers are caught too.
+
+### Added
+
+- **The lookalike detector now knows the NAMES of your official sources, not only the `gov`/`mil`
+  labels.** `uscis.com` - the exact agency name in a foreign zone, not a typo - walked straight
+  past the label test. Citation packs now declare `official_domains`, `krokai review` merges them
+  into the grounding, and a host wearing a configured name as a whole label (`uscis.com`,
+  `irs.com`, `uscis.phishing.example`) is flagged for a human. The residual stays printed instead
+  of closed: a MISSPELLING (`ussciss.us`, live when checked) is undetectable by construction.
+- **"One provision, two texts."** The same provision quoted both clean and flagged anywhere in the
+  matter is now paired and reported - ported from a measured incident where a correction landed in
+  a memorandum body and missed the exhibit caption below it, so the truncated copy sat exactly
+  where the officer looks first. Fix every occurrence, not the first.
+- **`krokai init` writes an assistant block into the matter's `CLAUDE.md`** (append/refresh
+  between markers, never replacing the file), with the real commands for that machine rendered in.
+  A project-root `CLAUDE.md` is the one instruction surface re-read at every session start and
+  after every `/compact` - the block existed as a template since 0.1.0, and nothing in the install
+  path had ever placed it. `doctor` now reports both post-compact mechanisms - hooks wiring and
+  this block - each with the exact command when absent.
+- **Every address-bearing citation shape now carries a `sample` sentence, and the self-test pushes
+  each through `find_positions -> keys`** - the scanner's own pipeline. Ported from a sister-project
+  incident where an address kind was verified by calling the parser directly while the recogniser
+  feeding it never matched that citation style: a probe into a function cannot see a hole in the
+  pipeline that feeds it.
+- **A four-channel outside review of this very diff, adjudicated by execution.** Confirmed and
+  fixed: the extraction chooser fired in the WRONG direction (a truncated alternate beat a
+  complete primary because "more tokens" read as "split words") and its 1.01× hair trigger let
+  two hyphen artefacts outvote a missing paragraph; the `245a` veto missed `part245a` written
+  without a separator; `www.uscis.gov` in the configuration taught the lookalike detector
+  nothing; grouped identifiers with non-breaking spaces, an `A#`-with-space form, an OCR'd
+  lower-case one, `Suite B` and `PH-1204` walked through the gate; and the CLAUDE.md writer had
+  three corruption
+  vectors - orphaned markers, non-UTF-8 files, CRLF files - now refused or preserved, with the
+  write made atomic. Refuted with traces and kept as controls: the planted canary (4 of 4
+  channels refuted it, quoting the code), plus two findings whose premises the pipeline
+  disproves. Self-test grew from 208 to 292 checks; every confirmed finding is locked open.
+
 ## [0.4.0] — 2026-08-02
 
 The release where the tool that checks other people's sources was caught calling a Russian domain,

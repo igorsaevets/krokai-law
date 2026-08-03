@@ -36,7 +36,8 @@ reader - see ``judge.py``.
 """
 from __future__ import annotations
 
-__all__ = ["ORDER", "DANGEROUS", "CLEAN", "LABEL", "MEANING", "MARK", "label", "meaning"]
+__all__ = ["ORDER", "DANGEROUS", "CLEAN", "UNCHECKABLE", "LABEL", "MEANING", "MARK",
+           "label", "meaning"]
 
 # Read-this-first order. Not alphabetical, not by frequency: by what it costs to be wrong.
 ORDER = [
@@ -47,6 +48,7 @@ ORDER = [
     "FOUND_ELSEWHERE",
     "ELLIPSIS_HIDES",
     "NOT_FOUND",
+    "NO_SOURCE_ON_DISK",
     "PARTIAL",
     "ALTERED",
     "SCATTERED",
@@ -70,13 +72,38 @@ DANGEROUS = ["TRUNCATED_CONDITION", "TRUNCATED_OPENING", "OPERATOR", "SPLICED", 
 # a real slip in the first draft of this file, and the invariant below is what caught it.
 CLEAN = ["VERIFIED", "ASSEMBLED", "PUNCTUATION", "TYPESETTING", "WRONG_SPEAKER"]
 
-# Invariant, asserted by the self-test: every verdict is in exactly one of the two lists. A verdict
-# in neither is unclassified and will be silently treated as harmless by anything that iterates.
+# 🔴 THE THIRD BUCKET, AND WHY TWO WERE NOT ENOUGH.
+#
+# `NOT_FOUND` used to mean two different things and its own MEANING string admitted it: *"either the
+# source is not downloaded, or invented."* Those are not variations of one finding. One is a
+# download you owe; the other is a sentence the authority never wrote. Describing the ambiguity is
+# not the same as resolving it, and the tool had the information to resolve it all along - the
+# address printed beside the quotation.
+#
+# Measured in the sister project on a real filing: **20 of 37 red items** were quotations of agency
+# press releases and FAQ pages whose sources are not in the corpus BY CONSTRUCTION, because the
+# corpus holds law. They were graded identically to genuine misses, so the list of things to read
+# was two-thirds noise - and a list that is mostly noise is a list nobody finishes. The real misses
+# were hiding among them.
+#
+# 🔴 UNCHECKABLE IS NOT A PASS, and the wording everywhere says so. The dangerous reading of this
+# verdict is "the tool did not object", and a fabricated quotation under a fabricated citation would
+# land here. Two things prevent that from becoming an escape hatch:
+#   * it is excluded from CLEAN, counted separately, and never reported as a success;
+#   * it is only reachable when the address resolves to NOTHING on disk. If the cited source IS on
+#     disk and the words are not in it, the verdict stays NOT_FOUND - which is the fabrication
+#     shape, and `fold()` says so in the detail rather than softening it.
+UNCHECKABLE = ["NO_SOURCE_ON_DISK"]
+
+# Invariant, asserted by the self-test: every verdict is in exactly one of the three lists. A
+# verdict in none is unclassified and will be silently treated as harmless by anything that
+# iterates - which is the mistake this invariant caught once already.
 
 MARK = {
     "TRUNCATED_CONDITION": "!!", "TRUNCATED_OPENING": "!!", "OPERATOR": "!!",
     "SPLICED": "!!", "FOUND_ELSEWHERE": "!!",
-    "ELLIPSIS_HIDES": "! ", "NOT_FOUND": "! ", "PARTIAL": "! ", "ALTERED": "! ",
+    "ELLIPSIS_HIDES": "! ", "NOT_FOUND": "! ", "NO_SOURCE_ON_DISK": "? ",
+    "PARTIAL": "! ", "ALTERED": "! ",
     "SCATTERED": "  ", "WRONG_SPEAKER": "~ ", "PUNCTUATION": "  ", "TYPESETTING": "~ ",
     "ASSEMBLED": "  ", "VERIFIED": "OK",
 }
@@ -98,11 +125,13 @@ LABEL = {
         "ALTERED": "ИЗМЕНЁН ХВОСТ",
         "PARTIAL": "ЧАСТИЧНО",
         "NOT_FOUND": "НЕ НАЙДЕНО",
+        "NO_SOURCE_ON_DISK": "ИСТОЧНИКА НЕТ НА ДИСКЕ",
         "WRONG_SPEAKER": "ЧУЖОЙ ГОЛОС",
     },
 }
 LABEL["en"]["VERIFIED"] = "verified"
 LABEL["en"]["NOT_FOUND"] = "not found"
+LABEL["en"]["NO_SOURCE_ON_DISK"] = "no source on disk"
 
 MEANING = {
     "en": {
@@ -120,7 +149,10 @@ MEANING = {
         "SPLICED": "!! the fragments exist, but no single document holds them in order",
         "FOUND_ELSEWHERE": "!! verbatim in the corpus - but NOT in the document cited beside it",
         "ELLIPSIS_HIDES": "! the fragments are there; the ellipsis hides words that narrow the rule",
-        "NOT_FOUND": "absent from the corpus: either the source is not downloaded, or invented",
+        "NOT_FOUND": "absent from the corpus, AND the cited source is one you have - so this is "
+                     "the shape a fabrication makes",
+        "NO_SOURCE_ON_DISK": "? NOT CHECKED - the address beside it names something you have not "
+                             "downloaded. This is not a pass: get the source and run again",
         "PARTIAL": "! 50-85 % located - read it",
         "ALTERED": "! the opening is in the source, the whole is not => the TAIL was changed",
         "SCATTERED": "each sentence is verbatim, but they are not adjacent in the source",
@@ -137,7 +169,9 @@ MEANING = {
         "SPLICED": "!! куски есть, но ни в одном документе не идут подряд",
         "FOUND_ELSEWHERE": "!! дословно есть в корпусе — но НЕ в том документе, чей адрес указан рядом",
         "ELLIPSIS_HIDES": "! куски найдены, многоточие скрыло слова, сужающие норму",
-        "NOT_FOUND": "в корпусе нет: либо источник не скачан, либо выдумка",
+        "NOT_FOUND": "в корпусе нет, а указанный источник у вас ЕСТЬ — это форма выдумки",
+        "NO_SOURCE_ON_DISK": "? НЕ ПРОВЕРЕНО — адрес рядом называет то, что не скачано. "
+                             "Это не «чисто»: скачайте источник и прогоните снова",
         "PARTIAL": "! найдено 50–85 % — разбирать",
         "ALTERED": "! начало есть, целого нет ⇒ изменён хвост",
         "SCATTERED": "каждое предложение дословно, но в источнике они не рядом",

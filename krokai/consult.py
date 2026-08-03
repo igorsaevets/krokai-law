@@ -66,6 +66,10 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+# Imported at module level, not inside a handler: a scrub that has to be imported while an
+# exception is being formatted is a scrub that is skipped exactly when it matters.
+from .redact import scrub
+
 __all__ = ["load_registry", "plan", "run_round", "triage", "grounding_of",
            "write_analytics", "REGISTRY_NAME"]
 
@@ -99,11 +103,12 @@ FAILURE_MEANING = {
 # level down. The counts are kept, because what an answer ASKS YOU TO RELY ON is worth knowing; the
 # word that implied retrieval is gone.
 QUALITY_MEANING = {
-    "GOV_LOOKALIKE_CITED": "cites a host that wears an official label (`gov`, `mil`) as a whole "
-                           "part of its name but does NOT end in any official suffix you have "
-                           "configured. Two things look like this and both need a human: a domain "
-                           "impersonating a government site, and a real government whose suffix is "
-                           "missing from `grounding.primary` in channels.json",
+    "GOV_LOOKALIKE_CITED": "cites a host that wears an official label (`gov`, `mil`) - or the NAME "
+                           "of one of your configured official sources (`uscis`, `ecfr`) - as a "
+                           "whole part of its name, while NOT ending in any official suffix you "
+                           "have configured. Two things look like this and both need a human: a "
+                           "domain impersonating a government site, and a real government whose "
+                           "suffix is missing from `grounding.primary` in channels.json",
     "DATED_EDITION_CITED": "cites an ANNUAL EDITION. That IS official law - a dated codification, "
                            "not a lesser source - but it is not the text in force, and it sits on "
                            "a government domain, so an 'is this official?' check passes it happily",
@@ -371,7 +376,13 @@ def call_cli(name, ch, payload, marker, workdir, floor, timeout, printer=print):
         return _result(name, seconds=round(time.time() - t0, 1),
                        failures=[("TIMED_OUT", "%ds" % timeout)])
     except Exception as exc:                                        # noqa: BLE001
-        return _result(name, failures=[("TRANSPORT_ERROR", repr(exc)[:200])])
+        # 🔴 SCRUBBED, and the truncation is not what protects it. An exception's own message is
+        # untrusted text: a spawn failure names the command line, and a command line can carry a
+        # credential. This project measured the same thing in its parent - `diagnostics.json` was
+        # clean while an exception message printed a key in full to the console, which is the same
+        # archived, replayed surface. And `[:200]` is a cut, not a mask: the gate's own docstring
+        # records a 60-character "mask" that kept a 48-character key whole.
+        return _result(name, failures=[("TRANSPORT_ERROR", scrub(repr(exc))[:200])])
 
     text = ""
     if os.path.exists(outfile):
@@ -383,9 +394,12 @@ def call_cli(name, ch, payload, marker, workdir, floor, timeout, printer=print):
         # 🔴 The exit code is checked, but it is NOT trusted on its own. Measured on two separate
         # CLIs: one exits 0 having discarded the entire run, the other exits 0 on a hard HTTP 400.
         # The answer is the evidence; the exit code is a hint about where to look.
+        # A channel CLI that fails often echoes its own argv, and this text is recorded and
+        # printed. Scrubbed for the same reason as the branch above; measured with a probe that
+        # made a subprocess write an assembled key to stderr.
         r["failures"].append(("TRANSPORT_ERROR",
                               "exit %d: %s" % (p.returncode,
-                                               (p.stderr or b"").decode("utf-8", "replace")[:200])))
+                                               scrub((p.stderr or b"").decode("utf-8", "replace"))[:200])))
     if not ch.get("telemetry"):
         r["quality"].append(("NO_TELEMETRY", ""))
     return _finish(r, marker, floor)
@@ -536,7 +550,7 @@ def call_delegate(harness, brief_path, system_path, out_dir, marker=None, extra=
     try:
         return subprocess.call(cmd)
     except Exception as exc:                                        # noqa: BLE001
-        printer("  the harness could not be run: %r" % (exc,))
+        printer("  the harness could not be run: %s" % scrub(repr(exc)))
         return 1
 
 
@@ -611,15 +625,66 @@ def suffix_match(host, entry):
     return bool(e) and (host == e or host.endswith("." + e))
 
 
+def agency_labels(primary):
+    """The names of the specific official bodies configured in `primary` - `uscis.gov` -> `uscis`.
+
+    🔴 The `gov`/`mil` token test has a measured blind spot, found in a sister project the day
+    after that test shipped: `uscis.com` - the EXACT agency name in a foreign zone, not a typo -
+    walks straight past it, because it wears no official label at all. The only thing that can
+    catch that shape is knowing the names you actually rely on, and those names arrive here two
+    ways: specific domains a user adds to `grounding.primary`, and the `official_domains` a
+    citation pack declares (merged in by `krokai review`).
+
+    Only the FIRST label of a multi-label entry, and only when it is 3+ characters: deriving every
+    label would turn `uscode.house.gov` into a claim over `house.com`, and two-letter fragments
+    like `us` match half the internet. Three letters stay in because `irs` does - `irs.com` is a
+    live commercial site that is not the agency, and a floor of four would have exempted the most
+    impersonated name in the whole list; a control caught exactly that. Names that are also
+    English words are a pack decision, not a floor decision - see `official_domains` in the
+    immigration pack for the one that was left out on purpose. Generic single-suffix entries
+    (`.gov`) contribute nothing here by construction.
+    """
+    out = set()
+    for e in (primary or []):
+        e = (e or "").lower().strip().lstrip(".")
+        # A user who configures `www.uscis.gov` means uscis.gov. The first draft SKIPPED such an
+        # entry entirely - `www` was filtered but nothing looked past it, so the one domain the
+        # user most explicitly typed taught the detector nothing. Found by an outside review,
+        # confirmed by execution.
+        if e.startswith("www."):
+            e = e[4:]
+        if "." not in e:
+            continue                        # ".gov" -> "gov": a suffix, not a name
+        first = e.split(".")[0]
+        if len(first) >= 3 and first not in OFFICIAL_TOKENS and first != "www":
+            out.add(first)
+    return out
+
+
 def gov_lookalike(host, primary):
-    """Does this host wear an official label without being on the official list?"""
+    """Does this host wear an official label - or a configured official NAME - without being on
+    the official list?
+
+    Two independent tests, each with a measured miss the other covers:
+    * an official LABEL (`gov`, `mil`) as a whole part of the name - catches `uscis.gov.ru`,
+      `uscisdhs-gov.us`; blind to `uscis.com`;
+    * an official NAME (`uscis`, `ecfr`) as a whole part of the name - catches `uscis.com` and
+      `uscis.phishing.example`; blind to a misspelling like `ussciss.us`, which is stated in the
+      report as the residual hole rather than closed with a similarity threshold that four
+      independent reviewers rejected.
+    """
+    # Defensive: every caller inside this module lower-cases first, but the function is exported,
+    # and `USCIS.COM` passed a direct call untouched in an outside review's trace.
+    host = (host or "").lower()
     if not host or any(suffix_match(host, e) for e in (primary or [])):
         return False
     parts = set()
     for label in host.split("."):
         parts.add(label)
         parts.update(label.split("-"))
-    return bool(parts.intersection(OFFICIAL_TOKENS))
+    if parts.intersection(OFFICIAL_TOKENS):
+        return True
+    return bool(parts.intersection(agency_labels(primary)))
 
 
 def classify_url(u, g):
@@ -766,7 +831,9 @@ def write_analytics(path, rows, seconds, lang="en"):
     if unknown:
         L += ["",
               "**Hosts this tool does not recognise** (no verdict attached - read them yourself; a "
-              "typosquat that carries no `gov`-like label cannot be detected mechanically here):",
+              "MISSPELLING of an official name - ussciss.us is the measured, live example - "
+              "cannot be detected mechanically here. The exact name in a wrong zone IS caught, but "
+              "only for sources configured in `grounding.primary` or a pack's `official_domains`):",
               ""] + ["* `%s`" % h for h in unknown[:25]]
         if len(unknown) > 25:
             L.append("* … and %d more" % (len(unknown) - 25))
@@ -774,11 +841,14 @@ def write_analytics(path, rows, seconds, lang="en"):
     L += ["",
           "«—» means NOT MEASURED, never «zero».",
           "",
-          "🔴 The **lookalike** column counts hosts wearing an official label (`gov`, `mil`) that do "
-          "not end in a configured official suffix. It is never zero-by-default: it was added after "
-          "a substring test graded `www.milano.it`, `uscis.gov.ru` and `law.gov.cn` as official law. "
-          "A count above zero is either a domain impersonating a government or a real government "
-          "missing from `grounding.primary` - and the two are told apart by a person, not here.",
+          "🔴 The **lookalike** column counts hosts wearing an official label (`gov`, `mil`) - or "
+          "the NAME of a configured official source (`uscis`, `ecfr`) - that do not end in a "
+          "configured official suffix. It is never zero-by-default: it was added after a substring "
+          "test graded `www.milano.it`, `uscis.gov.ru` and `law.gov.cn` as official law, and the "
+          "name test was added after `uscis.com` - the exact agency name in a foreign zone - "
+          "walked past the label test. A count above zero is either a domain impersonating a "
+          "government or a real government missing from `grounding.primary` - and the two are told "
+          "apart by a person, not here.",
           "",
           "🔴 **These are URLs the answer PRINTED. Printing is not opening.** The count is not "
           "evidence of retrieval and must not be read as corroboration: the same process that "
@@ -843,15 +913,19 @@ def neutral_cwd(printer=print):
 
 def run_round(reg, system, brief, out_dir, marker="REVIEW-COMPLETE", only=(), skip=(),
               harness=None, use_harness=True, harness_args=(), allow_pii=False,
-              dry_run=False, printer=print):
+              dry_run=False, printer=print, surnames=()):
     """Gate, plan, dispatch, grade, record. Returns `(rows, out_dir)`.
 
     The caller is responsible for having run the outbound gate; `cmd_consult` does it. This
     function refuses to proceed without proof, because a gate that can be forgotten is decoration.
+
+    🔴 `surnames` must be passed here TOO, not only to `prepare()`. This is the last check before
+    the payload leaves, and a last check that knows less than the first one is not a check - it is
+    a place for a difference to hide.
     """
     from .redact import scan
 
-    leftover = scan(brief, "brief") + scan(system, "system")
+    leftover = scan(brief, "brief", surnames=surnames) + scan(system, "system", surnames=surnames)
     secrets = [x for x in leftover if x[0] == "SECRET"]
     if secrets:
         raise SystemExit("refusing to send: %d secret-shaped value(s) still in the payload"

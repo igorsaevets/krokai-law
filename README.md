@@ -72,10 +72,19 @@ That last step is the point: a reviewer's answer is input, not evidence.
 
 **6. Stops your client's data leaving.** Before anything is sent anywhere, an outbound gate scans it
 for credentials and personal identifiers, reports the kind and the line number, and **never prints
-the value**. Secrets have no override. The redaction is deliberately partial rather than total —
-it cuts the surname and keeps the given name, cuts the house number and keeps the street and city —
-because a reviewer who cannot tell which city your client lives in will answer a more general
-question than the one you asked.
+the value**. Secrets have no override.
+
+The gate **refuses to send; it does not silently rewrite your document.** That distinction is
+deliberate — a substitution that quietly eats a word damages the thing it was protecting and files
+the damage under "working as intended" — and it means the tool tells you what to fix rather than
+fixing it behind you.
+
+What it looks for is deliberately partial rather than total: the house number goes and the street
+and city stay, because a reviewer who cannot tell which city your client lives in will answer a
+more general question than the one you asked. **Surnames are the one part you configure yourself**,
+in `surnames` in `casefile.json`: no pattern can tell a surname from a given name, and one that
+guesses will cut the wrong word in a document full of judges' and agencies' names. Leave it empty
+and the gate says so out loud — it will not report `clean` about a check it never ran.
 
 **7. Makes it automatic.** Optional hooks fire when your AI writes a quotation into a document —
 not when you remember to check. This is the part that matters most, and the reason is below.
@@ -144,7 +153,7 @@ python /path/to/krokai-law/krokai init .
 Then put your downloaded statutes, regulations and decisions in `law/`, your drafts in `case/`, and:
 
 ```bash
-python -m krokai check
+python /path/to/krokai-law/krokai check
 ```
 
 **No programming needed, no account, no API key, nothing leaves your machine.** Four install

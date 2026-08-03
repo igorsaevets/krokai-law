@@ -73,7 +73,7 @@ def find_harness(explicit=None):
 
 
 def prepare(question, material="", out_dir=".", marker="REVIEW-COMPLETE",
-            tools=True, canary=False, allow_pii=False, printer=print):
+            tools=True, canary=False, allow_pii=False, printer=print, surnames=()):
     """Build the brief, screen it, gate it. Returns `(brief_path, system_path)` or `None`."""
     from .redact import gate
 
@@ -96,7 +96,8 @@ def prepare(question, material="", out_dir=".", marker="REVIEW-COMPLETE",
 
     # 🔴 The gate runs on the brief AND the system prompt, before anything is sent. Sending is
     # publishing: what remains reaches the vendor, its logs, and your own transcript on disk.
-    rc = gate([("brief", brief), ("system", RESEARCH_SYSTEM)], allow_pii=allow_pii, printer=printer)
+    rc = gate([("brief", brief), ("system", RESEARCH_SYSTEM)], allow_pii=allow_pii,
+              printer=printer, surnames=surnames)
     if rc:
         return None
 

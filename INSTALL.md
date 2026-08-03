@@ -32,6 +32,13 @@ Then, in your matter folder:
 python ~/tools/krokai/krokai init .
 ```
 
+🔴 **Two command forms exist and only one works everywhere.** `python -m krokai …` works while
+your terminal is INSIDE the clone. `python ~/tools/krokai/krokai …` — the package folder itself —
+works from anywhere, including your matter folder, which is where you will actually be standing.
+This document uses the second form for every command run from a matter. (The first release's
+documents used `-m` throughout, and the from-the-matter commands had never worked; found by
+executing the instructions in an empty folder, which reading them had not.)
+
 ## 3. Download and unpack
 
 No git? Download the ZIP from the repository page, unpack it anywhere, and use the same commands. The
@@ -81,7 +88,7 @@ pip install pypdf pymupdf mammoth
 
 ```bash
 cd /path/to/your/matter
-python -m krokai init .
+python ~/tools/krokai/krokai init .
 ```
 
 Creates:
@@ -114,7 +121,7 @@ statute, fix the pattern — do not ignore it.
 ### Choosing citation packs
 
 ```bash
-python -m krokai packs
+python ~/tools/krokai/krokai packs
 ```
 
 `us-federal` is the base and belongs in almost every configuration. Add `us-immigration` or `us-tax`
@@ -131,8 +138,8 @@ Adding your own body of law is a JSON file, not a code change. See
 This is the step that makes everything else automatic, and it is the one people skip.
 
 ```bash
-python -m krokai install-hooks --dry-run     # see the diff
-python -m krokai install-hooks
+python ~/tools/krokai/krokai install-hooks --dry-run     # see the diff
+python ~/tools/krokai/krokai install-hooks
 ```
 
 **Why bother.** An instruction file in a real matter said, in bold, *"check every quotation as it is
@@ -151,16 +158,16 @@ It backs the file up first. It is idempotent, so running it twice does not dupli
 to touch it and says so.
 
 🔴 **`settings.json` is read when a session starts.** Newly installed hooks do nothing in the session
-that installed them. Start a new session, then run `python -m krokai doctor`.
+that installed them. Start a new session, then run `python ~/tools/krokai/krokai doctor`.
 
 ---
 
 ## Confirming it works
 
 ```bash
-python -m krokai doctor      # ends with STATUS: READY
-python -m krokai check       # the whole-matter pass
-python -m krokai close       # end-of-session checks
+python ~/tools/krokai/krokai doctor      # ends with STATUS: READY
+python ~/tools/krokai/krokai check       # the whole-matter pass
+python ~/tools/krokai/krokai close       # end-of-session checks
 ```
 
 `doctor` prints what is installed, what is configured, and what is missing. If it ever prints
@@ -172,7 +179,7 @@ exit code teaches people to ignore both.
 ## Uninstalling
 
 ```bash
-python -m krokai install-hooks --uninstall
+python ~/tools/krokai/krokai install-hooks --uninstall
 ```
 
 Then delete the folder. `casefile.json`, your quote bank, your library index and your reports are
