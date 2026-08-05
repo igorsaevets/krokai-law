@@ -307,7 +307,23 @@ def superseded_paths(root):
 
 
 def _sentences(t):
-    return [s.strip() for s in re.split(r"(?<=[.;:])\s+", t or "") if len(s.strip()) > 25]
+    """Sentences of NORMALISED text.
+
+    🔴 Named independently by two review channels, which is the whole reason to ask more
+    than one. The comparison used to run on raw `read_any` output, which carries line
+    wrapping, smart quotes, non-breaking spaces and unescaped entities - and two extractions
+    of the SAME provision differ in every one of them. So a re-download with no legal change
+    produced a wall of gone/added pairs, and the revision report, whose entire job is to be
+    believed, cried wolf.
+
+    This package already holds the doctrine: normalisation may change whitespace,
+    hyphenation and typography and may never change letters, digits or word order. The
+    revision detector was the one place not applying it, and it was grading rendering as a
+    change in the law.
+    """
+    from .normalize import normalise
+    return [s.strip() for s in re.split(r"(?<=[.;:])\s+", normalise(t) or "")
+            if len(s.strip()) > 25]
 
 
 def revision_diff(old_text, new_text):

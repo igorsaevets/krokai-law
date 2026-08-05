@@ -10,6 +10,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.7.3] — 2026-08-05
+
+**The revision diff compared raw extractor output, so rendering was graded as a change in the law.**
+
+Named independently by two review channels, which is the whole reason to ask more than one.
+`read_any` output carries line wrapping, smart quotes, non-breaking spaces and unescaped entities,
+and two extractions of the *same* provision differ in every one of them — so a re-download with no
+legal change produced a wall of gone/added pairs, and the revision report, whose entire job is to be
+believed, cried wolf.
+
+This package already holds the doctrine: normalisation may change whitespace, hyphenation and
+typography, and may never change letters, digits or word order. The revision detector was the one
+place not applying it.
+
+Measured after the fix: a rendering-only difference (line wraps, non-breaking spaces) is **0 gone,
+0 added, 100 % unchanged**, while a real one-word edit — `shall prescribe` to `may prescribe` — is
+still caught.
+
 ## [0.7.2] — 2026-08-05
 
 **The review round on 0.7.1, and it found that the release's marquee feature defeated itself.**
