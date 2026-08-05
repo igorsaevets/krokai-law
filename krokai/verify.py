@@ -8,9 +8,11 @@ lost gets "simplified" back out six months later by someone who cannot see what 
 from __future__ import annotations
 
 import difflib
+import os
 import re
 
 from .normalize import normalise, alnum, dehyph, ellipsis_parts, prepare_quote
+from .verdicts import CLEAN
 
 __all__ = ["check", "word_diff", "neighbours", "OPERATORS"]
 
@@ -278,7 +280,7 @@ def wrong_speaker(quote_n, corpus):
 
 
 # ------------------------------------------------------------------------------------------------
-def check(quote, corpus):
+def _check_inner(quote, corpus):
     """Return `(verdict, path_or_None, detail)`.
 
     The order of the tree is the design. An exact match is tested first and then **immediately
@@ -418,3 +420,28 @@ def check(quote, corpus):
             return "PARTIAL", None, ""
 
     return "NOT_FOUND", None, ""
+
+
+def check(quote, corpus, *a, **kw):
+    """`_check_inner`, plus the one question the text comparison cannot ask: is the file it found
+    still the edition in force?
+
+    🔴 This wraps rather than edits the comparison on purpose. The words really ARE in that file -
+    that part of the answer is correct and must not be thrown away - and the superseded fact lives
+    in the law register, which is not the corpus's business to parse. Wrapping keeps one place where
+    the text question is answered and one place where the edition question is.
+
+    It is applied HERE and not in the report, because a check that runs outside the path it protects
+    is decorative: the hooks and the reviewer-answer audit call `check()` directly and would
+    otherwise keep grading superseded law as clean.
+    """
+    verdict, where, detail = _check_inner(quote, corpus, *a, **kw)
+    if where and verdict in CLEAN and getattr(corpus, "is_superseded", None) \
+            and corpus.is_superseded(where):
+        extra = ("the words are in `%s`, which the law register marks as SUPERSEDED by a newer "
+                 "edition of the same provision. This is not an accusation - the quotation was "
+                 "correct when it was taken. Decide whether the filing should cite the edition in "
+                 "force at the time or the current text, and see the revision report."
+                 % os.path.basename(where))
+        return "SUPERSEDED_EDITION", where, (detail + " - " if detail else "") + extra
+    return verdict, where, detail

@@ -46,6 +46,7 @@ ORDER = [
     "OPERATOR",
     "SPLICED",
     "FOUND_ELSEWHERE",
+    "SUPERSEDED_EDITION",
     "ELLIPSIS_HIDES",
     "NOT_FOUND",
     "NO_SOURCE_ON_DISK",
@@ -61,6 +62,7 @@ ORDER = [
 
 # Verdicts that must be read by a human before the document goes anywhere.
 DANGEROUS = ["TRUNCATED_CONDITION", "TRUNCATED_OPENING", "OPERATOR", "SPLICED", "FOUND_ELSEWHERE",
+             "SUPERSEDED_EDITION",
              "ELLIPSIS_HIDES", "PARTIAL", "ALTERED", "SCATTERED", "NOT_FOUND"]
 
 # Verdicts meaning "the words are genuinely in the source". NOT the same as "the quotation is
@@ -95,6 +97,22 @@ CLEAN = ["VERIFIED", "ASSEMBLED", "PUNCTUATION", "TYPESETTING", "WRONG_SPEAKER"]
 #     shape, and `fold()` says so in the detail rather than softening it.
 UNCHECKABLE = ["NO_SOURCE_ON_DISK"]
 
+# 🔴 SUPERSEDED_EDITION is DANGEROUS, not clean and not uncheckable.
+#
+# Found by an outside reviewer and confirmed by execution on 2026-08-05: after `krokai
+# intake` detects a revision it keeps both editions - correctly, because a quotation taken
+# from the older one was a correct quotation of the law in force at the time - and both were
+# then indexed. So a quotation of superseded law came back VERIFIED, and the whole
+# "NOT_FOUND is the fabrication signal" doctrine silently stopped applying to every revised
+# provision. The revision machinery created the condition it exists to detect and then
+# suppressed its own alarm.
+#
+# It belongs in DANGEROUS because filing a superseded provision under a current citation is
+# the same family of error as filing a quotation with its proviso cut off: every character is
+# right and the document is wrong. It is emphatically NOT an accusation of fabrication, and
+# its meaning says so.
+
+
 # Invariant, asserted by the self-test: every verdict is in exactly one of the three lists. A
 # verdict in none is unclassified and will be silently treated as harmless by anything that
 # iterates - which is the mistake this invariant caught once already.
@@ -102,6 +120,7 @@ UNCHECKABLE = ["NO_SOURCE_ON_DISK"]
 MARK = {
     "TRUNCATED_CONDITION": "!!", "TRUNCATED_OPENING": "!!", "OPERATOR": "!!",
     "SPLICED": "!!", "FOUND_ELSEWHERE": "!!",
+    "SUPERSEDED_EDITION": "!!",
     "ELLIPSIS_HIDES": "! ", "NOT_FOUND": "! ", "NO_SOURCE_ON_DISK": "? ",
     "PARTIAL": "! ", "ALTERED": "! ",
     "SCATTERED": "  ", "WRONG_SPEAKER": "~ ", "PUNCTUATION": "  ", "TYPESETTING": "~ ",
@@ -117,6 +136,7 @@ LABEL = {
         "OPERATOR": "НЕСУЩЕЕ СЛОВО",
         "SPLICED": "СКЛЕЙКА",
         "FOUND_ELSEWHERE": "НАЙДЕНО НЕ ТАМ",
+        "SUPERSEDED_EDITION": "УСТАРЕВШАЯ РЕДАКЦИЯ",
         "ELLIPSIS_HIDES": "МНОГОТОЧИЕ СКРЫЛО",
         "ASSEMBLED": "СБОРНАЯ",
         "PUNCTUATION": "ПУНКТУАЦИЯ",
@@ -148,6 +168,15 @@ MEANING = {
         "OPERATOR": "!! the difference touches not/unless/only/may/shall - the rule may be inverted",
         "SPLICED": "!! the fragments exist, but no single document holds them in order",
         "FOUND_ELSEWHERE": "!! verbatim in the corpus - but NOT in the document cited beside it",
+        # 🔴 Deliberately not an accusation. The quotation was correct when it was taken and is
+        # still a correct quotation of the text then in force; what is undecided is which edition
+        # the filing should cite. Found by an outside reviewer: before this existed, both editions
+        # stayed indexed after a revision and superseded law came back VERIFIED - so the revision
+        # feature created the condition it exists to detect and then suppressed its own alarm.
+        "SUPERSEDED_EDITION": "!! the words ARE on your disk, in an edition a newer one has "
+                              "replaced. Not an accusation: decide whether the filing should cite "
+                              "the edition then in force or the current text, and read the "
+                              "revision report",
         "ELLIPSIS_HIDES": "! the fragments are there; the ellipsis hides words that narrow the rule",
         "NOT_FOUND": "absent from the corpus, AND the cited source is one you have - so this is "
                      "the shape a fabrication makes",
@@ -168,6 +197,9 @@ MEANING = {
         "OPERATOR": "!! расхождение задело not/unless/only/may/shall — смысл может быть перевёрнут",
         "SPLICED": "!! куски есть, но ни в одном документе не идут подряд",
         "FOUND_ELSEWHERE": "!! дословно есть в корпусе — но НЕ в том документе, чей адрес указан рядом",
+        "SUPERSEDED_EDITION": "!! слова НА ДИСКЕ есть — но в редакции, которую заменила более "
+                              "новая. Это не обвинение: решите, на какую редакцию ссылаться — "
+                              "действовавшую тогда или нынешнюю, — и откройте отчёт о ревизии",
         "ELLIPSIS_HIDES": "! куски найдены, многоточие скрыло слова, сужающие норму",
         "NOT_FOUND": "в корпусе нет, а указанный источник у вас ЕСТЬ — это форма выдумки",
         "NO_SOURCE_ON_DISK": "? НЕ ПРОВЕРЕНО — адрес рядом называет то, что не скачано. "

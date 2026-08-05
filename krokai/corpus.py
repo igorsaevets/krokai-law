@@ -144,11 +144,17 @@ class Corpus(object):
     SEP = "\n\x00\n"
 
     def __init__(self, roots, exts=DEFAULT_EXT, derived_re=DERIVED_DEFAULT,
-                 skip_dirs=(), cache_dir=None, quiet=False, sentinel=None):
+                 skip_dirs=(), cache_dir=None, quiet=False, sentinel=None,
+                 superseded=()):
         self.paths, self.starts, self.astarts, self.hstarts = [], [], [], []
         self.excluded_derived, self.excluded_stub, self.unreadable = [], [], []
         self.excluded_empty, self.short_sources = [], []
         self.excluded_placeholder = []
+        # Paths the law register knows to have been replaced by a newer edition of the same
+        # provision. They stay INDEXED on purpose - the words really are in a source on this
+        # disk, and pretending otherwise would produce a NOT_FOUND, which in this tool's
+        # vocabulary accuses the drafter of inventing it. What changes is the verdict.
+        self.superseded = {os.path.normcase(os.path.abspath(p)) for p in (superseded or ())}
         drx = re.compile(derived_re, re.I) if derived_re else None
         # One string or several. Several, because a renamed tool must still recognise the stamp it
         # wrote under its old name - see the note beside SENTINELS in run.py.
@@ -205,14 +211,23 @@ class Corpus(object):
                 self.excluded_empty.append(p)
                 continue
             elif len(t.strip()) < MIN_TEXT_LAYER:
-                # Among the short ones only, split "a failed download" from "a short provision" by
-                # reading what it says. See `looks_like_placeholder`: indexing a `404 Not Found`
-                # body made a phrase from it verify as law, which is the exact false GREEN that
-                # 0.6.0's fix traded a false RED for.
-                if looks_like_placeholder(t):
-                    self.excluded_placeholder.append(p)
-                    continue
                 self.short_sources.append(p)         # warned below, and indexed all the same
+            # 🔴 THE PLACEHOLDER TEST RUNS ON EVERY TEXT SOURCE, NOT ONLY SHORT ONES.
+            #
+            # It used to sit inside the `< MIN_TEXT_LAYER` branch, so the tier-1 strings that
+            # `looks_like_placeholder` documents as firing "wherever they appear" could not
+            # fire anywhere except in a file under 200 characters. The comment and the call
+            # site contradicted each other and the dangerous direction was the live one:
+            # measured 2026-08-05, a 900-character bot wall was indexed as primary law and
+            # "Checking your browser before accessing the site" came back VERIFIED. A modern
+            # interstitial is tens of kilobytes; the length gate excluded exactly the ones
+            # that matter. Found by an outside reviewer reading the call site rather than the
+            # function - which is where the two disagreed.
+            if looks_like_placeholder(t):
+                self.excluded_placeholder.append(p)
+                if p in self.short_sources:
+                    self.short_sources.remove(p)
+                continue
             at, ht = alnum(t), dehyph(t)
             self.paths.append(p)
             self.starts.append(pos)
@@ -279,6 +294,9 @@ class Corpus(object):
                   "It IS searchable either way; open it and decide." % MIN_TEXT_LAYER)
         for p, err in self.unreadable:
             print("  !! unreadable: %s (%s)" % (p, err))
+
+    def is_superseded(self, path):
+        return bool(path) and os.path.normcase(os.path.abspath(path)) in self.superseded
 
     # -- lookup ---------------------------------------------------------------------------------
     def _owner(self, i):

@@ -154,8 +154,10 @@ def main():
         # own PDF sidecars counted as primary sources here and not there, so the same quotation
         # could be graded twice and disagree. Two corpora over one library is the same defect as
         # two normalisers over one comparison, which this package already paid for.
+        from krokai.fetch import superseded_paths
         corpus = Corpus(cfg.source_dirs, skip_dirs=set(cfg["skip_dirs"]),
-                        cache_dir=cfg.cache, quiet=True, sentinel=SENTINELS)
+                        cache_dir=cfg.cache, quiet=True, sentinel=SENTINELS,
+                        superseded=superseded_paths(cfg.root))
         for q in fresh:
             try:
                 verdict, where, detail = check(q, corpus)
@@ -175,8 +177,17 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception as exc:
+        # 🔴 `log(None, ...)` returned immediately and wrote nothing - the one handler whose
+        # entire purpose is to record a death recorded it nowhere, unless someone happened to
+        # pass --verbose, which the harness never does. Named by an outside reviewer. Find a
+        # config from the cwd so the line lands in the matter; fall back to stderr, which a
+        # Stop hook may write freely.
         try:
-            log(None, "EXCEPTION %s: %s" % (type(exc).__name__, exc))
+            log(find_config(), "EXCEPTION %s: %s" % (type(exc).__name__, exc))
+        except Exception:
+            pass
+        try:
+            sys.stderr.write("krokai bank_queue: %s: %s\n" % (type(exc).__name__, exc))
         except Exception:
             pass
         sys.exit(0)

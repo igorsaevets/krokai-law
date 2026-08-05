@@ -64,8 +64,10 @@ import re
 import time
 
 from .corpus import looks_like_placeholder
+from .readers import MIN_TEXT_LAYER
 
-__all__ = ["fetch_url", "intake", "trust_of", "INBOX", "REGISTRY", "sha256_of"]
+__all__ = ["fetch_url", "intake", "trust_of", "INBOX", "REGISTRY", "sha256_of",
+           "superseded_paths"]
 
 INBOX = os.path.join(".krokai", "inbox")
 REGISTRY = os.path.join(".krokai", "law_registry.json")
@@ -286,6 +288,24 @@ def _write_registry(root, reg):
     os.replace(tmp, p)
 
 
+def superseded_paths(root):
+    """Every file the register knows to have been replaced by a newer edition.
+
+    🔴 Both editions stay on disk and both stay indexed, because a quotation taken from the
+    older one WAS a correct quotation of the law in force at the time. What must change is the
+    verdict, not the availability - and without this set the tool graded superseded law
+    VERIFIED, which is the defect an outside reviewer found in the release that introduced
+    revisions at all.
+    """
+    out = set()
+    for entry in _registry(root).values():
+        p = entry.get("supersedes")
+        while p:
+            out.add(p)
+            p = None
+    return out
+
+
 def _sentences(t):
     return [s.strip() for s in re.split(r"(?<=[.;:])\s+", t or "") if len(s.strip()) > 25]
 
@@ -358,6 +378,37 @@ def intake(root, cfg, packs, address=None, dest_dir=None, allow_unindexed=False,
         key = sorted(keys)[0]
         kid = "|".join(key)
         text = read_any(src)
+
+        # 🔴 AN EXTRACTION FAILURE IS NOT A CHANGE IN THE LAW. Without this, a new edition
+        # that cannot be read - a scan, a corrupt download, a format the readers do not
+        # handle - produced `revision_diff(old, "")`: every sentence "gone", 0 % similar, a
+        # report announcing the provision had been deleted in its entirety, and every banked
+        # quotation marked lost. Refusing is the only honest answer.
+        if len(text.strip()) < MIN_TEXT_LAYER:
+            out.append(("UNREADABLE", fn,
+                        "only %d characters could be extracted - refusing rather than "
+                        "reporting it as a change in the law. OCR it, or fetch another format"
+                        % len(text.strip())))
+            continue
+
+        # 🔴 THE TRUST LABEL IS RE-DERIVED, NEVER READ OUT OF THE FILE BESIDE IT.
+        # `.meta.json` sits in a writable directory, and `intake` walks whatever is in the
+        # inbox - so a file dropped there by hand with a hand-written meta claiming
+        # `"trust": "primary"` was registered as OFFICIAL and written into the human-facing
+        # library index with that word. Measured: a paste-site URL took an OFFICIAL row. The
+        # three trust levels were a front-door control on a house with an open side door.
+        # The WORSE of the two answers wins, and an entry with no URL cannot claim anything.
+        claimed = meta.get("trust") or "unknown"
+        actual = trust_of(meta.get("url") or "", cfg, packs)[0] if meta.get("url") \
+            else "unknown"
+        rank = {"primary": 3, "snapshot": 2, "nonauthoritative": 1, "unknown": 0,
+                "lookalike": -1}
+        kind = actual if rank.get(actual, 0) <= rank.get(claimed, 0) else claimed
+        if kind == "lookalike":
+            out.append(("REFUSED", fn, "the recorded URL is a lookalike host"))
+            continue
+        meta["trust"], meta["trust_label"] = kind, TRUST[kind][0]
+
         prev = reg.get(kid)
         dest = os.path.join(library, fn)
 
@@ -457,14 +508,37 @@ def _bank_impact(cfg, new_text, packs):
     """
     from .bank import read_bank
     from .extract import extract_quotes
-    from .normalize import normalise, prepare_quote
+    from .normalize import normalise, prepare_quote, ellipsis_parts
 
     bank = read_bank(cfg.abs(cfg["bank"]))
     quotes = extract_quotes(bank, 45)
     if not quotes:
         return ["The bank holds no quotations yet, so nothing to re-check."]
     hay = normalise(new_text)
-    lost = [q for q in quotes if normalise(prepare_quote(q)) not in hay]
+
+    def still_there(q):
+        """🔴 An ellipsis is citation style, not an alteration - and a quotation containing
+        one can never be a substring of anything. Without this, EVERY banked quotation with
+        an ellipsis was reported lost on EVERY revision, unconditionally, under a red heading
+        telling the reader it would come back as the fabrication signal. A well-kept bank
+        cites with ellipses, so the better the bank the louder the false alarm - in the one
+        document whose entire job is to be believed. Named by an outside reviewer.
+        """
+        prepared = normalise(prepare_quote(q))
+        if prepared in hay:
+            return True
+        parts = ellipsis_parts(prepared, 25)
+        if len(parts) < 2:
+            return False
+        cur = -1
+        for part in parts:                     # every fragment, in order, without overlap
+            i = hay.find(part, cur + 1)
+            if i < 0:
+                return False
+            cur = i + len(part) - 1
+        return True
+
+    lost = [q for q in quotes if not still_there(q)]
     out = ["%d quotation(s) in the bank; **%d no longer appear in the new edition**."
            % (len(quotes), len(lost)), ""]
     if lost:

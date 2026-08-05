@@ -1692,6 +1692,131 @@ def suite_library_index(tmp):
         ok("library: a file with no table is refused loudly", "no table" in str(exc))
 
 
+def suite_review_r21(tmp):
+    """Six defects an outside reviewer found in 0.7.1, each reproduced before it was fixed.
+
+    The headline one invalidated the release's own marquee claim: after `intake` detected a
+    revision, BOTH editions stayed in the sources directory and both were indexed, so a quotation of
+    superseded law came back VERIFIED. The module docstring asserted the opposite - that a
+    superseded quotation "will not be found in this year's edition, which this tool reports as
+    NOT_FOUND". Measured: it was found, in the wrong edition, silently. **The revision machinery
+    created the condition it exists to detect and then suppressed its own alarm.**
+    """
+    import json
+    import shutil
+    from krokai import fetch as F
+    from krokai.corpus import Corpus, looks_like_placeholder
+    from krokai.citations import load_packs
+    from krokai.config import load as load_cfg
+    from krokai.verify import check
+    from krokai.verdicts import CLEAN, DANGEROUS, ORDER, MARK, MEANING
+    from krokai.run import SENTINELS
+
+    root = os.path.join(tmp, "r21matter")
+    shutil.rmtree(root, ignore_errors=True)
+    law = os.path.join(root, "law")
+    os.makedirs(law)
+    io.open(os.path.join(root, "casefile.json"), "w", encoding="utf-8").write(json.dumps({
+        "bank": "QUOTE-BANK.md", "queue": "QUOTE-QUEUE.md", "library_index": "law/INDEX.md",
+        "source_dirs": ["law"], "citation_packs": ["us-immigration", "us-federal"]}))
+    cfg = load_cfg(root)
+    packs = load_packs(cfg["citation_packs"])
+
+    OLD = ("Sec. 245.23 Adjustment of aliens in T nonimmigrant classification. An alien who has "
+           "been granted T-1 nonimmigrant status may apply for adjustment of status to that of a "
+           "lawful permanent resident. The applicant must establish continuous physical presence.")
+    NEW = OLD.replace("aliens", "noncitizens").replace("An alien", "A noncitizen")
+
+    inbox = os.path.join(root, F.INBOX)
+    os.makedirs(inbox)
+
+    def drop(name, body, sha):
+        io.open(os.path.join(inbox, name), "w", encoding="utf-8", newline="\n").write(body)
+        io.open(os.path.join(inbox, name + ".meta.json"), "w", encoding="utf-8").write(json.dumps(
+            {"url": "https://www.ecfr.gov/x", "sha256": sha, "trust": "primary",
+             "trust_label": "OFFICIAL", "model_in_path": False}))
+
+    drop("8CFR-245.txt", OLD, "a" * 64)
+    F.intake(root, cfg, packs, address="8 CFR 245.23", printer=lambda *a: None)
+    drop("8CFR-245.txt", NEW, "b" * 64)
+    rows = F.intake(root, cfg, packs, address="8 CFR 245.23", printer=lambda *a: None)
+    ok("r21: a second edition is detected as a revision",
+       any(s.startswith("\U0001f534") for s, _n, _x in rows), str(rows[:1]))
+
+    corp = Corpus([law], sentinel=SENTINELS, quiet=True, superseded=F.superseded_paths(root))
+    v, w, _d = check("An alien who has been granted T-1 nonimmigrant status may apply", corp)
+    ok("r21: a quotation of SUPERSEDED law is NOT clean", v not in CLEAN, v)
+    ok("r21: and it is named for what it is, not accused of fabrication",
+       v == "SUPERSEDED_EDITION", v)
+    ok("r21: the superseded edition is still ON DISK and still indexed",
+       any(os.path.basename(p) == "8CFR-245.txt" for p in corp.paths),
+       "a quotation of it was correct when it was taken")
+    v2, _w2, _d2 = check("A noncitizen who has been granted T-1 nonimmigrant status may apply",
+                         corp)
+    ok("r21: CONTROL the CURRENT edition still verifies", v2 in CLEAN, v2)
+    for tbl, name in ((ORDER, "ORDER"), (DANGEROUS, "DANGEROUS"), (MARK, "MARK"),
+                      (MEANING["en"], "MEANING/en"), (MEANING["ru"], "MEANING/ru")):
+        ok("r21: SUPERSEDED_EDITION is in %s" % name, "SUPERSEDED_EDITION" in tbl)
+
+    # 🔴 The placeholder test used to sit inside the `< MIN_TEXT_LAYER` branch, so the tier-1
+    # strings documented as firing "wherever they appear" could not fire anywhere except in a file
+    # under 200 characters - while a real bot wall is tens of kilobytes. The comment and the call
+    # site contradicted each other, and the dangerous direction was the live one.
+    big = os.path.join(tmp, "r21big")
+    shutil.rmtree(big, ignore_errors=True)
+    os.makedirs(big)
+    wall = ("Just a moment... Checking your browser before accessing the site. This process is "
+            "automatic. Your browser will redirect to your requested content shortly. ") * 6
+    io.open(os.path.join(big, "8CFR-214.html"), "w", encoding="utf-8").write(wall)
+    bc = Corpus([big], quiet=True)
+    ok("r21: a %d-character bot wall is excluded, not indexed" % len(wall),
+       not bc.paths and len(bc.excluded_placeholder) == 1,
+       "indexed=%d excluded=%d" % (len(bc.paths), len(bc.excluded_placeholder)))
+    ok("r21: CONTROL a long real document is untouched by the placeholder test",
+       not looks_like_placeholder("The petitioner argues that access denied to the record is "
+                                  "itself a violation of due process under the Fifth Amendment."))
+
+    # 🔴 An extraction failure is not a change in the law.
+    drop("8CFR-245.txt", "   ", "c" * 64)
+    rows = F.intake(root, cfg, packs, address="8 CFR 245.23", printer=lambda *a: None)
+    ok("r21: an unreadable new edition is REFUSED, not reported as a change in the law",
+       any(s == "UNREADABLE" for s, _n, _x in rows), str(rows[:1]))
+
+    # 🔴 The trust label is re-derived, never read out of the writable file beside the download.
+    io.open(os.path.join(inbox, "evil.txt"), "w", encoding="utf-8").write(
+        "Text pretending to be law, long enough to be indexed without tripping any floor at all.")
+    io.open(os.path.join(inbox, "evil.txt.meta.json"), "w", encoding="utf-8").write(json.dumps(
+        {"url": "https://pastebin.com/raw/x", "sha256": "d" * 64, "trust": "primary",
+         "trust_label": "OFFICIAL", "model_in_path": False}))
+    F.intake(root, cfg, packs, address="8 CFR 245.1", printer=lambda *a: None)
+    idx = io.open(cfg.abs(cfg["library_index"]), encoding="utf-8").read()
+    ok("r21: a hand-written OFFICIAL claim does not survive intake",
+       not any("evil" in l and "OFFICIAL" in l for l in idx.splitlines()),
+       [l.strip()[:60] for l in idx.splitlines() if "evil" in l][:1])
+
+    # 🔴 An ellipsis is citation style, not an alteration.
+    io.open(os.path.join(root, "QUOTE-BANK.md"), "w", encoding="utf-8").write(
+        "# Quote bank\n\n### 1\n\n> A noncitizen who has been granted T-1 nonimmigrant status "
+        "... lawful permanent resident.\n\n### 2\n\n> An alien who has been granted T-1 "
+        "nonimmigrant status may apply for adjustment.\n")
+    impact = "\n".join(F._bank_impact(cfg, NEW, packs))
+    ok("r21: an ellipsis quotation whose fragments survive is not reported lost",
+       "**1 no longer appear" in impact, impact.splitlines()[0][:70])
+    ok("r21: CONTROL the quotation whose words really changed IS reported",
+       "An alien who has been granted" in impact)
+
+    # 🔴 The one handler whose purpose is to record a death recorded it nowhere.
+    import inspect as _i
+    from hooks import bank_queue as _bq
+    tail = _i.getsource(_bq)
+    tail = tail[tail.rindex('if __name__'):]
+    code = [l for l in tail.splitlines() if not l.strip().startswith("#")]
+    ok("r21: bank_queue's death handler no longer logs to None",
+       not any("log(None," in l for l in code))
+    ok("r21: it writes to the matter and falls back to stderr",
+       any("log(find_config()" in l for l in code) and any("stderr.write" in l for l in code))
+
+
 def suite_no_real_identifiers(root):
     """No identifier-shaped literal exists in this tree except the documented fictional ones.
 
@@ -1828,6 +1953,7 @@ def main():
         suite_fetch(tmp)
         suite_placeholder()
         suite_library_index(tmp)
+        suite_review_r21(tmp)
         suite_no_real_identifiers(root)
         suite_rename(root)
         suite_docs(root)

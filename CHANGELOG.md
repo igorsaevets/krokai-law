@@ -10,6 +10,76 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.7.2] — 2026-08-05
+
+**The review round on 0.7.1, and it found that the release's marquee feature defeated itself.**
+Six findings, every one reproduced by execution before it was believed.
+
+### 🔴🔴🔴 A quotation of superseded law came back `VERIFIED`
+
+`intake` keeps both editions after a revision — deliberately, because a quotation taken from the
+older one *was* a correct quotation of the law in force at the time. But both stayed in the sources
+directory and **both were indexed**, so the superseded text answered as current law with a green
+tick.
+
+The module's own docstring asserted the opposite: *"a quotation taken from last year's edition will
+not be found in this year's — which this tool reports as `NOT_FOUND`"*. Measured: it **is** found, in
+the wrong edition, silently. **The revision machinery created the condition it exists to detect and
+then suppressed its own alarm.** For a filing, "verified against a real file on disk" and "verified
+against the text in force" had become indistinguishable.
+
+Fixed with a verdict rather than by hiding the file: **`SUPERSEDED_EDITION`**, in `DANGEROUS`,
+reachable only when the law register knows a newer edition of the same provision exists. It is
+emphatically not an accusation of fabrication and its meaning says so — what is undecided is which
+edition the filing should cite. `check()` applies it, not the report, because a check that runs
+outside the path it protects is decorative: the hooks and the reviewer-answer audit call `check()`
+directly and would otherwise have kept grading superseded law clean.
+
+### 🔴🔴 The placeholder test could not fire above 200 characters
+
+`looks_like_placeholder` documents tier 1 as firing "wherever they appear". The call site put it
+inside the `< MIN_TEXT_LAYER` branch, so it could only ever fire in a file under 200 characters —
+while a real bot wall is tens of kilobytes. The comment and the code contradicted each other and the
+dangerous direction was the live one: a 900-character interstitial was indexed as primary law and
+*"Checking your browser before accessing the site"* came back `VERIFIED`.
+
+Found by a reviewer reading the **call site** rather than the function, which is exactly where the
+two disagreed.
+
+### 🔴🔴 `intake` believed a hand-written `.meta.json`
+
+The three trust levels, the no-flag lookalike refusal and the "silence is not a pass" doctrine were
+all front-door controls on a house with an open side door: `intake` walks a plain writable directory
+and read `trust` straight out of the file beside the download. A paste-site URL with a hand-written
+meta took an **OFFICIAL** row in the human-facing library index. The label is re-derived from the
+recorded URL now, the worse of the two answers wins, and an entry with no URL can claim nothing.
+
+### 🔴 An extraction failure was reported as a change in the law
+
+A new edition that could not be read produced `revision_diff(old, "")`: every sentence "gone", 0 %
+similar, a report announcing the provision had been deleted in its entirety, and every banked
+quotation marked lost. Refused now, with the true diagnosis.
+
+### 🔴 Every ellipsis quotation was a permanent false alarm
+
+`_bank_impact` used a substring test, and a quotation containing an ellipsis can never be a
+substring of anything — so on **every** revision, every banked quotation citing with an ellipsis was
+reported as no longer appearing, under a red heading saying it would come back as the fabrication
+signal. The better the bank, the louder the false alarm, in the one document whose entire job is to
+be believed. Fragments are now matched in order, without overlap.
+
+### 🔴 The one handler whose purpose is to record a death recorded it nowhere
+
+`bank_queue`'s top-level exception handler called `log(None, …)`, which returns immediately and
+persists nothing unless `--verbose` is passed — which the harness never does. It finds a config now,
+and falls back to stderr.
+
+Self-test 383 → **401**.
+
+> Adjudication: of the reviewer's findings, these six were confirmed by execution and applied. Its
+> canary answer was correct. Three further claims turned out to be my own probes testing the wrong
+> level rather than product defects, and are recorded as such rather than "fixed".
+
 ## [0.7.1] — 2026-08-05
 
 **A refusal must not depend on an optional dependency being installed.**

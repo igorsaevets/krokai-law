@@ -67,8 +67,13 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
     if not quiet:
         printer("citation packs: %s" % ", ".join(packs.ids))
 
+    # The law register tells the corpus which files a newer edition has replaced. Without it,
+    # both editions are indexed and a quotation of superseded law comes back VERIFIED - measured
+    # 2026-08-05, and it silently voided the NOT_FOUND doctrine for every revised provision.
+    from .fetch import superseded_paths
     corpus = Corpus(cfg.source_dirs, skip_dirs=set(cfg["skip_dirs"]),
-                    cache_dir=cfg.cache, quiet=quiet, sentinel=SENTINELS)
+                    cache_dir=cfg.cache, quiet=quiet, sentinel=SENTINELS,
+                    superseded=superseded_paths(cfg.root))
     if not corpus.paths:
         printer("\n🔴 The corpus is EMPTY. Every quotation will come back NOT FOUND, which looks "
                 "like catastrophe and is really a path problem.")
