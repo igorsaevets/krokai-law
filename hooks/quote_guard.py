@@ -46,6 +46,17 @@ WHAT IT DELIBERATELY DOES NOT DO
 
 ALWAYS SAFE: any internal error exits 0 and says nothing. A hook that takes down a turn is worse
 than a missing hook.
+
+🔴 AND THEREFORE IT KEEPS A LOG - added 2026-08-05, and this is the other half of "always safe".
+Every branch above ends in exit 0, so a healthy quiet hook and a completely dead one produce the
+same observation: nothing. That is not hypothetical. This hook shipped unable to read its own input
+whenever the payload contained a non-ASCII character (see `_bootstrap`), and nothing in the running
+system could have told anyone, because silence was already the normal output.
+
+The sister project found the same thing in its own guard and noticed the asymmetry: its queue hook
+had a log and was visibly alive, its guard had none and had been dead for an unknown time. So this
+hook now writes one line per invocation naming the decision it reached. The log is the difference
+between "quiet" and "dead".
 """
 from __future__ import annotations
 
@@ -54,14 +65,55 @@ import io
 import json
 import os
 import sys
-import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _bootstrap import bootstrap, read_event, find_config      # noqa: E402
 
 bootstrap()
 
-SEEN = os.path.join(tempfile.gettempdir(), "krokai-quote-guard-seen.json")
+# 🔴 The memo lives inside the MATTER, not in the machine's temp directory, and it records when.
+#
+# The version in %TEMP% was keyed on the hash of the quotation and nothing else, so it was global
+# across every file and every matter on the machine and could never expire. Two consequences, both
+# measured on 2026-08-05: raising a quotation while drafting matter A silenced the same quotation
+# for ever in matter B; and the memo silently poisoned the experiment that was measuring the hook,
+# because the first arm recorded the hash and every later arm read as dead.
+#
+# A memo is a record of what has been SAID. What has to be decided is whether the state is still
+# true, and state changes: a quotation gets banked, a bank gets rebuilt, a draft gets rewritten.
+# Scoped to the matter, keyed by file as well as quotation, and expiring, it can only ever suppress
+# a repeat of the same alarm about the same document within one working session.
+MEMO_TTL = 12 * 3600
+_MEMO_NAME = "quote_guard_seen.json"
+
+
+def _log(cfg, line):
+    """One line per invocation. Silence is a decision and must be visible as one."""
+    if cfg is None:
+        return
+    row = "%s  %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), line)
+    p = os.path.join(cfg.root, ".krokai", "quote_guard.log")
+    try:
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        old = io.open(p, encoding="utf-8").read().splitlines() if os.path.exists(p) else []
+        io.open(p, "w", encoding="utf-8", newline="\n").write(
+            "\n".join((old + [row])[-200:]) + "\n")
+    except OSError:
+        pass
+
+
+def _memo_path(cfg):
+    return os.path.join(cfg.root, ".krokai", _MEMO_NAME)
+
+
+def _memo_load(cfg):
+    try:
+        d = json.load(io.open(_memo_path(cfg), encoding="utf-8"))
+    except Exception:
+        return {}
+    now = time.time()
+    return {k: v for k, v in d.items() if isinstance(v, (int, float)) and now - v < MEMO_TTL}
 
 
 def main():
@@ -82,39 +134,50 @@ def main():
     rel = os.path.relpath(os.path.abspath(path), cfg.root).replace("\\", "/").lower()
     if any(rel.startswith(x.lower().rstrip("/") + "/") or rel == x.lower()
            for x in cfg.get("guard_ignore", [])):
+        _log(cfg, "ignored by guard_ignore: %s" % rel)
         return 0
     watch = [w.lower().rstrip("/") for w in cfg.get("guard_watch", [])]
     bank_rel = (cfg["bank"] or "").replace("\\", "/").lower()
     if not any(rel.startswith(w + "/") or rel == w for w in watch) and rel != bank_rel:
+        _log(cfg, "not a watched path: %s" % rel)
         return 0
 
     added = str(inp.get("new_string") or inp.get("content") or "")
     if not added and inp.get("edits"):
         added = "\n".join(str(e.get("new_string") or "") for e in inp["edits"])
     if not added:
+        _log(cfg, "no added text in the event: %s" % rel)
         return 0
 
     found = candidates(added, min_len=60)
     if not found:
+        # 🔴 The line that would have exposed the dead-stdin defect on day one. "Watched file, text
+        # present, no quotation in it" is the honest report of a quiet turn; before the log existed
+        # it was indistinguishable from "the payload arrived as mojibake and nothing matched".
+        _log(cfg, "no quotation candidates in %d chars added to %s" % (len(added), rel))
         return 0
 
     bank = read_bank(cfg.abs(cfg["bank"]))
     fresh = [q for q in found if not in_bank(q, bank)]
     if not fresh:
+        _log(cfg, "all %d candidate(s) already banked: %s" % (len(found), rel))
         return 0
 
-    try:
-        seen = set(json.load(io.open(SEEN, encoding="utf-8")))
-    except Exception:
-        seen = set()
-    keys = [hashlib.md5(q.encode("utf-8")).hexdigest() for q in fresh]
+    seen = _memo_load(cfg)
+    keys = [hashlib.md5(("%s\x00%s" % (rel, q)).encode("utf-8")).hexdigest() for q in fresh]
     new = [(k, q) for k, q in zip(keys, fresh) if k not in seen]
     if not new:
+        _log(cfg, "%d fresh quotation(s) already raised for %s within %dh"
+             % (len(fresh), rel, MEMO_TTL // 3600))
         return 0
+    now = time.time()
+    seen.update({k: now for k, _ in new})
     try:
-        json.dump(sorted(seen | {k for k, _ in new}), io.open(SEEN, "w", encoding="utf-8"))
+        os.makedirs(os.path.dirname(_memo_path(cfg)), exist_ok=True)
+        json.dump(seen, io.open(_memo_path(cfg), "w", encoding="utf-8"))
     except Exception:
         pass
+    _log(cfg, "RAISED %d unbanked quotation(s) in %s" % (len(new), rel))
 
     msg = [
         "🔴 QUOTE GUARD - a long quotation was added to a document that gets filed, and it is NOT",

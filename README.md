@@ -61,16 +61,35 @@ said*. If your document cites one provision and the sentence lives in another, y
 exactly right and stops one clause too early. `krokai` reads what follows the quotation in the
 source and flags it when the next words are `but`, `unless`, `except`, `provided that`.
 
-**4. Keeps the sources.** A quote bank of everything you have personally opened and confirmed, and
-an index of your downloaded law. Because "I could not find it" is only meaningful if you know
-whether you ever downloaded it.
+**4. Keeps the sources — and fetches them.** A quote bank of everything you have personally opened
+and confirmed, and an index of your downloaded law. Because "I could not find it" is only meaningful
+if you know whether you ever downloaded it.
 
-**5. Asks other models, and distrusts them too.** One model can be confidently, fluently wrong.
+`krokai fetch <url>` brings the text down itself, and the one rule it enforces is the reason it
+exists: **no language model stands between the server and the file.** Ask an assistant to "fetch this
+regulation" and it reaches for a web tool that converts the page and answers a prompt against it
+using a small fast model — so what lands on your disk is generated text *about* the page. Check your
+quotations against that and the report says `VERIFIED` while the comparison is against a paraphrase.
+`krokai` writes the bytes the server sent, unchanged, and reads them later with the same code it
+reads everything else with.
+
+Downloads wait in an inbox that is not searched. A host wearing an official name it is not entitled
+to is refused outright; a host the tool knows nothing about says so and needs a flag, because a
+detector staying quiet is not a recommendation.
+
+**5. Notices when the law changes under you.** Fetch the same provision again and if the bytes differ
+`krokai` keeps both editions, writes down what changed, and **re-checks every quotation in your bank
+against the new text**. Measured on 8 CFR 245 between its 2024 and 2026 editions: 89 % unchanged, 57
+sentences gone — and *alien* replaced by *noncitizen* throughout. Every quotation of that part taken
+from the older edition would have started coming back "not found in your sources", which is exactly
+what a fabricated quotation looks like.
+
+**6. Asks other models, and distrusts them too.** One model can be confidently, fluently wrong.
 `krokai review` sends the same question to several — using the AI subscriptions you already pay
 for, no API key needed — and then runs **their** quotations through the same checker as your own.
 That last step is the point: a reviewer's answer is input, not evidence.
 
-**6. Stops your client's data leaving.** Before anything is sent anywhere, an outbound gate scans it
+**7. Stops your client's data leaving.** Before anything is sent anywhere, an outbound gate scans it
 for credentials and personal identifiers, reports the kind and the line number, and **never prints
 the value**. Secrets have no override.
 
@@ -86,7 +105,7 @@ in `surnames` in `casefile.json`: no pattern can tell a surname from a given nam
 guesses will cut the wrong word in a document full of judges' and agencies' names. Leave it empty
 and the gate says so out loud — it will not report `clean` about a check it never ran.
 
-**7. Makes it automatic.** Optional hooks fire when your AI writes a quotation into a document —
+**8. Makes it automatic.** Optional hooks fire when your AI writes a quotation into a document —
 not when you remember to check. This is the part that matters most, and the reason is below.
 
 ---

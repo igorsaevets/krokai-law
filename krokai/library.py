@@ -103,17 +103,44 @@ def index_entries(path):
 
 
 def add_entry(path, citation, what, filename, edition="", notes="", when=None):
-    header = "" if os.path.exists(path) else INDEX_HEADER
+    """Add one row to the index - INSIDE the table, not after whatever the file ends with.
+
+    🔴 Appending is what the obvious version does, and it is wrong as soon as anyone writes a
+    sentence below the table. Measured in the sister project: a 777-line index ended in prose, its
+    last table row was line 771, and the script appended row 778 - then printed "row added", which
+    was true and useless. Markdown stops rendering a table at the first non-row line, so the entry
+    was invisible in every viewer, and an invisible index entry is the same as no index entry: the
+    source gets downloaded again and its absence turns an honest quotation into a NOT_FOUND.
+
+    So: find the last line that is a table row and insert after it. If the file exists and has no
+    table at all, say so and refuse - a row written into a file with no table is a row nobody will
+    ever see, and a silent success is worse than a loud failure.
+    """
     row = ENTRY.format(citation=citation, what=what, file=filename,
                        when=when or time.strftime("%Y-%m-%d"),
                        edition=edition or "—", notes=notes or "")
     d = os.path.dirname(path)
     if d:
         os.makedirs(d, exist_ok=True)
-    with io.open(path, "a", encoding="utf-8", newline="\n") as fh:
-        if header:
-            fh.write(header)
-        fh.write(row + "\n")
+
+    if not os.path.exists(path):
+        io.open(path, "w", encoding="utf-8", newline="\n").write(INDEX_HEADER + row + "\n")
+        return row
+
+    lines = io.open(path, encoding="utf-8", errors="replace").read().splitlines()
+    last = -1
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith("|") and line.rstrip().endswith("|"):
+            last = i
+    if last < 0:
+        raise ValueError(
+            "%s exists but contains no table, so a row appended to it would never render. "
+            "Add the header from library.INDEX_HEADER, or point library_index somewhere else."
+            % path)
+    lines.insert(last + 1, row)
+    tmp = path + ".tmp"
+    io.open(tmp, "w", encoding="utf-8", newline="\n").write("\n".join(lines) + "\n")
+    os.replace(tmp, path)             # atomic: a half-written index is a lost index
     return row
 
 

@@ -29,6 +29,7 @@ import re
 __all__ = [
     "normalise", "alnum", "dehyph", "strip_markdown", "strip_scrape_artifacts",
     "prepare_quote", "ellipsis_parts", "latin_share", "is_mostly_cyrillic",
+    "strip_invisibles",
 ]
 
 # Typography a model re-types differently from the source while meaning the identical thing.
@@ -45,7 +46,33 @@ _TYPOGRAPHY = (
     (" ", " "), (" ", " "),        # nbsp, thin space
     (" ", " "), (" ", " "),        # narrow nbsp, figure space
     ("﻿", ""),                           # BOM in the middle of a scraped file
+    ("​", ""), ("‌", ""), ("‍", ""),   # zero-width space, ZWNJ, ZWJ
 )
+
+# 🔴 THE SOFT HYPHEN, U+00AD, IS INVISIBLE - AND THAT IS WHAT MAKES IT EXPENSIVE.
+#
+# A discretionary hyphen renders as a hyphen only where the renderer chooses to break the
+# line, and as nothing everywhere else. It is never part of the text. What makes it dangerous
+# rather than untidy is that you cannot see it: the source reads `application`, the quotation
+# reads `application`, and they do not match.
+#
+# The sister project measured 709 of them in one library, every one at a line end,
+# concentrated in three Supreme Court opinions - and its indexer had been deleting the
+# character as invisible rubbish BEFORE joining the line, so there was nothing left to join
+# and the fragments `immigra`, `applica` and `tion` entered its word list as words.
+#
+# Measured here 2026-08-05, before this existed: a correct quotation of a soft-hyphenated
+# provision came back PUNCTUATION rather than VERIFIED, and a plain text search for
+# `application` in the sidecar missed it entirely. A demoted verdict is quiet, which is
+# exactly what makes it costly - it is the bin where "must be an extraction artefact" hides
+# real errors.
+#
+# 🔴 ORDER IS THE WHOLE FIX. At a line end the soft hyphen and the line break have to go
+# together; strip the character first and the whitespace collapse below turns
+# `applica<SHY>\ntion` into `applica tion` - a space welded into the middle of a word, which
+# is a worse corruption than the one being repaired.
+_SOFT_BREAK_RE = re.compile(u"\u00ad[ \t]*\r?\n[ \t]*")
+_SOFT_RE = re.compile(u"\u00ad")
 
 # Provenance tags that a review brief REQUIRES a channel to emit, plus the two editorial marks a
 # careful drafter puts next to a government typo. They land inside the quoted span and then make a
@@ -94,7 +121,14 @@ _PAGE_MARK_RE = re.compile(r"\[\[Page\s+[\w.-]+\]\]")
 # What the boundary must still exclude is an adjacent asterisk (`**bold** **bold**`, where the
 # `* *` between the two spans is formatting) and a word character (`x*y`). Those are the two the
 # control tests assert, in both directions.
-_OMIT_RE = re.compile(r"(?<![*\w])\*(?:[ \t]+\*){1,8}(?![*\w])")
+# 🔴 The SEPARATOR class is as load-bearing as the boundary, and it was too narrow.
+# A reviewer found `*\xa0*\xa0*` - the marker copied out of a scraped page, whose spaces are
+# non-breaking - and `*\n*\n*`, the same marker across a line wrap. Both were eaten, and this
+# module already reasons elsewhere that NBSP is what a scrape actually delivers. Newline is
+# admitted too: `strip_markdown` runs before whitespace is folded, so the marker legitimately
+# arrives wrapped. A bullet list (`* item\n* item`) is unaffected - the character after the
+# asterisk is a space followed by a word, not another asterisk.
+_OMIT_RE = re.compile(u"(?<![*\\w])\\*(?:[ \\t\u00a0\u2007\u202f\\r\\n]+\\*){1,8}(?![*\\w])")
 
 
 def normalise(s: str) -> str:
@@ -118,16 +152,50 @@ def normalise(s: str) -> str:
 
     3. **Typography.** Smart quotes, en/em dashes, non-breaking spaces. These are rendering, not
        substance.
+
+    4. **The soft hyphen and the zero-width characters.** Invisible by definition, so a
+       byte comparison fails while both sides look identical on screen. See the note above
+       ``_SOFT_BREAK_RE`` for why the line-end case has to be handled before the character
+       is removed, and not after.
     """
     if not s:
         return ""
     for a, b in _TYPOGRAPHY:
         s = s.replace(a, b)
     s = _PAGE_MARK_RE.sub(" ", s)
+    # Trap 4 - the soft hyphen, both together and then alone. Before the whitespace collapse,
+    # and before the ASCII-hyphen rule, which cannot see U+00AD at all.
+    s = strip_invisibles(s)
     # Trap 2 - ONLY at a physical line end.
     s = re.sub(r"(\w)-[ \t]*\r?\n[ \t]*", r"\1-", s)
     # Trap 1 - line wrapping and double spaces.
     return " ".join(s.split())
+
+
+def strip_invisibles(s: str) -> str:
+    """Remove the characters that render as nothing, and only those.
+
+    Split out of ``normalise`` so the PDF sidecar can use it. The sidecar exists for grep, an
+    editor's search and an AI reading the folder - and it was written as raw extractor output,
+    so the one artefact in this package whose entire purpose is being findable was the one
+    still carrying characters that defeat finding. Measured 2026-08-05: a plain search for
+    `application` misses in a soft-hyphenated sidecar.
+
+    It may NOT simply call ``normalise``: that collapses every run of whitespace, and a sidecar
+    with no line structure is unreadable to the human who opens it to check. This transform is
+    safe on a file kept for reading, because deleting a character that renders as nothing
+    cannot change what the page says.
+
+    Line-end first, then the bare character - see the note above ``_SOFT_BREAK_RE``. Reversed,
+    the line break survives on its own and `applica<SHY>\\ntion` becomes `applica tion`.
+    """
+    if not s:
+        return ""
+    s = _SOFT_BREAK_RE.sub("", s)
+    s = _SOFT_RE.sub("", s)
+    for z in ("\u200b", "\u200c", "\u200d", "\ufeff"):
+        s = s.replace(z, "")
+    return s
 
 
 def strip_markdown(s: str) -> str:

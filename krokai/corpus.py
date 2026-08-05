@@ -54,6 +54,62 @@ def _extracted_format(path):
     return path.lower().endswith(EXTRACTED_EXT)
 
 
+# 🔴 THE SIGNAL WAS NEVER LENGTH. IT WAS ALWAYS "DID THE DOWNLOAD FAIL".
+#
+# 0.6.0 stopped excluding short text sources, because a real savings clause is 71 characters and
+# throwing it out made a correct quotation of it come back NOT_FOUND - this tool's fabrication
+# signal. An outside reviewer immediately named the other side of that trade: a scraped
+# `404 Not Found` page is also short, and indexing it means a phrase from the placeholder now
+# VERIFIES. Reproduced here on 2026-08-05 - `check()` returned VERIFIED citing the placeholder.
+#
+# Both halves are true, so the answer is neither of the two obvious ones. Length was only ever a
+# proxy for "this file is not the chapter you think you downloaded", and the thing itself is
+# readable: a failed download SAYS what it is. So the test is on the CONTENT - the same principle
+# that decides derived files here, and for the same reason: a rule on a file's size or its name is
+# a rule about the wrong thing.
+#
+# Deliberately narrow. Each entry is a server or bot-wall response, not a phrase of English that a
+# statute could contain, and the test applies ONLY to sources already under the floor - so a long
+# document discussing "access denied" is untouched, and the two negative controls assert it.
+# TIER 1 - strings that are a server or a bot wall talking, and that no provision contains. These
+# fire wherever they appear.
+_PLACEHOLDER_RE = re.compile(
+    r"(?i)(?:\b40[0-9]\s+(?:not\s+found|forbidden|bad\s+request|unauthorized)\b"
+    r"|\b50[0-9]\s+(?:internal\s+server\s+error|service\s+unavailable|bad\s+gateway)\b"
+    r"|\bthe\s+requested\s+(?:url|page|resource)\b[^.]{0,80}?\b(?:was\s+)?not\s+(?:be\s+)?found\b"
+    r"|\byou\s+(?:do\s+not|don't)\s+have\s+permission\s+to\s+access\b"
+    r"|\benable\s+javascript\b|\bjavascript\s+is\s+(?:required|disabled)\b"
+    r"|\bjust\s+a\s+moment\b|\bchecking\s+your\s+browser\b"
+    r"|\bverify\s+you\s+are\s+(?:a\s+)?human\b|\bare\s+you\s+a\s+robot\b"
+    r"|\bunusual\s+traffic\b|\brate\s*limit\s+exceeded\b"
+    r"|\bloading\s+document\b|\bplease\s+wait\s+while\b|\bthis\s+page\s+has\s+moved\b)")
+
+# 🔴 TIER 2 - ordinary English that a short provision can legitimately contain. `access denied` is
+# the phrase a due-process argument is built out of, and this project's own negative control caught
+# tier 1 firing on exactly that sentence: "the applicant was denied access to the record and now
+# argues that access denied in these circumstances violates due process". Excluding that file drops
+# a real provision from the corpus, so a correct quotation of it comes back NOT_FOUND - which is
+# this tool's fabrication signal. A false positive here is more expensive than a miss, so these
+# fire only when the phrase IS essentially the whole file, which is what an error page looks like
+# and what a sentence of law never does.
+_AMBIGUOUS_RE = re.compile(r"(?i)\b(?:access\s+denied|permission\s+denied|page\s+not\s+found"
+                           r"|not\s+found|forbidden|unauthorized)\b")
+_AMBIGUOUS_MAX = 60
+
+
+def looks_like_placeholder(text):
+    """True when a short file is a failed download rather than a short provision.
+
+    Exported because the fetch layer asks the same question about bytes that have just arrived: a
+    server can return HTTP 200 with a body that says 404, and saving that into the library is how a
+    topic gets counted as covered while the chapter is missing.
+    """
+    t = (text or "").strip()
+    if _PLACEHOLDER_RE.search(t):
+        return True
+    return len(t) <= _AMBIGUOUS_MAX and bool(_AMBIGUOUS_RE.search(t))
+
+
 def walk(roots, exts, skip_dirs=()):
     seen = set()
     for root in roots:
@@ -92,6 +148,7 @@ class Corpus(object):
         self.paths, self.starts, self.astarts, self.hstarts = [], [], [], []
         self.excluded_derived, self.excluded_stub, self.unreadable = [], [], []
         self.excluded_empty, self.short_sources = [], []
+        self.excluded_placeholder = []
         drx = re.compile(derived_re, re.I) if derived_re else None
         # One string or several. Several, because a renamed tool must still recognise the stamp it
         # wrote under its old name - see the note beside SENTINELS in run.py.
@@ -148,6 +205,13 @@ class Corpus(object):
                 self.excluded_empty.append(p)
                 continue
             elif len(t.strip()) < MIN_TEXT_LAYER:
+                # Among the short ones only, split "a failed download" from "a short provision" by
+                # reading what it says. See `looks_like_placeholder`: indexing a `404 Not Found`
+                # body made a phrase from it verify as law, which is the exact false GREEN that
+                # 0.6.0's fix traded a false RED for.
+                if looks_like_placeholder(t):
+                    self.excluded_placeholder.append(p)
+                    continue
                 self.short_sources.append(p)         # warned below, and indexed all the same
             at, ht = alnum(t), dehyph(t)
             self.paths.append(p)
@@ -194,6 +258,18 @@ class Corpus(object):
                 print("     %s" % p)
             print("     These are empty, not unreadable - a failed download or a placeholder. "
                   "Re-fetch them; no OCR will help.")
+        if self.excluded_placeholder:
+            # Its own bucket and its own advice. This is neither "OCR it" nor "it is short": the
+            # download did not bring back the document, and the fix is to fetch it again - very
+            # often from a different URL, because a server that answers with a bot wall will keep
+            # answering with one.
+            print("  FAILED DOWNLOAD - the file says so itself (not the chapter) - %d:"
+                  % len(self.excluded_placeholder))
+            for p in self.excluded_placeholder:
+                print("     %s" % p)
+            print("     A server error page, a bot wall or a loading stub was saved instead of the "
+                  "text. NOT indexed: a phrase from it would otherwise verify as law. Re-fetch it, "
+                  "and open the file once to see what came back.")
         if self.short_sources:
             print("  SHORT text source (INDEXED, but check it) - %d:" % len(self.short_sources))
             for p in self.short_sources:

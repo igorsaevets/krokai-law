@@ -36,18 +36,45 @@ import os
 import time
 
 from .corpus import walk
-from .readers import read_pdf, MIN_TEXT_LAYER
+from .normalize import strip_invisibles
+from .readers import read_pdf, MIN_TEXT_LAYER, EXTRACTOR_VERSION
 
 __all__ = ["build", "SUFFIX"]
 
 SUFFIX = ".text.md"
+
+# 🔴🔴 THE SIDECAR MUST DECLARE ITSELF AS THIS TOOLKIT'S OUTPUT, OR IT BECOMES A PRIMARY SOURCE.
+#
+# Measured 2026-08-05: with the header below lacking the sentinel, `krokai sidecar` wrote a `.md`
+# next to every PDF *inside a sources directory*, `Corpus` walked `.md`, the derived-name pattern
+# matched nothing in `8CFR-245.text.md`, and the file was indexed as primary law. Two things
+# followed, and the second is the serious one:
+#
+#   * the corpus doubled and the report's "primary sources only - N files" became untrue;
+#   * the warning text of this very header verified as law. `check()` returned a CLEAN verdict for
+#     "Page breaks, signatures and exact layout exist only there", citing the sidecar as its source.
+#
+# The sister project measured the same shape at scale before this was written down: 66 of its 269
+# corpus files were its own sidecars, and a phrase that appears in no PDF anywhere verified against
+# one. The mechanism that prevents it already existed here - `run.SENTINEL`, honoured by
+# `Corpus(sentinel=...)` - and had simply never been applied to the one generator that writes into
+# the library. The cure was sitting next to the disease.
+#
+# 🔴 It is a stamp in the CONTENT, never a rule about the name or the extension. The sister project
+# proved that direction too: adding `.text.md` to a name-based exclusion pattern would have thrown
+# out two genuine downloaded decisions that happen to use the same extension.
+_SENTINEL = "KROKAI-TOOL-OUTPUT"
 
 HEADER = """---
 derived: true
 source: {src}
 extracted: {when}
 tool: krokai sidecar
+extractor: {extractor}
 ---
+
+<!-- %s : an extracted text layer written by `krokai sidecar`. NOT a primary source. Quotations
+     found in this file must never be counted as verified against the law. -->
 
 > ⚠️ **THIS IS AN EXTRACTED TEXT LAYER, NOT THE PRIMARY SOURCE.** It exists so that grep, your
 > editor and any AI reading this folder can see inside the PDF - measured: ripgrep does not find a
@@ -58,7 +85,29 @@ tool: krokai sidecar
 
 ---
 
-"""
+""" % _SENTINEL
+
+
+def _current(dst, src):
+    """Is an existing sidecar still current?
+
+    🔴 The extractor's version is part of the question, and leaving it out makes a repair
+    invisible. The test used to be `mtime(dst) >= mtime(src)` alone. A downloaded statute never
+    changes, so improving `read_pdf` - fixing a soft hyphen, dropping a signature blob - would
+    have left every sidecar on disk exactly as wrong as before, with the suite green and the
+    changelog claiming the fix. The sister project measured this compounding pair: a defect that
+    corrupts, plus a freshness key that cannot see the repair. Its header printed the engine
+    version too, and never compared it back.
+    """
+    if not os.path.exists(dst):
+        return False
+    if os.path.getmtime(dst) < os.path.getmtime(src):
+        return False
+    try:
+        head = io.open(dst, encoding="utf-8", errors="replace").read(400)
+    except OSError:
+        return False
+    return ("extractor: %s" % EXTRACTOR_VERSION) in head
 
 
 def build(source_dirs, force=False, dry_run=False, cache_dir=None, printer=print):
@@ -70,12 +119,16 @@ def build(source_dirs, force=False, dry_run=False, cache_dir=None, printer=print
     no_layer = []
     for src in walk(source_dirs, (".pdf",)):
         dst = src[:-4] + SUFFIX
-        if (not force and os.path.exists(dst)
-                and os.path.getmtime(dst) >= os.path.getmtime(src)):
+        if not force and _current(dst, src):
             skipped += 1
             continue
         try:
-            text = read_pdf(src, cache_dir)
+            # 🔴 The invisible characters come out, and nothing else does. This file is written to
+            # be SEARCHED; a soft hyphen renders as nothing and silently defeats every search for
+            # the word it sits inside. Full normalisation is deliberately not applied - it would
+            # collapse the line structure, and a sidecar nobody can read is a sidecar nobody checks
+            # the original against.
+            text = strip_invisibles(read_pdf(src, cache_dir))
         except Exception as exc:
             failed += 1
             printer("  FAILED  %s :: %s" % (os.path.basename(src)[:70], type(exc).__name__))
@@ -87,7 +140,8 @@ def build(source_dirs, force=False, dry_run=False, cache_dir=None, printer=print
             made += 1
             continue
         body = HEADER.format(src=os.path.basename(src), srcname=os.path.basename(src),
-                             when=time.strftime("%Y-%m-%d")) + text
+                             when=time.strftime("%Y-%m-%d"),
+                             extractor=EXTRACTOR_VERSION) + text
         io.open(dst, "w", encoding="utf-8", newline="\n").write(body)
         made += 1
         printer("  %8d chars  %s" % (len(text), os.path.basename(src)[:66]))

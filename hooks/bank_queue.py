@@ -148,8 +148,14 @@ def main():
     try:
         from krokai.corpus import Corpus
         from krokai.verify import check
+        from krokai.run import SENTINELS
+        # 🔴 The sentinel, exactly as `run.scan_matter` passes it. Without it this hook built a
+        # DIFFERENT corpus from the one `krokai check` builds: this toolkit's own reports and its
+        # own PDF sidecars counted as primary sources here and not there, so the same quotation
+        # could be graded twice and disagree. Two corpora over one library is the same defect as
+        # two normalisers over one comparison, which this package already paid for.
         corpus = Corpus(cfg.source_dirs, skip_dirs=set(cfg["skip_dirs"]),
-                        cache_dir=cfg.cache, quiet=True)
+                        cache_dir=cfg.cache, quiet=True, sentinel=SENTINELS)
         for q in fresh:
             try:
                 verdict, where, detail = check(q, corpus)

@@ -15,13 +15,31 @@ import re
 from .normalize import normalise, strip_scrape_artifacts
 
 __all__ = ["read_any", "read_pdf", "read_docx", "no_text_layer", "engines_available",
-           "_choose_extraction", "_form_values"]
+           "_choose_extraction", "_form_values", "EXTRACTOR_VERSION", "MIN_CHARS_PER_PAGE"]
 
 _PAGE_MARK = re.compile(r"\[\[Page\s+[\w.-]+\]\]")
 _MD_FOOTNOTE = re.compile(r"\[\\?\[[^\]]*\\?\]\]\([^)]*\)")
 _MD_LINK = re.compile(r"\[([^\]\n]*)\]\([^)\n]*\)")
 
 MIN_TEXT_LAYER = 200          # fewer characters than this means "no usable text layer"
+
+# 🔴 A DOCUMENT-WIDE FLOOR CANNOT SEE A LONG SCAN, and the markers added to make a hole visible are
+# what hide it. Measured in the sister project on a real filing: a 41-page index, every page a
+# scanned image, carried a ~124-character empty-page marker per page. One page of that is 124 < 200
+# and lands in the OCR queue; forty-one pages is 5 084 >= 200 and reads as a document with a text
+# layer. **The biggest scan in the matter was the one the manifest did not list.**
+#
+# Reproduced here on 2026-08-05: a 40-page PDF holding 7.8 characters a page - 310 in total - passed
+# `no_text_layer` as readable. So the per-page rate is tested as well as the total, and only from
+# three pages up, because a genuinely short one-page proclamation is not a scan.
+MIN_CHARS_PER_PAGE = 40
+PAGES_BEFORE_RATE_APPLIES = 3
+
+# 🔴 Bumped whenever extraction changes what it puts on disk. It is part of the sidecar freshness
+# key, because a downloaded statute never changes and `mtime` alone therefore cannot notice that
+# the reader got better - the fix would ship, the suite would pass, and every sidecar already on
+# disk would stay exactly as wrong as before.
+EXTRACTOR_VERSION = "2"
 
 
 def engines_available():
@@ -72,9 +90,33 @@ def _form_values(path):
     for name, f in fields.items():
         try:
             v = f.get("/V")
+            ftype = str(f.get("/FT") or "")
         except Exception:
             continue
         if v is None:
+            continue
+        # 🔴🔴 A SIGNATURE FIELD IS NOT AN ANSWER, AND ITS VALUE IS NOT A STRING.
+        #
+        # This reader was added in 0.6.0 to fix a real defect - a filled USCIS form reading as
+        # blank - and it opened a new one, which is the shape worth remembering: fixing a false
+        # negative by widening what gets indexed will widen it too far unless something says stop.
+        #
+        # A digitally signed PDF - every govinfo download is one - carries a `/Sig` field whose
+        # `/V` is a DICTIONARY holding the PKCS#7 certificate chain. `str()` of it is kilobytes of
+        # hex, and it went straight into the corpus. Measured here on a signed fixture: 4 267
+        # characters of certificate, of which the phrase "U.S. Government Printing Office,
+        # Washington" came back **VERIFIED as law**. The sister project measured the scale on a
+        # real library: 9 files of 73, 454 KB, 16 % of its search index, with `Washington`
+        # appearing 14 times and `Government` 22 times inside blobs whose documents contain
+        # neither word.
+        #
+        # Both tests are needed, and they fail independently. `/FT` names the field type where the
+        # writer set it; the scalar test catches a signature dictionary reached through a widget
+        # annotation that did not. A real answer is always a string or a number - never a
+        # container - so refusing containers cannot drop one.
+        if ftype == "/Sig":
+            continue
+        if not isinstance(v, (str, int, float)):
             continue
         v = str(v).strip()
         # 🔴 `/Off` with the slash, and nothing else. A reviewer found the earlier form dropping
@@ -295,7 +337,34 @@ def no_text_layer(path, cache_dir=None):
     # labels are short and the fields carry everything.
     if _form_values(path):
         return False
-    return len(read_pdf(path, cache_dir).strip()) < MIN_TEXT_LAYER
+    text = read_pdf(path, cache_dir).strip()
+    if len(text) < MIN_TEXT_LAYER:
+        return True
+    # 🔴 THE RATE, NOT ONLY THE TOTAL - see MIN_CHARS_PER_PAGE. A document-wide floor is passed by
+    # any scan long enough, because per-page furniture accumulates: page numbers, a running header,
+    # an OCR engine's empty-page marker. The longer the scan, the safer it looks.
+    pages = _page_count(path)
+    if pages >= PAGES_BEFORE_RATE_APPLIES and len(text) / float(pages) < MIN_CHARS_PER_PAGE:
+        return True
+    return False
+
+
+def _page_count(path):
+    """Page count from whichever engine answers. 0 when neither does, which disables the rate test
+    rather than inventing a denominator."""
+    try:
+        import pypdf
+        return len(pypdf.PdfReader(path).pages)
+    except Exception:
+        pass
+    try:
+        import fitz
+        d = fitz.open(path)
+        n = d.page_count
+        d.close()
+        return n
+    except Exception:
+        return 0
 
 
 def corpus_text(path, cache_dir=None):

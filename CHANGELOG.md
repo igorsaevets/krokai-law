@@ -10,6 +10,188 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.7.0] — 2026-08-05
+
+Two things happened this round and they belong in one release: the toolkit learned to fetch the law,
+and the main guard turned out never to have worked.
+
+> **This is also the 0.6.1 that was planned.** The fixes and the new command were measured in the
+> same sitting and share the same fixtures; splitting them into two tags would have published a
+> version nobody ran end to end. If you are on 0.6.0, the hook fix below is the reason to upgrade,
+> not the new command.
+
+### 🔴🔴🔴 `quote_guard` was dead for any payload containing a non-ASCII character
+
+The hook that catches an unverified quotation as it is written returned **exit 0 and said nothing**
+whenever the event carried a single non-ASCII byte. Measured one variable at a time, calling it the
+way the harness does — a subprocess with JSON bytes on stdin:
+
+| stdin | console code page | result |
+|---|---|---|
+| UTF-8 bytes (what the harness sends) | cp1251 | **exit 0, silent** |
+| the same bytes, `PYTHONIOENCODING=utf-8` | — | exit 2, fires |
+| ASCII path, ASCII matter, **curly quotes in the quotation** | cp1251 | **exit 0, silent** |
+
+The trigger is not an exotic file path. It is `U+201C` — the character a model emits and every
+scraped source contains. `sys.stdin` decoded UTF-8 in the console code page, which is a single-byte
+codec: it never raises, the JSON still parses, and every non-ASCII character silently becomes
+something else. The quotation extractor then found nothing.
+
+`_bootstrap` had forced UTF-8 on **stderr and stdout** since the first day of the project, with a
+docstring explaining why. It never touched stdin. That asymmetry is the lesson worth carrying:
+**the visible half of a symmetric defect gets fixed on day one, and the invisible half survives
+indefinitely.** Mojibake going out is something you see; mojibake coming in is something that does
+nothing.
+
+Fixed by reading `sys.stdin.buffer` and decoding explicitly. And because a silent hook and a healthy
+one produced the same observation — nothing — `quote_guard` now **writes one log line per
+invocation naming the decision it reached**, including the quiet ones.
+
+The "already raised this" memo moved out of the machine's temp directory into the matter, gained a
+file scope and a 12-hour expiry. It was keyed on the hash of the quotation alone, so raising
+something while drafting matter A silenced it for ever in matter B — and it silently poisoned the
+experiment that was measuring the hook, because the first arm recorded the hash and every later arm
+read as dead.
+
+### 🔴🔴 The tool's own output was being indexed as primary law
+
+`krokai sidecar` writes an extracted text layer next to each PDF, *inside a sources directory*.
+`Corpus` walks `.md`. Nothing in the sidecar declared what it was, so it was indexed as law — and
+the warning header of the sidecar itself came back as a **CLEAN verdict**: "Page breaks, signatures
+and exact layout exist only there" verified, citing the sidecar as its source.
+
+The mechanism that prevents this already existed (`run.SENTINEL`, honoured by `Corpus(sentinel=…)`)
+and had never been applied to the one generator that writes into the library. The cure was sitting
+next to the disease. The stamp is in the **content**, never a rule about the name or extension —
+a sister project measured that an extension rule would have thrown out two genuinely downloaded
+decisions.
+
+`bank_queue` built its corpus without the sentinel at all, so the hook and `krokai check` were
+grading against two different libraries.
+
+### 🔴🔴 A signature field became searchable law
+
+The AcroForm reader added in 0.6.0 fixed a real defect — a filled USCIS form reading as blank — and
+opened a new one, which is the shape worth remembering: **fixing a false negative by widening what
+gets indexed widens it too far unless something says stop.**
+
+Every govinfo PDF is digitally signed; a `/Sig` field's value is a **dictionary** holding the PKCS#7
+certificate chain, and `str()` of it went into the corpus. Measured on a signed fixture: 4 267
+characters of certificate, from which the phrase *"U.S. Government Printing Office, Washington"*
+came back **VERIFIED as law**.
+
+Two independent tests now: the field type, and a refusal to stringify anything that is not a scalar.
+`Off` in a text field is still kept; an unticked checkbox is still dropped.
+
+### 🔴 A 40-page scan read as a document with a text layer
+
+`no_text_layer` compared the whole document against a 200-character floor, so per-page furniture
+accumulated and **the longer the scan, the safer it looked**. A 40-page PDF holding 7.8 characters a
+page passed as readable. There is now a per-page rate as well as a total, applied from three pages
+up so that a genuine one-page proclamation is not condemned.
+
+### 🔴 The soft hyphen
+
+`U+00AD` renders as a hyphen only where a line breaks and as nothing elsewhere — so it is never part
+of the text, and it silently defeats every comparison and every search. A correct quotation of a
+soft-hyphenated provision came back `PUNCTUATION` instead of `VERIFIED`, and a plain search for the
+word missed entirely in the sidecar. Order is the whole fix: the character and the line break have
+to go together, or the whitespace collapse welds a space into the middle of a word.
+
+Zero-width space, ZWNJ and ZWJ go the same way. `strip_invisibles()` is shared with the sidecar
+writer, which needs the repair without the whitespace folding — a sidecar with no line structure is
+one nobody can read.
+
+### 🔴 A failed download could verify as law
+
+0.6.0 stopped excluding short text sources, because a real 71-character savings clause was being
+thrown out and a correct quotation of it came back `NOT_FOUND`. A reviewer named the other side of
+that trade the same week: a scraped `404 Not Found` body is also short, and indexing it made a
+phrase from the placeholder **verify**.
+
+Both are true, so the answer is neither. **Length was only ever a proxy** for "the download failed",
+and the thing itself is readable — a failed download says what it is. The test is on the content now,
+in two tiers: strings only a server says fire anywhere; ordinary English like *access denied* fires
+only when it is essentially the whole file. That second tier exists because this project's own
+negative control caught the first draft firing on *"the applicant was denied access to the record
+and now argues that access denied in these circumstances violates due process"* — and excluding that
+file would drop a real provision and make a correct quotation of it read as invented.
+
+### 🔴 Secrets: a credential wrapped at a space
+
+The whole-text pass folded lines with no separator, which recovers a break **inside** a token and
+loses one **at a space**. Take the standard HTTP authorisation header: put the scheme keyword at
+the end of one line and the credential at the start of the next, fold with no separator, and the
+space the pattern requires is gone - so the detector missed it and the gate printed `clean` over a
+live credential. Both joins are tried now.
+
+> The illustration above deliberately describes the shape instead of spelling it. Writing the
+> literal string here made this project's own publish gate refuse the release - correctly, because
+> that string IS the shape of a credential assignment. The rule this project already had for
+> personal data - *an incident is written with the word, never with the value* - turns out to
+> cover credentials too.
+
+The reviewer who named the class offered four worked examples and **every one of them was wrong** —
+`-----BEGIN RSA \nPRIVATE KEY-----` still matches, because `[A-Z ]{0,24}` absorbs `RSA` with no
+space needed. Right finding, wrong proof, separated by running it.
+
+The cost is stated rather than hidden: the empty join can fuse two unrelated lines into something
+key-shaped, and a false positive in a class with **no override** is a dead end for the user. So a
+folded-only finding says it was folded and names both lines.
+
+### Added — `krokai fetch` and `krokai intake`
+
+The toolkit can now put the law on your disk itself, which is what its own `NOT_FOUND` advice has
+been telling people to do since 0.1.0.
+
+🔴 **No language model may stand between the server and the file.** An assistant asked to fetch a
+regulation reaches for a web-fetch tool — and those tools *convert the page and answer a prompt
+against it using a small fast model*. What comes back is generated text about the page, not a copy
+of it. Save that into the library and every quotation is checked against a paraphrase while the
+report says `VERIFIED`. The permitted path is `requests` → bytes → disk, unchanged; extraction
+happens later, from the file, by the same readers everything else uses. `model_in_path: false` is
+recorded in the metadata rather than promised in a docstring, and a file that claims otherwise is
+refused with no flag to override it.
+
+* **Three trust levels, and silence is not one of them.** The lookalike test is a *detector*, not an
+  allow-list. A sister project printed a green tick whenever its typosquat detector stayed quiet and
+  wrote a paste-site URL into its law library under a "PRIMARY SOURCE" header. A host this tool knows
+  nothing about is `unknown`, says so in the file it writes, and needs `--allow-unknown-source`. A
+  lookalike is refused outright and **there is no flag for it**.
+* The destination of a **redirect** is classified as well as the URL you typed.
+* An **HTTP 200 is not a document**: a body that says 404, a bot wall or a loading stub is refused.
+* Downloads land in `.krokai/inbox/`, which is not a sources directory and is not searched. Nothing
+  becomes a primary source by arriving; a person accepts it with `intake`.
+* `intake` **refuses to file a document whose citation it cannot resolve.** Putting a file in a law
+  folder is what makes it law here, so guessing where it goes is issuing that status at random.
+
+🔴 **A revision is an event, not an update.** When the same address comes back with different bytes
+the old edition is kept, the difference is written down **counted in sentences** (a unified diff
+reports a chunk-boundary shift as a deletion, and a tool for spotting deletions must not overstate
+them), and **every quotation in the bank is re-checked against the new text**. Verified live against
+eCFR's dated snapshots of 8 CFR 245: 2024 against 2026 is 89.1 % unchanged, 57 sentences gone,
+64 new — and the systematic replacement of *alien* with *noncitizen* throughout, including the
+heading of § 245.23. Every banked quotation of that part would have turned red overnight, correctly
+quoted and unverifiable, with nothing to distinguish it from an invention.
+
+### Fixed — smaller, each measured
+
+* A row added to the library index landed **below** the table when the file ended in prose, and
+  markdown stops rendering a table at the first non-row line. It is inserted inside the table now, or
+  refused loudly if there is no table; the write is atomic.
+* The register is written through `os.replace`. `open(path, "w")` truncates before anything is
+  written, so an interruption left an empty file where the record of every download used to be.
+* The sidecar freshness key includes the extractor version. It was `mtime` alone — and a downloaded
+  statute never changes, so every improvement to `read_pdf` would have left every sidecar on disk
+  exactly as wrong as before, with the suite green and the changelog claiming the fix.
+* The omission marker `* * *` survives non-breaking spaces and a line wrap between the asterisks.
+* A query string no longer destroys a downloaded file's extension — the extension is the key that
+  selects the reader, so `title-8.xml?part=245` saved as `title-8.xml-part-245` meant tags were never
+  stripped and `&#xA7;` never unescaped. Caught by this module's own end-to-end run, which started
+  producing quotations made of markup.
+
+Self-test 344 → **383**.
+
 ## [0.6.0] — 2026-08-03
 
 The release that came from being reviewed by the project this one was extracted from. It found

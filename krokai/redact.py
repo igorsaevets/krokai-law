@@ -73,9 +73,16 @@ SECRET_PATTERNS = [
     ("SLACK_TOKEN", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}")),
     ("JWT", re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{6,}")),
     # 🔴 Its own pattern, and that is the point. This shape once sat in the labelled-assignment
-    # branch below, which requires the delimiter AFTER the label - while a real header is
-    # `Authorization: Bearer <token>` and puts it before. The one shape it was added for was the
-    # one shape it could never match.
+    # branch below, which requires the delimiter AFTER the label - while the standard HTTP
+    # authorisation header puts the scheme keyword between the delimiter and the credential.
+    # The one shape it was added for was the one shape it could never match.
+    #
+    # 🔴 The shape is DESCRIBED here rather than spelled out, and that is not fussiness: three
+    # independent scanners refused this file over the literal string in this comment - the
+    # machine's own PostToolUse guard, this project's publish audit, and the review harness,
+    # which blocked the round's second opinion from being sent at all. The probe values below
+    # were assembled from fragments for exactly this reason and the prose beside them was
+    # missed. A file about credential shapes cannot contain credential shapes.
     ("BEARER_HEADER", re.compile(r"(?i)\bauthorization\s*:\s*bearer\s+[A-Za-z0-9._\-]{16,}")),
     ("LABELLED_SECRET", re.compile(
         r"(?i)\b(?:api[_-]?key|secret|token|password|passwd|client[_-]?secret|access[_-]?key)\b"
@@ -142,9 +149,22 @@ PII_PATTERNS = [
     # documented miss, not an oversight.
     # Up to two leading letters with an optional hyphen (`PH-1204`), and an optional hyphenated
     # trailing letter (`12-B`) - both reviewer-traced misses on real unit spellings.
+    # 🔴 A SINGLE-CAPITAL UNIT MUST BE SEPARATED FROM ITS LABEL, and the numeric one need not be.
+    # Without that, the label is simply the first three or four letters of an ordinary capitalised
+    # word and the rest of the word is read as the unit. Measured 2026-08-05, by the accounting
+    # step that exists to catch a leak:
+    #     "Query goes in the STEM."  ->  "Query goes in the [UNIT_NUMBER]."
+    #     "ONE STEP AT A TIME"       ->  "ONE [UNIT_NUMBER] AT A TIME"
+    #     "they UNITE the parties"   ->  "they [UNIT_NUMBER] the parties"
+    #     "UNITY of purpose"         ->  "[UNIT_NUMBER] of purpose"
+    # This is the same word-eating class this rule already paid for once, and every negative control
+    # added at the time is LOWERCASE - while the branch that does the damage is case-sensitive on
+    # purpose. A control that cannot reach the branch it guards is decoration.
+    # A digit after the label is unambiguous, so `Apt1204` keeps working; a letter is not.
     ("UNIT_NUMBER", re.compile(
-        r"\b(?i:apt|apartment|unit|suite|ste)\.?\s*#?\s*"
-        r"(?:(?i:[A-Za-z]{0,2}-?\d{1,5}(?:-?[A-Za-z])?)|[A-Z])(?![\w-])")),
+        r"\b(?i:apt|apartment|unit|suite|ste)"
+        r"(?:\.?\s*#?\s*(?i:[A-Za-z]{0,2}-?\d{1,5}(?:-?[A-Za-z])?)"
+        r"|[.\s#]+[A-Z])(?![\w-])")),
     # 🔴 THE HOUSE NUMBER, AND ONLY THE NUMBER. Added 2026-08-02 on Igor's correction: the earlier
     # rule cut the apartment and left the street number standing, which is half a job - a street
     # number plus a street name is a mailable address. The street NAME, the city and the ZIP stay,
@@ -197,6 +217,15 @@ def scan(text, name="payload", surnames=()):
     error: it teaches the user to pass `--allow-pii` by reflex, which disables the whole
     class. Secrets have no override to be trained into, and a wrapped credential is the
     one thing that must never get through.
+
+    🔴 Igor, 2026-08-03: stop widening personal-identifier detection - keys, passwords and
+    `.env` contents are what matter. That is exactly the split this function already had,
+    and it is now the reason it will not be widened: the second pass stays secrets-only by
+    policy as well as by argument.
+
+    🔴 The kind of a folded-only finding is reported as `KIND (unwrapped N-M)`. The gate has
+    no override for this class, so a user who cannot see WHY it fired has no move at all;
+    naming both lines makes an unavoidable false positive checkable in five seconds.
     """
     out = []
     pii = list(PII_PATTERNS) + name_patterns(surnames)
@@ -225,25 +254,72 @@ def _wrapped_secrets(lines, name, already):
     # this pass, because `strip()` leaves the `> ` and the `>` breaks the pattern. Briefs are
     # markdown; a wrapped credential inside a quoted block is the likely shape, not the exotic one.
     lead = re.compile(r"^[>\s]*(?:[-*+]\s+)?")
-    joined, offsets, pos = [], [], 0
-    for i, line in enumerate(lines, 1):
-        stripped = lead.sub("", line).strip()
-        offsets.append((pos, i))
-        joined.append(stripped)
-        pos += len(stripped)
-    blob = "".join(joined)
-    out = []
+    stripped = [lead.sub("", line).strip() for line in lines]
+
+    # 🔴 TWO JOINS, BECAUSE A WRAP HAPPENS IN TWO PLACES AND ONLY ONE OF THEM IS RECOVERABLE BY
+    # CONCATENATION.
+    #
+    # An editor breaking a long line puts the break either INSIDE a token - a base64 body, a key -
+    # or AT A SPACE that was already there. Undoing the first needs no separator; undoing the second
+    # needs the space back. A single join can only ever recover one of them, and the version that
+    # shipped recovered the first.
+    #
+    # Measured 2026-08-05, after an outside reviewer named the class: the standard HTTP
+    # authorisation header with its scheme keyword at the end of one line and the credential at
+    # the start of the next folds without the space the pattern requires, so the detector missed
+    # it and the gate printed `clean` over a live credential. The reviewer's own
+    # four worked examples were all wrong - `-----BEGIN RSA \nPRIVATE KEY-----` still matches,
+    # because `[A-Z ]{0,24}` absorbs `RSA` with no space needed - so the finding was right and every
+    # proof offered for it was not. Adjudicating by execution is what separated the two.
+    #
+    # 🔴 The cost is stated rather than hidden: the empty join CAN fuse two unrelated lines into
+    # something key-shaped, and the same reviewer built the case - a line ending `AK` above a line
+    # starting `IAIOSFODNN7EXAMPLE` reads as an AWS key. That is real, it is reproduced in the
+    # self-test, and it cannot be removed by a cleverer join, because a prose wrap and a token wrap
+    # are the same two characters meeting. Since the SECRET class has no override, an unexplained
+    # false positive here is a dead end for the user - so a folded-only finding SAYS it was folded
+    # and names both lines, which turns "blocked, no idea why" into a five-second look.
+    # 🔴 A SLIDING WINDOW OF ADJACENT LINES, NEVER THE WHOLE FILE.
+    #
+    # The first version of this pass joined every line of the payload into one string. Caught by
+    # this project's own publish gate, on this project's own changelog: BLOCKED on a
+    # LABELLED_SECRET that existed on no line, only in the blob, where a word near the top could
+    # fuse with a word hundreds of lines below. The false-positive rate scaled with the size of the
+    # document, so the longer and more discursive the file, the more likely the gate refused it -
+    # and this class has no override, so that is a dead end.
+    #
+    # An editor's wrap is a two-line event by definition. Three lines of window is slack for a very
+    # long key in a very narrow editor and still removes long-range fusion completely.
+    WINDOW = 3
+    out, seen = [], set(already)
     for kind, rx in SECRET_PATTERNS:
-        if kind in already:
+        if kind in seen:
             continue
-        m = rx.search(blob)
-        if not m:
+        hit = None
+        for i in range(len(stripped) - 1):
+            for width in range(2, WINDOW + 1):
+                chunk = stripped[i:i + width]
+                if len(chunk) < 2:
+                    break
+                for sep in ("", " "):
+                    if rx.search(sep.join(chunk)):
+                        hit = (i + 1, i + len(chunk))
+                        break
+                if hit:
+                    break
+            if hit:
+                break
+        if not hit:
             continue
-        lineno = 1
-        for start, i in offsets:
-            if start <= m.start():
-                lineno = i
-        out.append(("SECRET", kind, name, lineno))
+        first, last = hit
+        span = "%d" % first if last == first else "%d-%d" % (first, last)
+            # 🔴 The note goes in `name`, which is free text, and NEVER in `kind`, which is an
+            # enumeration that other checks filter on with `"ANTHROPIC_KEY" in [kinds]`. Decorating
+            # the kind would have broken three existing assertions - and in any caller testing
+            # membership rather than equality it would have broken them silently.
+        out.append(("SECRET", kind,
+                    "%s (only visible unwrapped, lines %s)" % (name, span), first))
+        seen.add(kind)
     return out
 
 
@@ -454,6 +530,10 @@ NEGATIVE = [
     # lines are permanent: a pattern that starts firing on them again has re-opened that class.
     "the stem of the word and the step after it, as Steve said, suit the case",
     "def newest_bank(stem): return sorted(names)[::step]",
+    # 🔴 The CAPITALISED forms of the same class. The three lines above are lowercase, and the
+    # single-capital unit branch is case-sensitive - so they could not reach it and did not.
+    "Query goes in the STEM. ONE STEP AT A TIME, and they UNITE the parties.",
+    "UNITY of purpose produced a SUITED response from the UNITED STATES delegation",
     # Grouped-separator number rules must not swallow exhibit labels, docket numbers or the bare
     # service-center codes that legitimately appear in prose.
     "exhibit A-1 and exhibit A-12 are transcripts from case 26-cv-00132",

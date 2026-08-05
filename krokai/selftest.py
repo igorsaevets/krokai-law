@@ -1466,6 +1466,232 @@ def suite_ported(tmp):
        (r.stderr or b"").decode("utf-8", "replace")[:160])
 
 
+def suite_hooks_stdin(tmp):
+    """🔴 THE GUARD WAS DEAD ON ARRIVAL FOR ANY PAYLOAD CONTAINING A NON-ASCII CHARACTER.
+
+    Measured 2026-08-05, one variable at a time, calling the hook exactly as the harness does -
+    a subprocess with JSON bytes on stdin:
+
+        UTF-8 bytes, console code page cp1251     -> exit 0, silent
+        the same bytes with PYTHONIOENCODING set  -> exit 2, fires
+        ASCII path, ASCII matter, curly quotes    -> exit 0, silent
+
+    The trigger is not an exotic path: it is U+201C, which is what a model emits and what every
+    scraped source contains. `_bootstrap` forced UTF-8 on stderr and stdout on day one - because
+    mojibake going OUT is visible - and never on stdin, where the identical defect is invisible.
+
+    This test runs the real hook in a real subprocess with the environment variable REMOVED, which
+    is the only arrangement that can catch it. An in-process call cannot: the test runner's own
+    stdin is not the hook's.
+    """
+    import json
+    import shutil
+    import subprocess
+    root = os.path.join(tmp, "hookmatter")
+    shutil.rmtree(root, ignore_errors=True)
+    os.makedirs(os.path.join(root, "drafts"))
+    os.makedirs(os.path.join(root, "sources"))
+    io.open(os.path.join(root, "casefile.json"), "w", encoding="utf-8").write(json.dumps(
+        {"bank": "QUOTE-BANK.md", "queue": "QUOTE-QUEUE.md",
+         "guard_watch": ["drafts"], "source_dirs": ["sources"]}))
+    io.open(os.path.join(root, "QUOTE-BANK.md"), "w", encoding="utf-8").write(
+        "# Quote bank\n\n### 1\n\n> a placeholder entry matching nothing in this suite\n")
+
+    hook = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "hooks", "quote_guard.py")
+    if not os.path.exists(hook):
+        ok("hooks: quote_guard.py is present", False, hook)
+        return
+    quote = ("The Attorney General may in his discretion and under such regulations as he may "
+             "prescribe adjust the status of an alien who was inspected and admitted or paroled")
+
+    def call(fname, body):
+        env = dict(os.environ)
+        env.pop("PYTHONIOENCODING", None)
+        env.pop("PYTHONUTF8", None)
+        ev = {"tool_name": "Edit", "tool_input": {
+            "file_path": os.path.join(root, "drafts", fname), "new_string": body}}
+        p = subprocess.run([sys.executable, hook],
+                           input=json.dumps(ev, ensure_ascii=False).encode("utf-8"),
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        return p.returncode
+
+    ok("hooks: UTF-8 stdin with curly quotes in the quotation FIRES (was silent)",
+       call("motion.md", u'As provided: \u201c%s\u201d.' % quote) == 2)
+    ok("hooks: a non-ASCII path and guillemets fire too",
+       call(u"\u041c\u041e\u0422\u0418\u0412.md", u'\u00ab%s\u00bb' % quote) == 2)
+    ok("hooks: CONTROL a pure-ASCII payload still fires",
+       call("plain.md", 'As provided: "%s".' % quote) == 2)
+    log = os.path.join(root, ".krokai", "quote_guard.log")
+    ok("hooks: the guard keeps a log, so silence is observable", os.path.exists(log))
+    call("quiet.md", "A short note with no quotation of law in it at all, only prose.")
+    body = io.open(log, encoding="utf-8").read()
+    ok("hooks: a QUIET turn is logged with its reason too",
+       "no quotation candidates" in body, body.strip().splitlines()[-1][:70])
+    memo = os.path.join(root, ".krokai", "quote_guard_seen.json")
+    ok("hooks: the memo lives in the matter, not in the machine's temp directory",
+       os.path.exists(memo))
+    entries = json.load(io.open(memo, encoding="utf-8"))
+    ok("hooks: the memo records WHEN, so it can expire",
+       isinstance(entries, dict) and all(isinstance(v, (int, float)) for v in entries.values()),
+       "%d entries" % len(entries))
+    from hooks import bank_queue as _bq            # noqa: F401
+    import inspect as _i
+    ok("hooks: bank_queue screens this toolkit's own output out of its corpus",
+       "sentinel=SENTINELS" in _i.getsource(_bq.main))
+
+
+def suite_sidecar_not_a_source(tmp):
+    """🔴 A sidecar this tool writes must never be indexed as primary law.
+
+    Measured 2026-08-05: `krokai sidecar` wrote a `.md` next to every PDF inside a sources folder,
+    `Corpus` walked `.md`, and the file was indexed as law. The tool's own warning header - "Page
+    breaks, signatures and exact layout exist only there" - came back as a CLEAN verdict citing the
+    sidecar. The sister project measured the same shape at scale: 66 of 269 corpus files were its
+    own sidecars.
+
+    The stamp is in the CONTENT, never a rule about the name: excluding `.text.md` by extension
+    would have thrown out genuinely downloaded decisions that use it.
+    """
+    from krokai.sidecar import HEADER, SUFFIX, _current
+    from krokai.run import SENTINELS
+    from krokai.readers import EXTRACTOR_VERSION
+    ok("sidecar: the header carries the tool-output sentinel",
+       SENTINELS[0] in HEADER, SENTINELS[0])
+    ok("sidecar: and the extractor version, so a repair invalidates old files",
+       "{extractor}" in HEADER)
+    d = os.path.join(tmp, "sidecarfresh")
+    os.makedirs(d, exist_ok=True)
+    src = os.path.join(d, "a.pdf")
+    dst = os.path.join(d, "a" + SUFFIX)
+    io.open(src, "w", encoding="utf-8").write("x")
+    io.open(dst, "w", encoding="utf-8").write("extractor: %s\nbody" % EXTRACTOR_VERSION)
+    ok("sidecar: a current file is recognised as current", _current(dst, src))
+    io.open(dst, "w", encoding="utf-8").write("extractor: 0\nbody")
+    ok("sidecar: an older extractor forces a rebuild even when mtime says current",
+       not _current(dst, src))
+
+
+def suite_readers_signature():
+    """🔴 A signature field is not an answer, and its value is not a string.
+
+    The AcroForm reader added in 0.6.0 fixed a real defect - a filled USCIS form reading as blank -
+    and opened a new one: every govinfo PDF is digitally signed, `/Sig`'s `/V` is a DICTIONARY
+    holding the PKCS#7 certificate chain, and `str()` of it went into the corpus. Measured here:
+    4 267 characters of certificate, of which a phrase came back VERIFIED as law. The sister
+    project measured 454 KB across 16 % of its search index.
+    """
+    import inspect
+    from krokai import readers as R
+    src = inspect.getsource(R._form_values)
+    ok("readers: a /Sig field is skipped by type", '"/Sig"' in src and "continue" in src)
+    ok("readers: and a non-scalar value is skipped whatever its type says",
+       "isinstance(v, (str, int, float))" in src)
+    ok("readers: the text-layer test has a PER-PAGE rate, not only a total",
+       R.MIN_CHARS_PER_PAGE > 0 and "MIN_CHARS_PER_PAGE" in inspect.getsource(R.no_text_layer),
+       "%d chars/page from %d pages up" % (R.MIN_CHARS_PER_PAGE, R.PAGES_BEFORE_RATE_APPLIES))
+
+
+def suite_fetch(tmp):
+    """The download layer: trust, refusal, revisions - and no model anywhere in the path."""
+    from krokai import fetch as F
+    from krokai.citations import load_packs
+    packs = load_packs(["us-immigration", "us-federal"])
+
+    for url, want in [
+        ("https://www.ecfr.gov/api/versioner/v1/full/2026-08-01/title-8.xml?part=245", "primary"),
+        ("https://uscisdhs-gov.us/policy.pdf", "lookalike"),
+        ("https://www.uscis.com/policy-manual", "lookalike"),
+        ("https://pastebin.com/raw/aBcDeFgH", "unknown"),
+        ("https://files.random-host.ru/8cfr.txt", "unknown"),
+        ("https://www.law.cornell.edu/cfr/text/8/245.1", "nonauthoritative"),
+    ]:
+        kind, _h, _w = F.trust_of(url, None, packs)
+        ok("fetch: %-52s -> %s" % (url[:52], want), kind == want, kind)
+
+    # 🔴 SILENCE IS NOT A PASS. The sister project printed a green tick whenever its typosquat
+    # detector stayed quiet, and wrote a paste-site URL into its law library as a PRIMARY SOURCE.
+    out = []
+    ok("fetch: an unknown host is refused before any request is made",
+       F.fetch_url("https://pastebin.com/raw/nothing", tmp, packs=packs, printer=out.append)
+       is None and any("knows nothing" in x for x in out))
+    out = []
+    ok("fetch: a lookalike is refused EVEN WITH --allow-unknown-source",
+       F.fetch_url("https://uscisdhs-gov.us/x.pdf", tmp, packs=packs, allow_unknown=True,
+                   printer=out.append) is None and any("REFUSED" in x for x in out))
+
+    # 🔴 The extension is a dispatch key, not decoration. Appending the query after the whole
+    # basename turned `title-8.xml?part=245` into `title-8.xml-part-245`, which `read_any` does not
+    # recognise - so tags were never stripped and `&#xA7;` never unescaped. Caught by this
+    # module's own end-to-end run, which started producing quotations made of markup.
+    ok("fetch: a query string does not destroy the extension",
+       F._name_from("https://www.ecfr.gov/api/versioner/v1/full/2026-08-01/title-8.xml?part=245",
+                    "text/xml").endswith(".xml"),
+       F._name_from("https://x/title-8.xml?part=245", "text/xml"))
+    ok("fetch: an extensionless URL takes one from the content type",
+       F._name_from("https://x/some/path", "application/pdf").endswith(".pdf"))
+
+    d = F.revision_diff(
+        "The alien shall be admitted. A second sentence that stays exactly as it was written.",
+        "The noncitizen shall be admitted. A second sentence that stays exactly as it was written.")
+    ok("fetch: a revision is counted in SENTENCES, not in diff lines",
+       len(d["gone"]) == 1 and len(d["added"]) == 1 and d["kept"] == 1, str(d["kept"]))
+
+    ok("fetch: the inbox is not a sources directory by construction",
+       F.INBOX.startswith(".krokai"), F.INBOX)
+
+
+def suite_placeholder():
+    """🔴 A failed download must not become law, and a short provision must stay indexed.
+
+    0.6.0 stopped excluding short text sources because a real 71-character savings clause was being
+    thrown out and a correct quotation of it came back NOT_FOUND. A reviewer named the other side
+    the same week: a scraped `404 Not Found` body is also short, and indexing it made a phrase from
+    it VERIFY. Both are true, so the test is on the CONTENT - length was only ever a proxy.
+    """
+    from krokai.corpus import looks_like_placeholder as lp
+    for s in ["404 Not Found - The requested page could not be found.",
+              "Just a moment... Checking your browser before accessing the site.",
+              "403 Forbidden",
+              "Access Denied",
+              "Please enable JavaScript to view this page.",
+              "500 Internal Server Error"]:
+        ok("placeholder: recognised - %s" % s[:44], lp(s))
+    for s in ["Nothing in this section shall be construed to limit the authority of the Secretary.",
+              "The applicant was denied access to the record and now argues that access denied "
+              "in these circumstances violates due process, citing the following authorities.",
+              "An alien who has been granted a waiver under section 212(e) of the Act.",
+              "The petition shall be considered abandoned if not found to be timely."]:
+        ok("placeholder: CONTROL not fired on real prose - %s" % s[:40], not lp(s))
+
+
+def suite_library_index(tmp):
+    """🔴 A row appended below the table renders nowhere.
+
+    The sister project measured it: a 777-line index ending in prose, last table row at 771, and
+    the script wrote row 778 and printed "row added" - true, and useless. Markdown stops rendering
+    a table at the first non-row line.
+    """
+    from krokai.library import add_entry, INDEX_HEADER
+    p = os.path.join(tmp, "libidx.md")
+    io.open(p, "w", encoding="utf-8", newline="\n").write(
+        INDEX_HEADER + "| 8 CFR 214.2 | reg | `a.xml` | 2026-01-01 | - |  |\n"
+        "\nClosing prose a human wrote under the table.\n")
+    add_entry(p, "8 CFR 245.1", "reg", "b.xml")
+    lines = io.open(p, encoding="utf-8").read().splitlines()
+    rowi = [i for i, l in enumerate(lines) if "b.xml" in l][0]
+    prosei = [i for i, l in enumerate(lines) if l.startswith("Closing prose")][0]
+    ok("library: a new row lands INSIDE the table, above the prose", rowi < prosei,
+       "row %d, prose %d" % (rowi, prosei))
+    p2 = os.path.join(tmp, "libidx-notable.md")
+    io.open(p2, "w", encoding="utf-8", newline="\n").write("prose only, no table\n")
+    try:
+        add_entry(p2, "8 CFR 245.1", "reg", "c.xml")
+        ok("library: a file with no table is refused loudly", False, "it appended silently")
+    except ValueError as exc:
+        ok("library: a file with no table is refused loudly", "no table" in str(exc))
+
+
 def suite_no_real_identifiers(root):
     """No identifier-shaped literal exists in this tree except the documented fictional ones.
 
@@ -1596,6 +1822,12 @@ def main():
         suite_consult(tmp)
         suite_pipeline_samples()
         suite_ported(tmp)
+        suite_hooks_stdin(tmp)
+        suite_sidecar_not_a_source(tmp)
+        suite_readers_signature()
+        suite_fetch(tmp)
+        suite_placeholder()
+        suite_library_index(tmp)
         suite_no_real_identifiers(root)
         suite_rename(root)
         suite_docs(root)

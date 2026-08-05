@@ -335,6 +335,40 @@ def cmd_library(a):
     return 0
 
 
+# --------------------------------------------------------------------------- fetch / intake
+def cmd_fetch(a):
+    from .config import load
+    from .citations import load_packs
+    from .fetch import fetch_url
+    cfg = load(a.dir)
+    packs = load_packs(cfg["citation_packs"])
+    meta = fetch_url(a.url, cfg.root, cfg=cfg, packs=packs,
+                     allow_unknown=a.allow_unknown_source, timeout=a.timeout)
+    return 0 if meta else 1
+
+
+def cmd_intake(a):
+    from .config import load
+    from .citations import load_packs
+    from .fetch import intake
+    cfg = load(a.dir)
+    packs = load_packs(cfg["citation_packs"])
+    rows = intake(cfg.root, cfg, packs, address=a.address, dest_dir=a.into)
+    if not rows:
+        return 0
+    print("")
+    for status, name, note in rows:
+        print("  %-14s %-46s %s" % (status, name[:46], note))
+    # 🔴 The exit code has to see a revision and a refusal, or a hook wired to this command reads
+    # both as success. A number a person can read and a machine cannot is half a signal - the same
+    # correction NO_SOURCE_ON_DISK needed.
+    if any(s.startswith("🔴") for s, _n, _x in rows):
+        return 4
+    if any(s in ("NO ADDRESS", "REFUSED") for s, _n, _x in rows):
+        return 3
+    return 0
+
+
 # -------------------------------------------------------------------------------- mutate
 def cmd_mutate(a):
     from .config import load
@@ -800,6 +834,20 @@ def build_parser():
     p = common(sub.add_parser("library", help="what is downloaded, what is unindexed"))
     p.add_argument("--recipes", action="store_true", help="print the retrieval recipes")
     p.set_defaults(fn=cmd_library)
+
+    p = common(sub.add_parser(
+        "fetch", help="download the text of a law into the inbox - no model in the path"))
+    p.add_argument("url")
+    p.add_argument("--allow-unknown-source", action="store_true",
+                   help="the host is not on any list this tool knows; you have looked at it")
+    p.add_argument("--timeout", type=int, default=45)
+    p.set_defaults(fn=cmd_fetch)
+
+    p = common(sub.add_parser(
+        "intake", help="move the inbox into the library, detecting revisions"))
+    p.add_argument("--address", help='the citation this file IS, e.g. "8 CFR 245.1"')
+    p.add_argument("--into", help="library folder (default: the first source_dir)")
+    p.set_defaults(fn=cmd_intake)
 
     p = common(sub.add_parser("mutate", help="regression bank: how often does it say clean wrongly"))
     p.add_argument("--report", help="reuse a previous report directory instead of re-scanning")
