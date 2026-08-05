@@ -147,13 +147,15 @@ def fetch_url(url, root, cfg=None, packs=None, allow_unknown=False, timeout=45, 
     Nothing here interprets, summarises or rewrites the body. The bytes that arrive are the bytes
     written.
     """
-    try:
-        import requests
-    except ImportError:
-        printer("`requests` is not installed. `pip install requests` - and note that this is the "
-                "only network dependency in the package, on purpose.")
-        return None
-
+    # 🔴 THE REFUSAL COMES FIRST, BEFORE ANY DEPENDENCY CHECK.
+    #
+    # The first version imported `requests` at the top of this function and returned early when it
+    # was missing. CI caught it on every runner - none of them has `requests` - and the failure is
+    # not merely a test artefact: it meant that on a machine without the optional library, asking to
+    # download from a typosquat produced "install requests" instead of "REFUSED, this host wears an
+    # official name it is not entitled to". A safety decision that depends on whether an optional
+    # dependency happens to be installed is not a safety decision. Classify, refuse, and only then
+    # worry about whether the download is even possible.
     kind, head, why = trust_of(url, cfg, packs)
     printer("source: %-18s %s" % (head, why))
     if kind == "lookalike":
@@ -170,6 +172,13 @@ def fetch_url(url, root, cfg=None, packs=None, allow_unknown=False, timeout=45, 
                 "into its law library under a PRIMARY SOURCE header.")
         printer("   If you have looked at it and you are sure: --allow-unknown-source. The file "
                 "will be stamped UNKNOWN either way.")
+        return None
+
+    try:
+        import requests
+    except ImportError:
+        printer("`requests` is not installed, so nothing can be downloaded. `pip install requests` "
+                "- it is the only network dependency in this package, on purpose.")
         return None
 
     try:
