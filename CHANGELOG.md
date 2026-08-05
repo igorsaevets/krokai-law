@@ -10,7 +10,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
-## [0.7.0] — 2026-08-05
+## [0.7.1] — 2026-08-05
+
+**A refusal must not depend on an optional dependency being installed.**
+
+`fetch_url` imported the network library before classifying the host. On a machine without it —
+which is every CI runner, and that is how this was found — asking to download from a typosquat
+answered *"install requests"* instead of *"REFUSED: this host wears an official name it is not
+entitled to"*. A safety decision that depends on whether an optional package happens to be present
+is not a safety decision. Classify, refuse, and only then ask whether the download is possible at
+all. Verified by simulating a bare runner: both refusals fire with no network library importable.
+
+> **`v0.7.0` is withdrawn rather than moved.** The tag existed for a few minutes, CI on it was red,
+> and no release object was ever created — so nothing was consumed from it. It could have been
+> quietly re-pointed at the fix; it was not, for the same reason `v0.5.0` was withdrawn instead of
+> re-tagged the week before. **A tag must never denote two different trees.** The cost is one
+> version number, which is cheap; a tag that silently changed meaning is not.
+
+## [0.7.0] — 2026-08-05 · withdrawn, superseded by 0.7.1
 
 Two things happened this round and they belong in one release: the toolkit learned to fetch the law,
 and the main guard turned out never to have worked.
