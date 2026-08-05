@@ -10,6 +10,62 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.7.4] — 2026-08-05
+
+**Four findings from the round-21 review, adjudicated by execution. The worst one was caused by the
+fix in 0.7.1.**
+
+Three channels reviewed 0.7.0 independently — a fourth timed out — and converged on the same
+places. Where they converged the claim was still re-derived here against the shipped code, and one
+of their shared claims was already fixed and is recorded as refuted.
+
+**A dated-edition marker bought an official stamp on any host.** The snapshot list holds path and
+query fragments — `/annual/`, `/historical/`, `?date=` — and `classify_url` matched them as
+substrings of the whole URL, ahead of every host test. So `https://evil.com/historical/report.xml`
+classified as `snapshot`, whose label is **OFFICIAL BUT DATED**; `krokai fetch` downloaded it
+without `--allow-unknown-source`, and `intake` wrote that phrase into the human-facing library
+index. Measured: **5 of 5 hostile URLs** took the label. This is the second half of the substring
+bug fixed in 0.4.0 — that round replaced the test on the `primary` branch and left the branches
+either side of it, including the one that runs *first*, matching substrings. A pattern that names a
+host now vouches for itself; one that names no host is a qualifier and applies only to a host
+already vouched. All nine legitimate shapes still classify as before.
+
+**A single line of scraped boilerplate deleted a whole statute from the corpus.** 0.7.1 moved the
+placeholder test out of the length branch so a 900-character bot wall would be caught — correct —
+and left tier 1 firing at *every* length. Measured: 9 920 characters of 8 U.S.C. 1255 plus one
+footer reading `Please enable JavaScript to use this site` excluded the entire document, so every
+correct quotation of it would return `NOT_FOUND`, which is this tool's accusation that the drafter
+invented it. A scraped `.gov` page keeping a noscript footer is the ordinary case. A tier-1 string
+now fires anywhere in a document small enough to *be* an error page, and above that size needs a
+second, distinct tier-1 string. The whole existing suite passed throughout, because every control
+in it was short.
+
+**Sentences of 25 characters or fewer were invisible to the revision diff** — `Section 4 is
+repealed.` is 22. An operative sentence is short *because* it is operative. The floor existed only
+to drop fragments left by splitting on the stop inside `U.S.C.`, so a fragment is now identified by
+what it is — no internal whitespace — rather than by being short.
+
+**A relocated sentence was reported as no change at all.** Set comparison cannot see order, so
+moving a conditioning sentence into another subsection gave `0 gone, 0 added, 100 % unchanged` — and
+the bank check agreed, because the words really are still somewhere in the file. `revision_diff`
+now also returns `moved`, and the report says what it means. The set comparison is kept: it is what
+stops a chunk-boundary shift being reported as a deletion.
+
+Also: `you do not have permission to view` is server language too, and sat in the gap between the
+two placeholder tiers. The unwrap window went 3 → 5 — the class was real, every worked example
+offered for it was a wrap no editor produces, and the cost was **measured** at 804 documents /
+8.3 MB of ordinary prose: 1 finding at every width from 2 to 6, no new kinds. The width moved to
+module level first, because the attempt to measure it through a local returned an identical 0 at
+every width, which is what a disconnected knob looks like rather than what a safe change looks
+like.
+
+Self-test 401 → **421**. Refuted against the shipped tree: *"a long error page is indexed as law"*,
+which all three channels reported and 0.7.1 had already fixed.
+
+🔴 Not re-measured: the eCFR figures in 0.7.0's notes (57 gone / 64 new / 89.1 % unchanged) were
+taken with the 25-character floor and no longer describe this code. eCFR's versioner API returned
+503 on the retry, so they are marked stale rather than replaced with a guess.
+
 ## [0.7.3] — 2026-08-05
 
 **The revision diff compared raw extractor output, so rendering was graded as a change in the law.**

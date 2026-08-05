@@ -687,6 +687,27 @@ def gov_lookalike(host, primary):
     return bool(parts.intersection(agency_labels(primary)))
 
 
+def _entry_match(host, hostpath, entry):
+    """Does one configured pattern match this URL - as a HOST, or as a host plus a path prefix?
+
+    A pattern that names a host (`govinfo.gov/content/pkg/CFR-`) vouches for itself: the host part
+    is suffix-matched at a label boundary and the path part must really be in the path. A pattern
+    that names no host (`/historical/`, `?date=`) is a QUALIFIER and cannot vouch for anything -
+    see `classify_url`.
+
+    🔴 The path is taken from `hostpath`, which excludes the query string. `?ref=govinfo.gov/...`
+    is attacker-controlled text in someone else's URL and matched as a substring of the whole URL
+    before this existed.
+    """
+    e = (entry or "").lower().strip().lstrip(".")
+    if not e:
+        return False
+    if "/" in e:
+        h, _, p = e.partition("/")
+        return suffix_match(host, h) and ("/" + p) in hostpath
+    return suffix_match(host, e)
+
+
 def classify_url(u, g):
     """Which of five things is this URL, read in order of how badly it can mislead you.
 
@@ -700,16 +721,50 @@ def classify_url(u, g):
     asking "is it official?" first would answer yes and stop. A real `.gov` URL can never reach the
     lookalike test - ``gov_lookalike`` returns False for anything the official list already matches -
     so putting it first costs nothing.
+
+    🔴🔴 A DATED-EDITION MARKER IS A QUALIFIER ON A VOUCHED HOST, NEVER A CREDENTIAL BY ITSELF.
+    The snapshot list holds path and query fragments - `/annual/`, `/historical/`, `?date=` - and
+    they used to be matched as substrings of the whole URL, ahead of every host test. So
+    `https://evil.com/historical/report.xml` classified as `snapshot`, which is the label
+    "OFFICIAL BUT DATED", and `krokai fetch` downloaded it without `--allow-unknown-source` and
+    wrote that phrase into the human-facing library index. Measured 2026-08-05; all three channels
+    of the round-21 review found it independently, and each one had to invent the counterexample
+    URL to show it, which is why the run's own citation check then graded their reviews as citing
+    dead pages.
+
+    🔴 This is the SECOND HALF of the bug fixed in 0.4.0. That round replaced a substring test with
+    `suffix_match` on the `primary` branch and left the two branches either side of it matching
+    substrings - including the branch that runs FIRST. The visible half of a symmetric defect gets
+    fixed and the invisible half survives: third measured instance in this package.
     """
+    from urllib.parse import urlsplit
     u = (u or "").lower()
     host = host_of(u)
-    if gov_lookalike(host, g.get("primary") or []):
+    try:
+        hostpath = host + (urlsplit(u).path or "")
+    except ValueError:
+        hostpath = host
+    primary = g.get("primary") or []
+    if gov_lookalike(host, primary):
         return "lookalike"
-    if any(p.lower() in u for p in (g.get("snapshot") or [])):
-        return "snapshot"
-    if any(suffix_match(host, s) for s in (g.get("primary") or [])):
+    is_primary = any(suffix_match(host, s) for s in primary)
+    is_nonauth = any(_entry_match(host, hostpath, s)
+                     for s in (g.get("nonauthoritative") or []))
+    for s in (g.get("snapshot") or []):
+        e = (s or "").lower().strip()
+        if not e:
+            continue
+        head = e.split("/", 1)[0]
+        if head and "." in head:
+            # Names a host, so it vouches for itself: `govinfo.gov/content/pkg/CFR-`.
+            if _entry_match(host, hostpath, e):
+                return "snapshot"
+        elif (is_primary or is_nonauth) and e in u:
+            # A bare marker - `/historical/`, `?date=` - only qualifies an already-vouched host.
+            return "snapshot"
+    if is_primary:
         return "primary"
-    if any(s.lower() in u for s in (g.get("nonauthoritative") or [])):
+    if is_nonauth:
         return "nonauthoritative"
     return "other"
 

@@ -68,16 +68,22 @@ def _extracted_format(path):
 # that decides derived files here, and for the same reason: a rule on a file's size or its name is
 # a rule about the wrong thing.
 #
-# Deliberately narrow. Each entry is a server or bot-wall response, not a phrase of English that a
-# statute could contain, and the test applies ONLY to sources already under the floor - so a long
-# document discussing "access denied" is untouched, and the two negative controls assert it.
-# TIER 1 - strings that are a server or a bot wall talking, and that no provision contains. These
-# fire wherever they appear.
+# Deliberately narrow. Each entry is a server or a bot wall talking, not a phrase of English that a
+# statute could contain.
+#
+# 🔴 THIS COMMENT USED TO SAY "the test applies ONLY to sources already under the floor - so a long
+# document discussing 'access denied' is untouched". That stopped being true in 0.7.1, which moved
+# the call out of the length branch on purpose, and the sentence stayed - describing a safety
+# property the code no longer had, in the file a reader consults to find out whether it does. The
+# negative controls it cited still passed, because they exercise TIER 2, which really is bounded.
+# A stale comment is not a documentation defect when it is the thing that stops you re-checking.
+# TIER 1 - fires wherever it appears in a document small enough to BE an error page, and above that
+# size needs a second, distinct tier-1 string. The bound lives in `looks_like_placeholder`.
 _PLACEHOLDER_RE = re.compile(
     r"(?i)(?:\b40[0-9]\s+(?:not\s+found|forbidden|bad\s+request|unauthorized)\b"
     r"|\b50[0-9]\s+(?:internal\s+server\s+error|service\s+unavailable|bad\s+gateway)\b"
     r"|\bthe\s+requested\s+(?:url|page|resource)\b[^.]{0,80}?\b(?:was\s+)?not\s+(?:be\s+)?found\b"
-    r"|\byou\s+(?:do\s+not|don't)\s+have\s+permission\s+to\s+access\b"
+    r"|\byou\s+(?:do\s+not|don't)\s+have\s+permission\s+to\s+(?:access|view|open|see)\b"
     r"|\benable\s+javascript\b|\bjavascript\s+is\s+(?:required|disabled)\b"
     r"|\bjust\s+a\s+moment\b|\bchecking\s+your\s+browser\b"
     r"|\bverify\s+you\s+are\s+(?:a\s+)?human\b|\bare\s+you\s+a\s+robot\b"
@@ -96,16 +102,37 @@ _AMBIGUOUS_RE = re.compile(r"(?i)\b(?:access\s+denied|permission\s+denied|page\s
                            r"|not\s+found|forbidden|unauthorized)\b")
 _AMBIGUOUS_MAX = 60
 
+# 🔴 The size above which a document is no longer plausibly an error page. The largest bot wall
+# this project has measured was 900 characters of extracted text; 4 000 is deliberately generous.
+# Above it a single tier-1 phrase is a PHRASE, not a verdict - see `looks_like_placeholder`.
+_PLACEHOLDER_MAX = 4000
+
 
 def looks_like_placeholder(text):
-    """True when a short file is a failed download rather than a short provision.
+    """True when a file is a failed download rather than a provision.
 
     Exported because the fetch layer asks the same question about bytes that have just arrived: a
     server can return HTTP 200 with a body that says 404, and saving that into the library is how a
     topic gets counted as covered while the chapter is missing.
+
+    🔴🔴 THE PREVIOUS VERSION OF THIS FUNCTION DELETED REAL LAW FROM THE CORPUS, AND THE FIX THAT
+    CAUSED IT WAS THE FIX FOR THE OPPOSITE BUG. 0.7.1 moved the call out of the `< MIN_TEXT_LAYER`
+    branch so a 900-character bot wall could be caught - correct, and it left tier 1 firing at every
+    length. Measured 2026-08-05: 9 920 characters of 8 U.S.C. 1255 plus one scraped footer line
+    reading "Please enable JavaScript to use this site" excluded the ENTIRE document, so every
+    correct quotation of that statute would come back NOT_FOUND, which is this tool's accusation
+    that the drafter invented it. A scraped `.gov` page keeping a noscript footer is the ordinary
+    case, not a contrived one. Found by a reviewer that read the widened call site and asked what
+    ELSE now reaches it - the question the fix's own author did not ask.
+
+    So: a tier-1 string fires anywhere in a document small enough to BE an error page, and above
+    that size it needs corroboration - two distinct tier-1 strings. A real interstitial says
+    "just a moment" AND "checking your browser" AND "enable javascript"; a statute that happens to
+    contain one such phrase says it once.
     """
     t = (text or "").strip()
-    if _PLACEHOLDER_RE.search(t):
+    hits = {m.group(0).lower() for m in _PLACEHOLDER_RE.finditer(t)}
+    if hits and (len(t) <= _PLACEHOLDER_MAX or len(hits) >= 2):
         return True
     return len(t) <= _AMBIGUOUS_MAX and bool(_AMBIGUOUS_RE.search(t))
 

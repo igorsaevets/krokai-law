@@ -1605,6 +1605,19 @@ def suite_fetch(tmp):
         ("https://pastebin.com/raw/aBcDeFgH", "unknown"),
         ("https://files.random-host.ru/8cfr.txt", "unknown"),
         ("https://www.law.cornell.edu/cfr/text/8/245.1", "nonauthoritative"),
+        # 🔴🔴 A DATED-EDITION MARKER IS A QUALIFIER, NEVER A CREDENTIAL. The snapshot list holds
+        # path and query fragments - `/annual/`, `?date=` - and they were matched as substrings of
+        # the WHOLE URL, ahead of every host test, so any host serving such a path was labelled
+        # "OFFICIAL BUT DATED" and downloaded with no `--allow-unknown-source`. All three channels
+        # of the round-21 review found this independently. It is the second half of the substring
+        # bug fixed in 0.4.0: that round replaced the test on the `primary` branch and left the two
+        # either side of it - including the one that runs FIRST - matching substrings.
+        ("https://untrusted-host.org/annual/8cfr245.pdf", "unknown"),
+        ("https://files.random-host.ru/annual/cfr/title-8.xml", "unknown"),
+        ("https://evil.example/?ref=govinfo.gov/content/pkg/cfr-2019", "unknown"),
+        # ...and the legitimate shapes it exists for must still classify.
+        ("https://www.govinfo.gov/content/pkg/CFR-2019-title8/xml/x.xml", "snapshot"),
+        ("https://www.ecfr.gov/annual/title-8", "snapshot"),
     ]:
         kind, _h, _w = F.trust_of(url, None, packs)
         ok("fetch: %-52s -> %s" % (url[:52], want), kind == want, kind)
@@ -1663,6 +1676,86 @@ def suite_placeholder():
               "An alien who has been granted a waiver under section 212(e) of the Act.",
               "The petition shall be considered abandoned if not found to be timely."]:
         ok("placeholder: CONTROL not fired on real prose - %s" % s[:40], not lp(s))
+
+    # 🔴🔴 THE FIX FOR THE OPPOSITE BUG DELETED REAL LAW, AND NO TEST HERE SAW IT.
+    # 0.7.1 moved this call out of the length branch so a 900-character bot wall would be caught -
+    # correct - and left tier 1 firing at EVERY length. A scraped `.gov` page keeping its noscript
+    # footer is the ordinary case, so ~10 000 characters of statute plus one line reading "Please
+    # enable JavaScript" excluded the whole document, and every correct quotation of it would come
+    # back NOT_FOUND, which is this tool's accusation that the drafter invented it. The suite above
+    # passed throughout, because every control in it is SHORT. Found by an outside reviewer asking
+    # what else now reaches a call site that had just been widened.
+    LAW = ("The Attorney General may in his discretion and under such regulations as he may "
+           "prescribe adjust the status of an alien who was inspected and admitted or paroled "
+           "into the United States to that of an alien lawfully admitted for permanent "
+           "residence. ") * 40
+    ok("placeholder: a LONG law carrying one boilerplate line is NOT a placeholder",
+       not lp(LAW + "\nPlease enable JavaScript to use this site.\n"),
+       "%d chars" % len(LAW))
+    ok("placeholder: a long ERROR page with two distinct markers still is",
+       lp("404 Not Found. " + "Navigation home about contact search help. " * 120
+          + " The requested URL /x was not found on this server."))
+    ok("placeholder: a bot wall well over the old 200-char gate still is",
+       lp("Just a moment. Checking your browser before accessing the site. "
+          "Please enable JavaScript and cookies to continue. " * 9))
+    # The gap between the two tiers: over _AMBIGUOUS_MAX, and tier 1 said only "permission to
+    # access" while the page says "permission to view". Named by one channel of three.
+    ok("placeholder: 'permission to view' is server language too",
+       lp("Error: Access Denied. You do not have permission to view this page. "
+          "Please contact support for assistance with this request."))
+
+
+def suite_revision_and_window():
+    """The two round-21 findings that are about what a measurement CANNOT see.
+
+    Both were named by all three review channels, and both are cases where the tool answered
+    confidently and the confident answer was the wrong shape of answer.
+    """
+    from krokai import fetch as F
+    from krokai import redact as RD
+
+    # 🔴 THE 25-CHARACTER FLOOR HID THE CHANGES MOST WORTH SEEING. An operative sentence is short
+    # BECAUSE it is operative: a repeal, a fee, a deadline, an effective date. The floor existed
+    # only to drop fragments left by splitting on the stop inside `U.S.C.`, so a fragment is now
+    # identified by what it is - no internal space - rather than by being short.
+    ok("revision: a short repeal is a sentence", F._sentences("Section 4 is repealed.") != [],
+       repr(F._sentences("Section 4 is repealed.")))
+    ok("revision: a fee change is a sentence", F._sentences("The fee is $1,440.") != [])
+    ok("revision: CONTROL an abbreviation fragment is still dropped", F._sentences("U.S.C.") == [])
+
+    # 🔴 A SET LOSES ORDER, AND ORDER IS OPERATIVE. Relocating a conditioning sentence into another
+    # subsection left both differences empty, so this reported 100 % unchanged - and the bank check
+    # agreed, because the words really are still somewhere in the file.
+    A = ("Alpha beta gamma delta epsilon zeta eta theta. "
+         "Iota kappa lambda mu nu xi omicron pi rho sigma tau.")
+    B = ("Iota kappa lambda mu nu xi omicron pi rho sigma tau. "
+         "Alpha beta gamma delta epsilon zeta eta theta.")
+    d = F.revision_diff(A, B)
+    ok("revision: pure reordering is reported, not called unchanged",
+       d.get("moved", 0) > 0 and not d["gone"] and not d["added"],
+       "gone=%d added=%d moved=%d" % (len(d["gone"]), len(d["added"]), d.get("moved", 0)))
+    ok("revision: CONTROL an identical document has moved 0",
+       F.revision_diff(A, A).get("moved", 0) == 0)
+    d3 = F.revision_diff(A, A.replace("Alpha", "Omega"))
+    ok("revision: CONTROL a real one-word edit is still caught",
+       len(d3["gone"]) == 1 and len(d3["added"]) == 1)
+
+    # 🔴 A CONSTANT THAT CANNOT BE VARIED FROM OUTSIDE CANNOT BE MEASURED FROM OUTSIDE. The wrap
+    # width was a local, so the attempt to measure what widening it costs set a module attribute
+    # nothing read and reported an identical 0 findings at every width - indistinguishable from a
+    # safe change. This asserts the knob stays connected, which is the part that silently rots.
+    ok("redact: the wrap window is reachable from outside the function",
+       isinstance(getattr(RD, "WRAP_WINDOW", None), int) and RD.WRAP_WINDOW >= 4,
+       str(getattr(RD, "WRAP_WINDOW", None)))
+    tok = "ghp_" + "B" * 36
+    for cols, must in ((20, True), (10, True), (8, True)):
+        wrapped = "\n".join(tok[i:i + cols] for i in range(0, len(tok), cols))
+        ok("redact: a token wrapped at %d columns is found" % cols,
+           bool([f for f in RD.scan(wrapped) if f and f[0] == "SECRET"]) == must)
+    ok("redact: CONTROL ordinary prose over the window is not a secret",
+       not [f for f in RD.scan("The Secretary shall\nprescribe such regulations\nas may be "
+                               "necessary\nto carry out this section\nin a timely manner.")
+            if f and f[0] == "SECRET"])
 
 
 def suite_library_index(tmp):
@@ -1952,6 +2045,7 @@ def main():
         suite_readers_signature()
         suite_fetch(tmp)
         suite_placeholder()
+        suite_revision_and_window()
         suite_library_index(tmp)
         suite_review_r21(tmp)
         suite_no_real_identifiers(root)

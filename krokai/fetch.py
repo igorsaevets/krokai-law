@@ -320,10 +320,23 @@ def _sentences(t):
     hyphenation and typography and may never change letters, digits or word order. The
     revision detector was the one place not applying it, and it was grading rendering as a
     change in the law.
+
+    🔴 THE FLOOR WAS 25 CHARACTERS AND IT HID THE CHANGES MOST WORTH SEEING. All three channels of
+    the round-21 review named it independently: `Section 4 is repealed.` is 22 characters, and so
+    are a fee, a deadline and an effective date. An operative sentence is short precisely BECAUSE
+    it is operative. Measured 2026-08-05: `_sentences("Section 4 is repealed.")` returned `[]`.
+
+    The floor was there to drop the fragments left by splitting on the full stop inside `U.S.C.` or
+    `Sec.`, so it is replaced by a test for what a fragment IS - no internal whitespace - plus a
+    much lower floor. A noisier revision report is a cheap failure; a silent repeal is not.
     """
     from .normalize import normalise
-    return [s.strip() for s in re.split(r"(?<=[.;:])\s+", normalise(t) or "")
-            if len(s.strip()) > 25]
+    out = []
+    for s in re.split(r"(?<=[.;:])\s+", normalise(t) or ""):
+        s = s.strip()
+        if len(s) > 10 and " " in s:
+            out.append(s)
+    return out
 
 
 def revision_diff(old_text, new_text):
@@ -333,12 +346,28 @@ def revision_diff(old_text, new_text):
     project's negative control failed on exactly that: a sentence it believed had vanished was
     present and intact, and only a set comparison over sentences showed the real change. A count
     that overstates deletions in a tool whose job is spotting deletions is worse than no count.
+
+    🔴 A SET LOSES ORDER, AND ORDER IS OPERATIVE IN A STATUTE. Two channels put the same case:
+    move a conditioning sentence from one subsection to another and `a - b` and `b - a` are both
+    empty, so this reported `0 gone, 0 added, 100 % unchanged` - and `_bank_impact` agreed, because
+    the sentence really is still somewhere in the file. Measured 2026-08-05 on two texts differing
+    only in sentence order: similarity 1.00. The set comparison is kept, because it is what stops
+    a chunk-boundary shift being reported as a deletion, and the order is reported ALONGSIDE it
+    rather than folded into the similarity number: `moved` is a different question from `gone`.
     """
-    a, b = set(_sentences(old_text)), set(_sentences(new_text))
+    ao, bo = _sentences(old_text), _sentences(new_text)
+    a, b = set(ao), set(bo)
     gone, added = sorted(a - b), sorted(b - a)
     both = len(a & b)
     similarity = both / float(max(1, len(a | b)))
-    return {"gone": gone, "added": added, "kept": both, "similarity": similarity}
+    # Of the sentences present in both, how many sit in a different position relative to the
+    # others? Compared on the shared subsequence only, so an insertion elsewhere does not count
+    # every following sentence as moved.
+    shared_a = [s for s in ao if s in b]
+    shared_b = [s for s in bo if s in a]
+    moved = sum(1 for x, y in zip(shared_a, shared_b) if x != y)
+    return {"gone": gone, "added": added, "kept": both, "similarity": similarity,
+            "moved": moved}
 
 
 def _address_keys(address, packs):
@@ -449,10 +478,10 @@ def intake(root, cfg, packs, address=None, dest_dir=None, allow_unindexed=False,
                         "revision": n, "url": meta.get("url", ""), "trust": meta.get("trust"),
                         "fetched_at": meta.get("fetched_at"), "supersedes": prev.get("path")}
             out.append(("🔴 REVISION", os.path.basename(dest),
-                        "%d sentence(s) gone, %d new, %.1f%% unchanged - the previous edition is "
-                        "KEPT, and %s says what it means for the bank"
-                        % (len(d["gone"]), len(d["added"]), 100 * d["similarity"],
-                           os.path.relpath(report, root))))
+                        "%d sentence(s) gone, %d new, %d moved, %.1f%% unchanged - the previous "
+                        "edition is KEPT, and %s says what it means for the bank"
+                        % (len(d["gone"]), len(d["added"]), d.get("moved", 0),
+                           100 * d["similarity"], os.path.relpath(report, root))))
         else:
             os.replace(src, dest)
             reg[kid] = {"path": dest, "sha256": meta.get("sha256"), "address": addr,
@@ -488,6 +517,14 @@ def _revision_report(addr, prev, meta, d, cfg, new_text, packs):
         "| source | %s |" % (meta.get("url") or ""),
         "| retrieved | %s |" % (meta.get("fetched_at") or ""),
         "| unchanged | %.1f%% of sentences |" % (100 * d["similarity"]),
+        "| moved | %d sentence(s) kept, in a different place |" % d.get("moved", 0),
+        "",
+        "🔴 **A sentence that MOVED is not a sentence that stayed.** Set comparison cannot see "
+        "order, so relocating a conditioning sentence into another subsection reported 0 gone, "
+        "0 new and 100 % unchanged. The words are still in the document and the rule they "
+        "condition may no longer be the same one. Read the moved count before trusting the "
+        "unchanged percentage."
+        if d.get("moved") else "",
         "",
         "🔴 **The previous edition has NOT been deleted.** A quotation taken from it is still a "
         "correct quotation of the text that was in force when it was taken. What changes is which "

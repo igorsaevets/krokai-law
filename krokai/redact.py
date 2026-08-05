@@ -241,6 +241,21 @@ def scan(text, name="payload", surnames=()):
     return out
 
 
+# How many ADJACENT lines the unwrap pass may join. Module level so it can be varied and the cost
+# measured; see the long note inside `_wrapped_secrets` for why it is not the whole file.
+#
+# 🔴 3 -> 5, and the number came from a measurement rather than from the argument that produced 3.
+# All three channels of the round-21 review said a credential wrapped over four or more lines walks
+# past a three-line window, which is true, and each offered a contrived wrap - 10 and 6 columns -
+# that no editor produces. The question is therefore not "is the class real" but "what does closing
+# it cost", and that was measured on 2026-08-05 against 804 documents / 8.3 MB of ordinary prose
+# written with no thought for this detector: 1 SECRET finding at EVERY width from 2 to 6, and not
+# one new kind as the window widened. Zero measured cost, and 5 covers a 40-character token wrapped
+# at 8 columns - already far narrower than any real formatter. Stopping at 5 rather than 8 is the
+# only part of this that is judgement: past that the work grows and the measured gain does not.
+WRAP_WINDOW = 5
+
+
 def _wrapped_secrets(lines, name, already):
     """Secrets that only exist once the wrap is undone. `already` keeps the report honest:
     a kind found line by line is not reported twice with a different line number."""
@@ -290,7 +305,14 @@ def _wrapped_secrets(lines, name, already):
     #
     # An editor's wrap is a two-line event by definition. Three lines of window is slack for a very
     # long key in a very narrow editor and still removes long-range fusion completely.
-    WINDOW = 3
+    #
+    # 🔴 The width is `WRAP_WINDOW`, at module level, and that is not cosmetic. Round 21 tried to
+    # MEASURE what widening it costs by setting the attribute from outside and got an identical
+    # 0 findings at widths 3, 4, 5 and 6 - which is what a disconnected knob looks like, not what a
+    # safe change looks like. The name was a local; nothing read the attribute the probe was
+    # setting. A constant that cannot be varied from outside cannot be measured from outside, and
+    # an unmeasurable trade-off gets settled by argument instead of by evidence.
+    WINDOW = WRAP_WINDOW
     out, seen = [], set(already)
     for kind, rx in SECRET_PATTERNS:
         if kind in seen:
