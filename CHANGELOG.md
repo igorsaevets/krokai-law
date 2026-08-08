@@ -10,7 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
-## 0.7.5 - 2026-08-07
+## [0.7.5] - 2026-08-07
 
 **`pip install krokai` would have installed a tool that verifies nothing, and said nothing.**
 
