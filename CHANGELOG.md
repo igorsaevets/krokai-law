@@ -10,6 +10,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## 0.7.5 - 2026-08-07
+
+**`pip install krokai` would have installed a tool that verifies nothing, and said nothing.**
+
+Four call sites found this package's shipped data by walking one level up out of the package
+directory - correct for a clone, where `krokai/` and `packs/` are siblings, and wrong the moment
+pip is involved, because `site-packages/krokai/..` is `site-packages`:
+
+| file | what it looked for | what it found once installed |
+|---|---|---|
+| `citations.py` | `<pkg>/../packs` | nothing. `available_packs()` returns `[]`, no error |
+| `cli.py` | `<pkg>/../templates` | nothing |
+| `install.py` | `<pkg>/../hooks` | nothing. `krokai install` refused to run |
+| `consult.py` | `<pkg>/../channels.json` | nothing. `krokai review` raised SystemExit |
+
+The first row is the dangerous one: no exception, no warning. The tool would have started, run,
+printed a clean report, and checked zero citations.
+
+None of it was visible from a checkout, which is the one layout where the bug cannot occur. The
+suite passed 421/421 throughout.
+
+- `krokai/_datadir.py` searches inside the package first, beside it second. Both layouts work, and
+  the documented "copy the folder and run it" install is unchanged.
+- Packaging is hatchling, not setuptools, because only `force-include` can map a directory that
+  lives outside the package into the wheel. The repository layout does not move.
+- `selftest.py` imported the hooks as a top-level `hooks` module, which needs the repo root on
+  `sys.path`. Installed, it died at test 400 of 421.
+- Three suites scan the source TREE. From `site-packages` they scanned pip's own vendored code and
+  reported six LABELLED_SECRET findings in `pip/_internal/network/auth.py`. They now skip when this
+  is not a checkout, and say so out loud - a test that quietly vanishes reads as one that passed.
+
+Verified in both arms: installed wheel 397/397 with 24 hygiene tests skipped aloud, checkout
+421/421 unchanged. 397 + 24 = 421.
+
+CI gained an `installed` job that builds the wheel, installs it elsewhere and runs it from an
+unrelated directory, plus `actionlint`.
+
+First release on PyPI, published by Trusted Publishing. No API token exists in this repository.
+
 ## [0.7.4] — 2026-08-05
 
 **Four findings from the round-21 review, adjudicated by execution. The worst one was caused by the
