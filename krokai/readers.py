@@ -14,7 +14,20 @@ import re
 
 from .normalize import normalise, strip_scrape_artifacts
 
-__all__ = ["read_any", "read_pdf", "read_docx", "no_text_layer", "engines_available",
+
+class MissingReader(RuntimeError):
+    """Raised when a file's FORMAT needs an engine that is not installed.
+
+    🔴 It exists so that "nothing was read" can never be mistaken for "nothing was found". Every
+    third-party import in this package is optional on purpose - the audience includes machines
+    where `pip install` is not allowed - but optional must mean *degraded loudly*, not *silent*.
+    Before this, a bare install handed a PDF back as "", the checker saw an empty document, and the
+    report said zero quotations with nothing wrong. Both external reviewers caught it in the same
+    round; they were right and the packaging note that called `dependencies = []` safe was wrong.
+    """
+
+
+__all__ = ["MissingReader", "read_any", "read_pdf", "read_docx", "no_text_layer", "engines_available",
            "_choose_extraction", "_form_values", "EXTRACTOR_VERSION", "MIN_CHARS_PER_PAGE"]
 
 _PAGE_MARK = re.compile(r"\[\[Page\s+[\w.-]+\]\]")
@@ -211,22 +224,50 @@ def read_pdf(path, cache_dir=None):
         if os.path.exists(cp):
             return io.open(cp, encoding="utf-8", errors="replace").read()
 
+    # 🔴 "NO ENGINE IS INSTALLED" AND "THIS PDF HAS NO TEXT" MUST NOT LOOK THE SAME.
+    #
+    # These blocks used to catch `Exception`, which swallows `ImportError` alongside a corrupt file.
+    # So a plain `pip install krokai` with neither reader present returned "" from a PDF, silently,
+    # and the document was then reported as checked with zero quotations found. That is the same
+    # shape as the packs defect fixed in 0.7.5, one layer up: a tool that succeeds at nothing is
+    # worse than one that fails, because nobody investigates a clean report.
+    #
+    # An empty text layer is a REAL and common answer here - a scanned statute - so it cannot be
+    # turned into an error. The distinction has to be drawn at the import, not at the result.
+    have_engine = False
+
     primary = ""
     try:
         import pypdf
-        r = pypdf.PdfReader(path)
-        primary = "\n".join((p.extract_text() or "") for p in r.pages)
-    except Exception:
-        primary = ""
+    except ImportError:
+        pass
+    else:
+        have_engine = True
+        try:
+            r = pypdf.PdfReader(path)
+            primary = "\n".join((p.extract_text() or "") for p in r.pages)
+        except Exception:
+            primary = ""
 
     alt = ""
     try:
         import fitz
-        d = fitz.open(path)
-        alt = "\n".join(pg.get_text() for pg in d)
-        d.close()
-    except Exception:
-        alt = ""
+    except ImportError:
+        pass
+    else:
+        have_engine = True
+        try:
+            d = fitz.open(path)
+            alt = "\n".join(pg.get_text() for pg in d)
+            d.close()
+        except Exception:
+            alt = ""
+
+    if not have_engine:
+        raise MissingReader(
+            "%s is a PDF and no PDF engine is installed, so its text was never read.\n"
+            "This is NOT the same as 'the document contains no quotations' - nothing was examined.\n"
+            "Install one:  pip install \"krokai[pdf]\"   (or krokai[all])" % os.path.basename(path))
 
     text, _why = _choose_extraction(primary, alt)
 
@@ -266,8 +307,16 @@ def read_docx(path):
     searched, never displayed; a missing table is not harmless at all.
     """
     out = []
+    # Same distinction as read_pdf: a missing engine is not an empty document. See MissingReader.
     try:
         import mammoth
+    except ImportError:
+        raise MissingReader(
+            "%s is a .docx and `mammoth` is not installed, so its text was never read.\n"
+            "This is NOT the same as 'the document contains no quotations' - nothing was "
+            "examined.\n"
+            "Install it:  pip install \"krokai[docx]\"   (or krokai[all])" % os.path.basename(path))
+    try:
         with open(path, "rb") as fh:
             out.append(mammoth.extract_raw_text(fh).value)
     except Exception:

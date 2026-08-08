@@ -10,6 +10,40 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.7.7] - 2026-08-07
+
+**A bare `pip install krokai` read a PDF as "" and reported the document as checked.**
+
+0.7.6 shipped with `dependencies = []`, on the reasoning that every third-party import here already
+sits in a `try/except` with a working degraded path, so a hard requirement would break exactly the
+locked-down machines this tool is aimed at. The reasoning about *installability* was right. The
+conclusion that it was therefore safe was wrong, and two independent external reviewers said so in
+the same round.
+
+Measured on the published 0.7.6 wheel in an empty virtualenv, before the fix:
+
+    read_pdf(sample.pdf)   -> ''
+    read_docx(sample.docx) -> ''
+    read_any(sample.pdf)   -> ''
+
+No error. No warning. The checker then saw an empty document and reported zero quotations found,
+which is indistinguishable from a clean bill of health. **That is the same shape as the packs
+defect fixed in 0.7.5, one layer up: a tool that succeeds at nothing is worse than one that fails,
+because nobody investigates a clean report.** In a product whose entire premise is "a grounded
+citation does not prove the quote is real", shipping a silent no-op is the worst available bug.
+
+The cause was `except Exception`, which swallows `ImportError` next to a corrupt file. The
+distinction is now drawn at the import rather than at the result, because an empty text layer is a
+real and common answer - a scanned statute genuinely reads as "" - and must not become an error.
+
+- New `krokai.readers.MissingReader`, raised when a file's FORMAT needs an engine that is absent.
+  The message says what did NOT happen ("nothing was examined", not "nothing was found") and names
+  the exact command: `pip install "krokai[pdf]"`.
+- Six regression tests, including the control that matters: with the engines present, an unreadable
+  PDF must still return "" and must NOT raise, or every scanned statute in a corpus becomes a crash.
+
+`dependencies = []` stays. Optional was never the problem; silent was.
+
 ## [0.7.6] - 2026-08-07
 
 **The git tag did not point at the commit PyPI actually published, in a project about provenance.**

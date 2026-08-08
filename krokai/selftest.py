@@ -1601,6 +1601,91 @@ def suite_sidecar_not_a_source(tmp):
        not _current(dst, src))
 
 
+def suite_missing_engine_is_loud(tmp):
+    """A format whose engine is absent must RAISE, never return "".
+
+    🔴 THIS IS THE DEFECT THE PACKAGING ROUND ALMOST SHIPPED. Every third-party import here is
+    optional on purpose, so `pip install krokai` works on a machine where nothing else may be
+    installed. But `read_pdf` caught `Exception`, which swallows `ImportError` next to a corrupt
+    file, so a bare install handed back "" - and the checker then reported the document as examined
+    with zero quotations found. Measured on the real 0.7.6 wheel in an empty venv before the fix:
+    `read_pdf(sample.pdf)` -> `''`, `read_docx` -> `''`, `read_any` -> `''`, no warning anywhere.
+
+    Both external reviewers flagged `dependencies = []` in the same round and both were right; the
+    packaging note that called it safe was wrong. Optional must mean degraded LOUDLY.
+
+    An empty text layer stays a legitimate answer - a scanned statute really does read as "" - so
+    the test below also pins that the distinction is drawn at the IMPORT, not at the result.
+    """
+    import builtins
+    from krokai.readers import MissingReader
+    import krokai.readers as R
+
+    pdf = os.path.join(tmp, "engine-probe.pdf")
+    io.open(pdf, "wb").write(b"%PDF-1.4" + b"\n")
+    docx = os.path.join(tmp, "engine-probe.docx")
+    io.open(docx, "wb").write(b"PK" + bytes([3, 4]))
+
+    real_import = builtins.__import__
+
+    def hide(names):
+        def fake(name, *a, **kw):
+            if name in names:
+                raise ImportError("hidden by the self-test: %s" % name)
+            return real_import(name, *a, **kw)
+        return fake
+
+    builtins.__import__ = hide({"pypdf", "fitz"})
+    try:
+        try:
+            R.read_pdf(pdf)
+            ok("readers: a PDF with no engine installed raises rather than returning ''", False,
+               "returned quietly")
+        except MissingReader as e:
+            msg = str(e)
+            ok("readers: a PDF with no engine installed raises rather than returning ''", True)
+            ok("readers: the message says nothing was examined, not that nothing was found",
+               "nothing was examined" in msg, msg.splitlines()[1] if len(msg.splitlines()) > 1 else msg)
+            ok("readers: the message names the exact install command",
+               "krokai[pdf]" in msg, msg.splitlines()[-1])
+    finally:
+        builtins.__import__ = real_import
+
+    builtins.__import__ = hide({"mammoth"})
+    try:
+        try:
+            R.read_docx(docx)
+            ok("readers: a .docx with no engine installed raises", False, "returned quietly")
+        except MissingReader as e:
+            ok("readers: a .docx with no engine installed raises", True)
+            ok("readers: the .docx message names the exact install command",
+               "krokai[docx]" in str(e), str(e).splitlines()[-1])
+    finally:
+        builtins.__import__ = real_import
+
+    # 🔴 The control, and it must be GATED on the engines really being there, not assume it.
+    #
+    # This assertion caught itself. Run from a venv installed with `--no-deps`, pypdf and fitz are
+    # genuinely absent, `read_pdf` correctly raised, and the control went red - reporting a defect
+    # in the fix when the real fault was its own premise. A control arm whose precondition is never
+    # checked measures the environment rather than the code.
+    #
+    # What it guards is worth the care: with an engine present, an unreadable or image-only PDF must
+    # still come back "" and must NOT raise, or every scanned statute in a corpus becomes a crash.
+    engines = R.engines_available()
+    if engines.get("pypdf") or engines.get("PyMuPDF"):
+        try:
+            out = R.read_pdf(pdf)
+            ok("readers: CONTROL - engine present, unreadable PDF returns '' and does not raise",
+               out == "", repr(out)[:60])
+        except MissingReader:
+            ok("readers: CONTROL - engine present, unreadable PDF returns '' and does not raise",
+               False, "raised MissingReader while an engine was importable")
+    else:
+        print("note: readers CONTROL skipped - no PDF engine in this environment, so its "
+              "'engine present' premise does not hold. Run it where krokai[pdf] is installed.")
+
+
 def suite_readers_signature():
     """🔴 A signature field is not an answer, and its value is not a string.
 
@@ -2072,6 +2157,7 @@ def main():
         suite_hooks_stdin(tmp)
         suite_sidecar_not_a_source(tmp)
         suite_readers_signature()
+        suite_missing_engine_is_loud(tmp)
         suite_fetch(tmp)
         suite_placeholder()
         suite_revision_and_window()
