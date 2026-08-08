@@ -40,7 +40,12 @@ import json
 import os
 import re
 
-PACKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "packs")
+from ._datadir import data_dir
+
+# Was `<pkg>/../packs`, which resolves to `site-packages/packs` once installed and therefore
+# never exists. `available_packs()` returns [] for a missing directory, so the tool would have
+# run and silently verified nothing. See `_datadir.py`.
+PACKS_DIR = data_dir("packs")
 
 __all__ = ["Pack", "PackSet", "load_packs", "available_packs"]
 

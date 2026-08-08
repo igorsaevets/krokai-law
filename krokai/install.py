@@ -34,6 +34,8 @@ import shutil
 import sys
 import time
 
+from ._datadir import data_dir
+
 MARKER = "krokai"
 
 EVENTS = [
@@ -107,9 +109,11 @@ def merge(existing, block, hooks_dir, remove=False):
 
 
 def main(a):
-    hooks_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hooks")
+    # data_dir(), not `<pkg>/../hooks`: that path is `site-packages/hooks` in an installed copy
+    # and never exists, so `krokai install` was unreachable for anyone who used pip. _datadir.py.
+    hooks_dir = data_dir("hooks")
     if not os.path.isdir(hooks_dir):
-        print("hooks folder not found next to the package: %s" % hooks_dir)
+        print("hooks folder not found, looked in: %s" % hooks_dir)
         return 2
 
     python = sys.executable or "python"

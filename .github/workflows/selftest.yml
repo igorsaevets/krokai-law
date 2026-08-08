@@ -98,3 +98,46 @@ jobs:
       - run: pip install --quiet pypdf pymupdf mammoth
       - run: python -m krokai selftest
       - run: python -m krokai doctor || true
+
+  # 🔴 THE SUITE ABOVE RUNS FROM THE CHECKOUT, AND THAT IS THE ONE LAYOUT WHERE THE BUG COULD NOT
+  # APPEAR. This package's data lives at the repository root; the code reached it by walking one
+  # level up out of the package, which resolves in a clone and points at `site-packages` once
+  # installed. The clone suite passed 421/421 for the whole life of the defect. This job builds
+  # the wheel, installs it somewhere else, and runs it from an unrelated directory.
+  installed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Build and install the wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build --wheel
+          python -m venv /tmp/probe
+          /tmp/probe/bin/python -m pip install --quiet dist/*.whl
+      - name: Run the suite from the INSTALLED copy, from an unrelated directory
+        working-directory: /tmp
+        run: /tmp/probe/bin/krokai selftest
+      - name: The shipped data must be reachable from the installed package
+        working-directory: /tmp
+        run: |
+          /tmp/probe/bin/python -c "
+          from krokai.citations import available_packs
+          from krokai.consult import load_registry, REGISTRY_NAME
+          packs = available_packs()
+          assert 'us-federal' in packs, 'citation packs unreachable when installed: %s' % packs
+          load_registry()
+          print('installed copy sees packs=%s and finds %s' % (packs, REGISTRY_NAME))
+          "
+
+  # The check that would have caught 2026-08-04: a workflow with a YAML syntax error is still
+  # listed 'active', still accepts its cron, notifies nobody, and never runs.
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker://rhysd/actionlint:latest
+        with:
+          args: -color

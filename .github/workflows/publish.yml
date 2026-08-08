@@ -1,0 +1,83 @@
+# Publish to PyPI on a version tag, using Trusted Publishing.
+#
+# 🔴 THERE IS NO API TOKEN IN THIS REPOSITORY AND THERE MUST NEVER BE ONE.
+#
+# Trusted Publishing is OpenID Connect. GitHub mints a short-lived, audience-scoped identity token
+# for this specific workflow file in this specific repository; PyPI checks that token against a
+# publisher it was told to trust and hands back an upload token that lives for about fifteen
+# minutes. Nothing long-lived exists at any point, so there is nothing to leak, rotate, or
+# accidentally paste. A stolen `PYPI_API_TOKEN` uploads whatever the thief likes until someone
+# notices; a stolen OIDC token has already expired.
+#
+# The one-time setup that makes this work is on PyPI, not here - a "pending publisher" naming
+# exactly this repo, this workflow filename, and this environment. If the names do not match
+# byte for byte the upload is rejected, which is the point.
+#
+#   owner:       igorsaevets
+#   repository:  krokai-law
+#   workflow:    publish.yml       <- this file's NAME, not its path
+#   environment: pypi
+#
+# WHY THIS RUNS THE SUITE FROM THE INSTALLED WHEEL AND NOT FROM THE CHECKOUT. This package keeps
+# its data - `packs/`, `templates/`, `hooks/`, `channels.json` - at the repository root, and the
+# code used to reach it by walking one level up out of the package. From a clone that resolves;
+# installed it points at `site-packages` and finds nothing, silently. The clone suite passed
+# 421/421 the whole time. Only running the wheel could see it, so that is what runs here.
+#
+# A PyPI version number can never be reused, even after `yank`. Publishing a broken 0.7.4 means
+# the next attempt is 0.7.5 and 0.7.4 stays in the index forever as a trap for anyone who pins.
+
+name: publish
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+
+      - name: Check the metadata PyPI will reject on
+        run: python -m twine check dist/*
+
+      # The wheel is installed and RUN, not merely built. A wheel that builds is not a wheel that
+      # works: this project's data used to live outside the package, and every local check passed
+      # while the installed copy could not find it.
+      - name: Install the built wheel into a clean environment and run it
+        run: |
+          python -m venv /tmp/probe
+          /tmp/probe/bin/python -m pip install --quiet dist/*.whl
+          cd /tmp
+          /tmp/probe/bin/krokai selftest      # 397 of 421; 24 repo-hygiene tests skip aloud
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write        # the whole mechanism. Without this the OIDC token is never minted.
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

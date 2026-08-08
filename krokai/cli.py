@@ -15,6 +15,7 @@ import os
 import sys
 
 from . import __version__
+from ._datadir import data_dir
 
 if hasattr(sys.stdout, "reconfigure"):
     # Without this, output goes out in the console's legacy code page on Windows and any non-ASCII
@@ -45,7 +46,8 @@ def _krokai_command():
 
 
 def _render_snippet():
-    tpl_path = os.path.join(ROOT, "templates", "CLAUDE.md.snippet")
+    # data_dir(), not ROOT: `<pkg>/..` is `site-packages` in an installed copy. See _datadir.py.
+    tpl_path = os.path.join(data_dir("templates"), "CLAUDE.md.snippet")
     tpl = io.open(tpl_path, encoding="utf-8", errors="replace").read()
     # The leading HTML comment is instructions for the person pasting by hand. Rendered into a
     # client's CLAUDE.md it would be loaded into context on every request while saying nothing to

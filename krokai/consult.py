@@ -68,6 +68,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Imported at module level, not inside a handler: a scrub that has to be imported while an
 # exception is being formatted is a scrub that is skipped exactly when it matters.
+from ._datadir import data_file
 from .redact import scrub
 
 __all__ = ["load_registry", "plan", "run_round", "triage", "grounding_of",
@@ -161,8 +162,11 @@ def load_registry(explicit=None, start=None):
         if parent == cwd:
             break
         cwd = parent
-    tried.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                              REGISTRY_NAME))
+    # The shipped copy, and it stays LAST so a user's own edit still wins. Was
+    # `<pkg>/../channels.json`, i.e. `site-packages/channels.json` in an installed copy, which
+    # never exists - so `krokai review` raised SystemExit for every pip user while working from a
+    # clone. data_file() checks inside the package first, then beside it. See _datadir.py.
+    tried.append(data_file(REGISTRY_NAME))
     for p in tried:
         if p and os.path.exists(p):
             with io.open(p, encoding="utf-8") as f:

@@ -32,8 +32,37 @@ import tempfile
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+from ._datadir import data_dir
+
 PASS = []
 FAIL = []
+
+
+def _is_source_checkout(root):
+    """True when `root` is this project's own working tree rather than `site-packages`.
+
+    Both markers are required. `CHANGELOG.md` alone is too weak - it is a common filename and
+    site-packages can contain one from any dependency; `krokai/selftest.py` alone is satisfied by
+    the installed package itself. Together they identify a checkout of THIS repository.
+    """
+    return (os.path.isfile(os.path.join(root, "CHANGELOG.md"))
+            and os.path.isfile(os.path.join(root, "krokai", "selftest.py")))
+
+
+def _hook_module(name):
+    """Import a hook in either layout.
+
+    🔴 This suite used a bare `from hooks import bank_queue`, which only resolves when the
+    repository root is on sys.path - that is, from a clone. Installed from a wheel the hooks live
+    at `krokai.hooks`, the bare import raises ModuleNotFoundError, and the suite died at test 400
+    of 421. It was found by running the installed package, not by reading it: from a clone the
+    suite passed 421/421 and said nothing.
+    """
+    try:
+        mod = __import__("krokai.hooks." + name, fromlist=[name])
+    except ImportError:
+        mod = __import__("hooks." + name, fromlist=[name])
+    return mod
 
 
 def ok(name, cond, note=""):
@@ -1497,8 +1526,8 @@ def suite_hooks_stdin(tmp):
     io.open(os.path.join(root, "QUOTE-BANK.md"), "w", encoding="utf-8").write(
         "# Quote bank\n\n### 1\n\n> a placeholder entry matching nothing in this suite\n")
 
-    hook = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                        "hooks", "quote_guard.py")
+    # data_dir(), not `<pkg>/../hooks`: `site-packages/hooks` never exists. See _datadir.py.
+    hook = os.path.join(data_dir("hooks"), "quote_guard.py")
     if not os.path.exists(hook):
         ok("hooks: quote_guard.py is present", False, hook)
         return
@@ -1535,7 +1564,7 @@ def suite_hooks_stdin(tmp):
     ok("hooks: the memo records WHEN, so it can expire",
        isinstance(entries, dict) and all(isinstance(v, (int, float)) for v in entries.values()),
        "%d entries" % len(entries))
-    from hooks import bank_queue as _bq            # noqa: F401
+    _bq = _hook_module("bank_queue")
     import inspect as _i
     ok("hooks: bank_queue screens this toolkit's own output out of its corpus",
        "sentinel=SENTINELS" in _i.getsource(_bq.main))
@@ -1900,7 +1929,7 @@ def suite_review_r21(tmp):
 
     # 🔴 The one handler whose purpose is to record a death recorded it nowhere.
     import inspect as _i
-    from hooks import bank_queue as _bq
+    _bq = _hook_module("bank_queue")
     tail = _i.getsource(_bq)
     tail = tail[tail.rindex('if __name__'):]
     code = [l for l in tail.splitlines() if not l.strip().startswith("#")]
@@ -2048,9 +2077,26 @@ def main():
         suite_revision_and_window()
         suite_library_index(tmp)
         suite_review_r21(tmp)
-        suite_no_real_identifiers(root)
-        suite_rename(root)
-        suite_docs(root)
+
+        # 🔴 THESE THREE SCAN THE SOURCE TREE, NOT THE PRODUCT, so they mean something only from a
+        # checkout. `root` is `<pkg>/..`, which is `site-packages` in an installed copy - and there
+        # the identifier scanner walked pip's own vendored code and reported six LABELLED_SECRET
+        # findings in `pip/_internal/network/auth.py`. A leak detector that confidently accuses a
+        # third-party dependency is worse than one that does not run, because somebody would have
+        # believed it. Found by running the wheel; from a clone this suite passed 421/421 and said
+        # nothing.
+        #
+        # The skip is announced, not silent. A test that quietly vanishes reads as a test that
+        # passed, which is the exact failure shape this project exists to catch.
+        if _is_source_checkout(root):
+            suite_no_real_identifiers(root)
+            suite_rename(root)
+            suite_docs(root)
+        else:
+            print("note: 3 repository-hygiene suites skipped - this is an installed copy, not a\n"
+                  "      source checkout, so there is no tree of ours to scan (looked in: %s).\n"
+                  "      To run them: git clone the repo and `python -m krokai selftest` there."
+                  % root)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
