@@ -10,6 +10,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.7.6] - 2026-08-07
+
+**The git tag did not point at the commit PyPI actually published, in a project about provenance.**
+
+0.7.5 went out mid-sequence: the tag was pushed, the publish workflow uploaded, and only then did
+the self-test catch that the new CHANGELOG heading used `## 0.7.5` while the version-agreement
+check reads the Keep a Changelog form `^## \[([0-9][^\]]*)\]`. The heading was fixed and the tag
+moved - but a PyPI version can never be re-uploaded, so the second publish run returned
+`400 Bad Request` and the artefact in the index stayed on the earlier commit.
+
+The difference was exactly one line, in a changelog heading, verified with
+`git diff --stat 26dda3d de3dd45`. Nothing about the code differed. It would have been reasonable
+to leave it.
+
+It is fixed anyway, because "the tag names something other than what shipped" is the precise
+failure this toolkit exists to catch one level down, and a rule you suspend for yourself when the
+discrepancy is small is not a rule. 0.7.6 is 0.7.5 plus the heading, published from the commit its
+tag names.
+
+Worth keeping: PyPI's own Sigstore attestation binds the upload to a commit, so the ground truth
+was public and immutable the whole time regardless of what the git tag claimed.
+
 ## [0.7.5] - 2026-08-07
 
 **`pip install krokai` would have installed a tool that verifies nothing, and said nothing.**
