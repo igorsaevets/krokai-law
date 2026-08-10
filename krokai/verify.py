@@ -70,7 +70,24 @@ SPEAKER_RE = re.compile(
 RESPONSE_RE = re.compile(r"(Response:|DHS responds|The (Service|Department) (agrees|disagrees)|"
                          r"We agree|We disagree|responds as follows)")
 
-_STRIP = ".,;:()[]\"'`"
+_STRIP = ".,;:()[]\"'`«»‘’“”"
+
+# 🔴 Cite-token guard. `_STRIP` includes `(` and `)`, so `(b)(16)(i)` reaches `word_diff` as
+# `b)(16)(i` — every character is still correct, but the digit rule below would promote it to
+# OPERATOR by shape. That is the exact noise the digit rule exists to prevent from swallowing
+# real signal. Match on the post-strip form.
+#
+# 🔴 REGEX MUST REQUIRE INTERNAL `)(` STRUCTURE.  Named by the T58 panel (Codex + Spark 11 +
+# Spark 12 + agy 36flash converged). An earlier version `^\(?[a-z]{1,4}\)?(?:\(?[0-9ivxlcdm]
+# {1,5}\)?)+$` matched anything of shape "letters + digits", including `v2`, `x64`, `a1`,
+# `file1`, `test1`, `covid19`, `sec1` — non-citation labels whose edits are genuine and must
+# stay in OPERATOR. Requiring at least one internal `)(` (paren-stripped `x)(y)` or whole
+# `(x)(y)`) narrows to real citation shapes: `(a)(1)`, `(b)(16)(i)`, `b)(16)(i`, `b)(16)(ii`.
+# Everything Codex named as a false positive fails this regex.
+_CITE_TOKEN_RE = re.compile(
+    r"^\(?[a-z]{1,4}\)\(?[a-z0-9ivxlcdm]{1,5}(?:\)\(?[a-z0-9ivxlcdm]{1,5})*\)?$",
+    re.I,
+)
 
 # An extractor drops a footnote INTO the sentence it annotates. Measured on an agency memorandum:
 # "...the applicant may [14 See Matter of Blas, 15 I&N Dec. at 628 (...)] need to offset...".
@@ -124,7 +141,19 @@ def word_diff(quote, src):
     hits |= {p for p in SCOPING if p in span}
     # 🔴 A changed token carrying a digit is a date, a threshold, or a paragraph number. Losing one
     # is never typography: "for the 2021-22 academic year" was once scored a minor difference.
-    hits |= {w for w in changed if any(ch.isdigit() for ch in w)}
+    #
+    # 🔴 EXCEPT when a citation-shaped token is IDENTICAL on both sides. The AOS observation was
+    # that `(b)(16)(i)` in a span with other changes could end up in `changed` via alignment
+    # cascade and get falsely promoted to OPERATOR. Sound guard: exclude a cite-shaped token
+    # from OPERATOR only if the SAME token exists on the OTHER side (an alignment artifact,
+    # not a real cite change). Codex T58 rejected the earlier blanket guard as a regression —
+    # `(b)(16)(i)` → `(b)(16)(ii)` is a real pincite change and MUST stay OPERATOR-severity.
+    q_cites = {w for w in a if _CITE_TOKEN_RE.match(w) and any(ch.isdigit() for ch in w)}
+    s_cites = {w for w in b if _CITE_TOKEN_RE.match(w) and any(ch.isdigit() for ch in w)}
+    identical_cites = q_cites & s_cites
+    hits |= {w for w in changed
+             if any(ch.isdigit() for ch in w)
+             and not (_CITE_TOKEN_RE.match(w) and w in identical_cites)}
     return changed, sorted(hits), False
 
 

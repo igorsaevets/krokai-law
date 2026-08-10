@@ -104,8 +104,25 @@ NOISE = re.compile(
     r"\bmax_tokens\b|\btool_use\b|\bexit \d|\bHTTP \d|Exhibit\s|Screenshot|"
     r"\.py\b|\.md\b|\.json\b|https?://|%TEMP%|\$\{|\bTODO\b|\bFIXME\b", re.I)
 
-_QUOTE_RE = re.compile(r'[«"“]([^«»"“”\n]{55,700})[»"”]')
-_BLOCKQ_RE = re.compile(r"(?m)^>\s?(.{55,})$")
+# 🔴 THREE MEASURED MISSES, back-ported from the source project the day after 0.7.7 shipped.
+#
+# (1) `_QUOTE_RE` allows a SINGLE `\n` inside the quoted span — the soft wrap an editor inserts.
+#     A paragraph break (`\n` followed by whitespace + `\n`) still terminates. Execution proof:
+#     the same quotation, single-line vs wrapped, previously gave exit 2 vs exit 0.
+# (2) `_QUOTE_RE` also accepts curly single quotes ‘…’ as delimiters. ASCII `'` is deliberately
+#     NOT a delimiter — it would match "student's" and manufacture a false quotation.
+# (3) `_BLOCKQ_RE` allows leading `[ \t]*` before the `>` — a blockquote nested inside a list.
+#     Measured in the source project: 77 indented blockquotes, 39 of them in the file the queue
+#     hook writes; the guard was blind to nearly half of its own output.
+_QUOTE_RE = re.compile(r'[«"“‘]((?:[^«»"“”‘’\n]|\n(?!\s*\n)){55,700})[»"”’]')
+_BLOCKQ_RE = re.compile(r"(?m)^[ \t]*>\s?(.{55,})$")
+
+# A paragraph of consecutive blockquote lines. Without this, a rule wrapped at <55 chars per
+# line yielded ZERO candidates — measured on a four-line source. The joined text lands in
+# candidates() before the single-line pass, so a paragraph wins and the per-line hits below
+# dedup out against it.
+_BLOCKQ_PARA_RE = re.compile(r"(?m)^[ \t]*>[^\n]*(?:\n[ \t]*>[^\n]*)*")
+_BLOCKQ_PREFIX_RE = re.compile(r"^[ \t]*>\s?")
 
 
 def read_bank(path):
@@ -166,20 +183,38 @@ def candidates(text, min_len=55, min_latin_share=0.75):
     letters, which never occurs in English because words are separated by spaces; the check
     silently returned "0 quotations" on a file full of them. The right signal is the latin
     **share**, never a run.
+
+    🔴 THREE EXTRACTORS, RUN IN THIS ORDER: paragraph → line → inline. The paragraph pass runs
+    first so a multi-line blockquote is joined once; the single-line pass and the inline-quote
+    pass are dedup'd against it by the `q in s or s in q` check below. Reversing the order made
+    a wrapped norm register as N one-line fragments — none long enough — and disappear.
     """
     out, seen = [], []
-    for m in list(_BLOCKQ_RE.finditer(text or "")) + list(_QUOTE_RE.finditer(text or "")):
-        q = " ".join(m.group(1).split())
+
+    def _add(q_raw):
+        q = " ".join(q_raw.split())
         if len(q) < min_len or NOISE.search(q):
-            continue
+            return
         if latin_share(q) < min_latin_share:
-            continue
-        # The same span is caught both as a blockquote and as a quoted string. Without dedup the
-        # guard showed it twice in a row, which reads as two problems.
+            return
+        # The same span is caught by more than one pass. Without dedup the guard showed the
+        # quotation twice in a row, which reads as two problems.
         if any(q in s or s in q for s in seen):
-            continue
+            return
         seen.append(q)
         out.append(q)
+
+    for m in _BLOCKQ_PARA_RE.finditer(text or ""):
+        # Strip the `> ` (and leading indent) from each captured line, join with a space.
+        lines = m.group(0).splitlines()
+        _add(" ".join(_BLOCKQ_PREFIX_RE.sub("", ln) for ln in lines))
+
+    for m in _BLOCKQ_RE.finditer(text or ""):
+        _add(m.group(1))
+
+    for m in _QUOTE_RE.finditer(text or ""):
+        _add(m.group(1))
+
     return out
 
 

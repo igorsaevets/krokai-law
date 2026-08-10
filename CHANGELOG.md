@@ -10,6 +10,113 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.8.0] - 2026-08-10
+
+**One subcommand updates any install. Four extractor misses closed, one verifier trap closed.**
+
+The subcommand `krokai upgrade` detects whether this install lives under `site-packages` (pip),
+in a git clone, or a copied folder — and runs the right tool for each. On success it re-runs
+`install-hooks` in the current matter so `settings.json` points at the freshly downloaded
+scripts, and prints the top of this file so the reader knows what changed. `--dry-run` reports
+what it WOULD run without touching anything. It never mutates a settings file for a matter it
+cannot find (a `casefile.json` up the tree), and it never repairs a state it does not
+understand — a git clone with local commits refuses `--ff-only` and says so.
+
+The assistant-facing brief is updated: `INSTALL-FOR-AI.md` now has an "Updating an existing
+install" section that documents the find-the-install chain (`pip show krokai` → the matter's
+own `settings.json` → common paths → ask), what `upgrade` prints, and what the assistant
+should REPORT at the end. The point of naming this in an assistant brief rather than a human
+one is the same as everything else in that file: the failure mode "updated successfully" is
+what the shipping toolkit exists to prevent one level down, and the update path does not get
+to make the same mistake.
+
+### Extractor: four measured misses closed, back-ported from the source project's hooks
+
+Each was execution-verified in the source project; every one lands as a new self-test here, so
+the guard cannot silently regress.
+
+- **Multi-line blockquote paragraph.** A norm wrapped at fewer than 55 characters per line
+  yielded ZERO candidates: measured on a four-line source, four lines, no matches. The new
+  `_BLOCKQ_PARA_RE` joins consecutive `>` lines before the length gate. The paragraph pass
+  runs first, so the single-line pass and the inline-quote pass are dedup'd against it.
+- **Indented blockquote.** A blockquote inside a list (`   > ...`) was invisible; the regex
+  anchored on `^>` at column zero only. Measured in the source project's own queue file: 77
+  indented blockquotes, 39 of them inside the file the queue hook writes. The guard was blind
+  to nearly half of its own history.
+- **Line-wrapped straight quote.** A single `\n` inside `"…"` terminated the extraction; a
+  paragraph break should terminate, a soft wrap should not. Execution proof: the same
+  quotation, one line vs wrapped, previously exited 2 vs 0 through `quote_guard`.
+- **Curly single quotes as delimiters.** `‘…’` produced zero candidates. ASCII `'` remains
+  deliberately not a delimiter — it would match `student's` and manufacture a false quotation
+  out of prose. The negative control is a self-test.
+
+### Verifier: `word_diff` no longer promotes a stripped citation token to OPERATOR when it is an alignment artifact
+
+`_STRIP` includes `(` and `)`, so `(b)(16)(i)` reaches `word_diff` as `b)(16)(i` — every
+character is still correct, but the digit rule would then promote it to OPERATOR by shape.
+The new `_CITE_TOKEN_RE` recognises the citation shape (whole or paren-stripped, always
+requiring an internal `)(` structure) and the guard excludes a cite-shaped token from
+OPERATOR only when the SAME token exists on the OTHER side — an alignment artifact, not a
+real cite change. A real pincite change like `(b)(16)(i)` → `(b)(16)(ii)` still fires
+OPERATOR, because the two tokens are not identical. Codex + Spark 11 + Spark 12 named the
+earlier blanket guard as a regression (it demoted real pincite edits to ALTERED); this design
+survives both tests and is locked in with self-tests, including counter-tests that
+non-citation labels like `v1→v2`, `x64→x86`, `a1→a2`, `file1→file2` also stay OPERATOR.
+
+`_STRIP` also gained the smart-quote set `«»‘’“”`, so a quote at a smart-quoted word boundary
+strips cleanly rather than reaching the diff as an extra token.
+
+### `krokai upgrade` — layout detection hardened
+
+Panel-driven fixes to `upgrade.py`:
+
+- **Editable installs are detected via PEP 610 `direct_url.json`** (the authoritative signal),
+  not by looking for `site-packages` in the module path. An editable install (`pip install
+  -e .`) resolves `krokai.__file__` to the source dir, not `site-packages` — the old check
+  would have misdetected it as `git` and pulled the developer's own tree.
+- **`site-packages` / `dist-packages` is now a path-COMPONENT check**, not a substring, so a
+  folder called `my-site-packages-project` does not misdetect as pip.
+- **`git` layout requires the `origin` remote to name `krokai-law`** before `git pull` runs.
+  A copied krokai folder placed inside an unrelated user repo (Spark 11's dangerous case) now
+  falls through to `copy` layout instead of `git pull`-ing the user's own tree.
+- **`.git` FILE (git worktree / submodule) is recognised** alongside `.git` directory (Codex).
+- **`git pull --ff-only` gets a preflight**: `git status --porcelain` + `git rev-list
+  --left-right --count HEAD...@{u}` tell the user what specifically is wrong (dirty tree,
+  local commits, diverged history) before touching the network. The bare git error is not
+  the UX for an AI-assisted installer.
+- **PEP 668 externally-managed** is handled: pip's non-zero exit prints the two safe options
+  (`--user`, or a virtual environment) rather than a raw error.
+- **`_refresh_hooks` runs in a fresh subprocess** via `sys.executable -m krokai install-hooks`
+  so post-update hook logic runs from the NEWLY downloaded code, not the stale 0.x objects
+  still cached in `sys.modules` from before the update. For 0.7.7→0.8.0 the shape is
+  unchanged so it did not matter; for the first release that renames a hook or changes the
+  settings shape it would have silently written a stale `settings.json`. Named by Codex +
+  Spark 11 + Spark 12 + agy 36flash.
+
+### Assistant brief: `INSTALL-FOR-AI.md#updating-an-existing-install`
+
+The find-the-install ladder now leads with **PATH** (`command -v krokai` / `Get-Command
+krokai`), then `pipx list`, `uv tool list`, `pip show`, the matter's `settings.json`, common
+paths, ask. `pipx` and `uv tool` install isolated venvs that `pip show` in the outer
+interpreter cannot see; the console-script entry point makes PATH the fastest and most
+reliable rung. Missing PATH-first was Codex + Spark 11 + Spark 12 finding.
+
+### Self-test: 427 → **460**
+
+Every new capability and every panel finding lands as a new test.
+
+- `suite_bank`: 5 extractor cases + 1 negative control (ASCII apostrophe is not a delimiter).
+- `suite_word_diff`: 2 cite-guard cases + 4 non-citation label counter-tests
+  (`v1→v2`, `x64→x86`, `a1→a2`, `file1→file2` all still fire OPERATOR).
+- `suite_upgrade` (NEW): 17 tests covering `detect_layout` shape, `_editable_source_dir`,
+  `_has_git_meta` for both directory and worktree file forms, `_remote_names_krokai`
+  negative case, `_top_changelog_from_text` extraction and boundary, cite-regex control set,
+  and an out-of-process `krokai upgrade --dry-run` smoke that asserts the report signature
+  and that the word "successfully" never appears.
+
+The clone suite runs 460/460; the `installed` CI job runs the same suite on the wheel and
+skips 3 repo-hygiene suites that only make sense in a checkout.
+
 ## [0.7.7] - 2026-08-07
 
 **A bare `pip install krokai` read a PDF as "" and reported the document as checked.**

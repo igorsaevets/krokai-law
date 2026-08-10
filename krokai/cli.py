@@ -927,6 +927,19 @@ def build_parser():
     p.add_argument("--uninstall", action="store_true")
     p.set_defaults(fn=lambda a: __import__("krokai.install", fromlist=["main"]).main(a))
 
+    # `upgrade` — one subcommand does the update, whichever install layout this copy is in.
+    # See krokai/upgrade.py for the reasoning; the assistant-facing brief lives in
+    # INSTALL-FOR-AI.md under "Updating".
+    p = sub.add_parser("upgrade", help="update THIS install of krokai to the latest release")
+    p.add_argument("--dry-run", action="store_true",
+                   help="print what WOULD run and detect the install layout; change nothing")
+    p.add_argument("--skip-hooks", action="store_true",
+                   help="do not refresh install-hooks in the current matter after the update")
+    p.add_argument("--scope", choices=["project", "user"], default="project",
+                   help="hook refresh scope; ignored when --skip-hooks is set")
+    p.add_argument("--dir", help="matter root; default: walk up from cwd looking for casefile.json")
+    p.set_defaults(fn=lambda a: __import__("krokai.upgrade", fromlist=["cmd_upgrade"]).cmd_upgrade(a))
+
     return ap
 
 

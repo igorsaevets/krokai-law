@@ -437,6 +437,47 @@ def suite_word_diff():
                                   "the officer may approve the request today")
     ok("word_diff is silent on identical text", not changed and not hits)
 
+    # --- cite-token guard back-ported from AOS round 29, redesigned per T58 panel ---------------
+    #
+    # `_STRIP` includes `(` and `)`, so `(b)(16)(i)` reaches word_diff as `b)(16)(i`. That token
+    # carries digits and got promoted to OPERATOR by the digit rule — the exact noise the digit
+    # rule exists to prevent from swallowing real signal. The guard excludes cite-shaped tokens
+    # from OPERATOR promotion — but ONLY when the SAME cite token is on the other side (an
+    # alignment artifact, not a real cite change).
+    #
+    # Codex T58 (round 29) rejected the earlier blanket guard because it demoted real pincite
+    # edits like `(b)(16)(i)` → `(b)(16)(ii)` from OPERATOR to ALTERED. This is the design that
+    # survives BOTH tests.
+
+    changed, hits, _u = word_diff(
+        "the officer shall (b)(16)(i) determine the application without further delay",
+        "the officer shall (b)(16)(i) determine the application without further delay")
+    ok("word_diff: an identical parenthesised citation does not fire OPERATOR",
+       not hits, "%s" % (hits,))
+
+    # 🔴 The Codex T58 test: a citation that ACTUALLY changed must stay OPERATOR. `(b)(16)(i)` vs
+    # `(b)(16)(ii)` is a real pincite change — a legal signal — and must not be demoted to
+    # ALTERED. The earlier "counter-test" that only asserted the tokens appear in `changed` was
+    # a hollow check; the real assertion is `hits` non-empty.
+    changed, hits, _u = word_diff(
+        "as required by 8 CFR 214.2 (b)(16)(i) of this section",
+        "as required by 8 CFR 214.2 (b)(16)(ii) of this section")
+    ok("word_diff: a REAL cite change (i vs ii) survives to OPERATOR (Codex T58)",
+       bool(hits) and any(any(ch.isdigit() for ch in h) for h in hits),
+       "%s :: %s" % (changed, hits))
+
+    # 🔴 Codex/Spark T58 counterexamples: non-citation short labels with digits MUST stay in
+    # OPERATOR. Tokens like v2, x64, a1, file1, sec1 are ordinary identifiers whose edits are
+    # substantive; an over-broad cite guard silenced them. The tightened regex requires an
+    # internal `)(` structure, so these fail it and the digit rule catches them.
+    for pair in [("v1", "v2"), ("x64", "x86"), ("a1", "a2"), ("file1", "file2")]:
+        q_txt = "release the %s edition of the manual next quarter" % pair[0]
+        s_txt = "release the %s edition of the manual next quarter" % pair[1]
+        _c, hits2, _u = word_diff(q_txt, s_txt)
+        ok("word_diff: label change %s vs %s still fires OPERATOR (T58 counter)"
+           % (pair[0], pair[1]),
+           bool(hits2), "%s -> hits=%s" % (pair, hits2))
+
 
 def suite_citations():
     from krokai.citations import load_packs, available_packs
@@ -661,6 +702,146 @@ def suite_bank(tmp):
     ok("bank: the queue records open items", op == 2 and done == 0, "%d/%d" % (op, done))
     body = io.open(q, encoding="utf-8").read()
     ok("bank: a per-turn cap is stated out loud, never silent", "7" in body and "cap" in body.lower())
+
+    # --- extractor gains ported from the source project's hooks, 2026-08-10 ---------------------
+    #
+    # Every one of these is a class of quotation that returned ZERO candidates before the fix.
+
+    # (a) multi-line blockquote paragraph. Each line is short; the norm only exists after the join.
+    para = ("Under the memorandum,\n"
+            "> Adjustment of status may be granted\n"
+            "> in the discretion of the officer,\n"
+            "> unless the applicant is inadmissible\n"
+            "> under section 212(a) of the Act.\n"
+            "so the officer decides.")
+    ok("bank: multi-line blockquote is caught as one quotation",
+       any("in the discretion of the officer" in q and "212(a) of the Act" in q
+           for q in candidates(para)),
+       "AOS measurement: 4-line wrapped norm returned 0 candidates before this fix")
+
+    # (b) indented blockquote inside a list.
+    indented = ("1. First rule.\n"
+                "   > an applicant is eligible only if he establishes admissibility "
+                "under section 212 of the Act and has maintained status.\n"
+                "2. Second.")
+    ok("bank: indented blockquote (nested in a list) is caught",
+       any("only if he establishes admissibility" in q for q in candidates(indented)),
+       "AOS measurement: 39 of 77 indented blockquotes were in the queue file itself")
+
+    # (c) curly single quotes as delimiters. ASCII "'" is deliberately NOT a delimiter.
+    curly = ("A commenter argued that ‘an applicant shall not be admitted unless he "
+             "establishes admissibility to the officer under section 212 of the Act’.")
+    ok("bank: a curly-single-quoted long span is caught",
+       any("shall not be admitted" in q for q in candidates(curly)),
+       "AOS measurement: quotations in ‘…’ returned zero candidates before this fix")
+
+    # (d) straight quote with a soft-wrap newline inside it. Same span, unwrapped, was found.
+    wrapped = ('Then the memo says "an applicant shall not be admitted to the United States\n'
+               'unless he establishes eligibility under section 245(k) of the Act".')
+    ok("bank: a straight-quoted span with a soft-wrap newline is caught",
+       any("shall not be admitted" in q for q in candidates(wrapped)),
+       "AOS execution proof: same quotation, one line → exit 2, wrapped → exit 0")
+
+    # (e) the negative control: possessive `'s` must not be a quotation start.
+    possessive = ("The court's decision was that " * 15)
+    ok("bank: the ASCII apostrophe in a possessive is not a quotation delimiter",
+       not candidates(possessive),
+       "regression control: `court's` must not manufacture a quote out of prose")
+
+
+def suite_upgrade(tmp):
+    """The `krokai upgrade` subcommand — layout detection and changelog parsing.
+
+    Added T58 after the panel (Codex + Spark 11 + Spark 12 + agy 36flash) named "zero tests"
+    as the ship-blocking risk of the new module. These do not touch the network: they exercise
+    the pure functions (`detect_layout`, `_editable_source_dir`, `_top_changelog_from_text`,
+    `_has_git_meta`, `_remote_names_krokai`) and one out-of-process CLI smoke.
+    """
+    from krokai import upgrade
+    import subprocess as _sp
+
+    # 1. detect_layout returns a well-formed pair.
+    layout, root = upgrade.detect_layout()
+    ok("upgrade: detect_layout returns a (layout, root) tuple",
+       isinstance(layout, str) and layout in ("pip", "git", "copy") and os.path.isabs(root),
+       "layout=%r root=%r" % (layout, root))
+
+    # 2. _editable_source_dir returns None for a non-editable install (the selftest environment).
+    #    Ambient state: the running krokai either came from a wheel install (not editable) or
+    #    from `python -m krokai selftest` inside the checkout (importlib.metadata may not find
+    #    the distribution at all). Both cases return None; a positive True would surface a
+    #    genuinely editable install and is fine to assert against.
+    src = upgrade._editable_source_dir()
+    ok("upgrade: _editable_source_dir returns None or an existing directory",
+       src is None or os.path.isdir(src), "src=%r" % (src,))
+
+    # 3. _has_git_meta on a synthetic tree.
+    fake_repo = os.path.join(tmp, "fake-git")
+    fake_worktree = os.path.join(tmp, "fake-worktree")
+    fake_copy = os.path.join(tmp, "fake-copy")
+    os.makedirs(os.path.join(fake_repo, ".git"), exist_ok=True)
+    os.makedirs(fake_worktree, exist_ok=True)
+    io.open(os.path.join(fake_worktree, ".git"), "w", encoding="utf-8").write(
+        "gitdir: ../fake-repo/.git/worktrees/fake-worktree\n")
+    os.makedirs(fake_copy, exist_ok=True)
+    ok("upgrade: _has_git_meta recognises a .git DIRECTORY (regular clone)",
+       upgrade._has_git_meta(fake_repo))
+    ok("upgrade: _has_git_meta recognises a .git FILE (git worktree / submodule)",
+       upgrade._has_git_meta(fake_worktree),
+       "Codex T58 named this asymmetry; a worktree has a plain-text .git pointer")
+    ok("upgrade: _has_git_meta returns False for a plain folder",
+       not upgrade._has_git_meta(fake_copy))
+
+    # 4. _remote_names_krokai — cannot test true-positive without a real remote configured,
+    #    but the false-positive case (a plain folder with no git remote) must return False.
+    ok("upgrade: _remote_names_krokai returns False for a non-repo folder",
+       not upgrade._remote_names_krokai(fake_copy))
+
+    # 5. _top_changelog_from_text parses the Keep-a-Changelog form used by this project.
+    sample = ("# Changelog\n\n"
+              "## [0.8.0] - 2026-08-10\n\n"
+              "First and only body line for 0.8.0.\n\n"
+              "## [0.7.7] - 2026-08-07\n\n"
+              "Older entry that must NOT bleed into 0.8.0's body.\n")
+    v, body = upgrade._top_changelog_from_text(sample)
+    ok("upgrade: _top_changelog_from_text extracts the topmost version",
+       v == "0.8.0", "got %r" % (v,))
+    ok("upgrade: _top_changelog_from_text stops at the next heading",
+       "0.8.0's body" not in body and "First and only" in body,
+       "body=%r" % (body[:120],))
+
+    # 6. The regex used by _CITE_TOKEN_RE via word_diff also enforces citation shape — cross-
+    #    check that `v2` (Codex T58 counterexample) does NOT match the cite regex. This is not
+    #    strictly upgrade.py, but it locks the tightened shape in a place a future edit would
+    #    have to notice.
+    from krokai.verify import _CITE_TOKEN_RE
+    for label in ("v2", "x64", "a1", "file1", "test1", "sec1", "covid19"):
+        ok("upgrade: _CITE_TOKEN_RE correctly REJECTS non-citation label %r" % label,
+           not _CITE_TOKEN_RE.match(label))
+    for cite in ("b)(16)(i", "(a)(1)", "(b)(16)(ii)"):
+        ok("upgrade: _CITE_TOKEN_RE correctly ACCEPTS citation %r" % cite,
+           _CITE_TOKEN_RE.match(cite) is not None)
+
+    # 7. --dry-run smoke test via a real subprocess. Never touches the network for the layout
+    #    decision, but WILL try pypi_latest — if the CI machine is offline that field prints
+    #    "unreachable" without failing the run, which is precisely the design.
+    pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = dict(os.environ, PYTHONPATH=pkg_root, PYTHONIOENCODING="utf-8")
+    try:
+        r = _sp.run([sys.executable, "-m", "krokai", "upgrade", "--dry-run"],
+                    stdout=_sp.PIPE, stderr=_sp.PIPE, env=env, timeout=60)
+        out = (r.stdout or b"").decode("utf-8", "replace")
+    except Exception as exc:
+        r, out = None, "EXC: %s" % exc
+    ok("upgrade: `krokai upgrade --dry-run` exits 0",
+       r is not None and r.returncode == 0, "rc=%s" % (r.returncode if r else "n/a"))
+    ok("upgrade: --dry-run prints the layout and root BEFORE any command",
+       "current install" in out and "layout" in out and "root" in out,
+       "out[:200]=%r" % out[:200])
+    ok("upgrade: --dry-run prints the command that WOULD run",
+       "WOULD run" in out, "out[:400]=%r" % out[:400])
+    ok("upgrade: --dry-run never claims 'updated successfully'",
+       "updated successfully" not in out.lower())
 
 
 def suite_config(tmp):
@@ -2148,6 +2329,7 @@ def main():
         suite_mutations(corpus)
         suite_prompts()
         suite_bank(tmp)
+        suite_upgrade(tmp)
         suite_config(tmp)
         suite_install(tmp)
         suite_verdicts()

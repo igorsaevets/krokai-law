@@ -226,6 +226,90 @@ Not checked: whether any rule is still in force, and whether any quotation is ap
 - The quote bank is **theirs**. Nothing writes to it automatically. The queue asks the question; the
   bank stores the answer, including the mandatory line **what this quotation does NOT prove**.
 
+## Updating an existing install
+
+The user pointed you at this repository and asked for the latest version, or said "update krokai"?
+One subcommand does the whole job. Detect the install layout and run it:
+
+```bash
+python -m krokai upgrade
+```
+
+If `python -m krokai` returns `No module named krokai` — the clone is not on `PYTHONPATH` and
+pip has not been used — find the install root first. In this order (each rung catches an
+install class the one above misses):
+
+1. **PATH first.** `command -v krokai` (Unix) or `Get-Command krokai` (PowerShell) or
+   `where krokai` (cmd). The project ships a console-script entry point
+   `krokai = "krokai.cli:main"`, so any install that put it on PATH — pipx, uv tool, pip
+   `--user`, plain venv — surfaces here. `python -c "import krokai, pathlib;
+   print(pathlib.Path(krokai.__file__).resolve())"` from THAT interpreter gives the root.
+2. **`pipx list --short`** — finds an isolated `~/.local/pipx/venvs/krokai` that
+   `pip show` in a global interpreter cannot see.
+3. **`uv tool list`** — the same class for uv-managed isolated tool installs.
+4. **`pip show krokai`** — the `Location:` line, only trustworthy if you run it with the
+   right interpreter (`sys.executable -m pip show krokai`).
+5. **The matter's own `.claude/settings.json`** — the hook `args[0]` names the exact script
+   path; two `dirname` calls up from that is the install root.
+6. **Common paths:** `~/tools/krokai`, `%USERPROFILE%/tools/krokai`, `~/krokai`.
+7. **Ask the user**, once, naming the rungs you already probed.
+
+Then:
+
+```bash
+python /path/to/krokai/krokai upgrade
+```
+
+### What `upgrade` prints and does
+
+Before touching anything, it prints:
+- current version
+- detected layout: `pip` | `git` | `copy`
+- the install root path
+- latest version on PyPI (or `unreachable`)
+
+If the versions match, it says so and refreshes the hooks in the current matter (useful if the
+matter has moved). Otherwise:
+
+- **`pip` layout** → `pip install -U krokai`
+- **`git` layout** → `git pull --ff-only` in the clone root
+- **`copy` layout** → prints the ZIP URL and the exact re-copy steps, exits 1
+
+After a successful update it re-runs `install-hooks` in the current matter so `settings.json`
+paths point at the freshly downloaded scripts, then prints the top CHANGELOG entry.
+
+### `--dry-run` first is cheap
+
+If you are updating for someone whose matter you have not seen before, run:
+
+```bash
+python -m krokai upgrade --dry-run
+```
+
+It reports the detected layout and the command that WOULD run, without executing it. That is
+the free sanity check before touching a machine whose install layout you do not know.
+
+### PEP 668 externally-managed environment
+
+On Debian 12+/Ubuntu 23.04+, system Python refuses `pip install -U` with `error:
+externally-managed-environment`. `krokai upgrade` catches the non-zero exit and prints the
+two safe options: `pip install -U --user krokai`, or install into a virtual environment.
+Do NOT suggest `--break-system-packages` — that is what the flag is warning against.
+
+### What YOU should tell the user afterwards
+
+Not "updated successfully" — the shipping toolkit exists precisely to catch that failure mode
+one level down, and the update path does not get to make the same mistake. Instead:
+
+- **From** X.Y.Z **to** A.B.C
+- **What changed** — the top CHANGELOG entry `upgrade` just printed, one paragraph, not the
+  whole log
+- **Hooks re-registered** in `path/to/settings.json`
+- 🔴 **Hooks take effect at the NEXT session start**, not this one. If the user tests it in
+  this session and sees nothing, they will assume the update failed. Say this out loud.
+
+---
+
 ## Things you may be tempted to do, and should not
 
 | tempting | why not |

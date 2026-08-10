@@ -182,6 +182,23 @@ methods, including plain file copy for a locked-down work laptop: [INSTALL.md](I
 hooks"* — [INSTALL-FOR-AI.md](INSTALL-FOR-AI.md) is written for the assistant rather than for you,
 and it verifies its own work at the end.
 
+### Updating an existing install
+
+One subcommand. From the matter folder or anywhere your `krokai` command works:
+
+```bash
+python -m krokai upgrade         # or:  python /path/to/krokai-law/krokai upgrade
+```
+
+It detects whether this copy lives under `site-packages` (uses pip), in a git clone (uses git),
+or in a copied folder (prints how to re-copy), runs the right tool, refreshes the hooks in the
+current matter, and prints what changed. `--dry-run` reports the detected layout and the exact
+command it would run without touching anything.
+
+**Or hand it to your AI.** Send it the repository link and say *"update this for me"* — the
+same [INSTALL-FOR-AI.md](INSTALL-FOR-AI.md#updating-an-existing-install) file has an "Updating"
+section written for the assistant.
+
 ---
 
 ## What you get back
