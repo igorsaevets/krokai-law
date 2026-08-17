@@ -1,9 +1,28 @@
 # Installing
 
-Four ways, in order of how much you are allowed to install on the machine. **All four end up at the
+Five ways, in order of how much you are allowed to install on the machine. **All five end up at the
 same place**; none needs an account, an API key, or a network connection at run time.
 
 Requirements: **Python 3.9 or newer.** That is the only hard one.
+
+---
+
+## 0. pip
+
+```bash
+pip install krokai                       # working tool, no optional readers
+pip install "krokai[all]"                # + pypdf, pymupdf, mammoth, requests — recommended
+cd /path/to/your/matter
+krokai init .
+krokai doctor        # ends with STATUS: READY
+```
+
+The `krokai` command lands on your PATH; the `python /path/…` forms below are for people who
+cannot pip-install and are running from a folder they copied in place. `krokai --version` prints
+the installed version; `pip show krokai` prints the folder pip put it in.
+
+Behind the scenes: `krokai[all]` is the same list of libraries the "optional libraries" table
+lower on this page enumerates — installing the extra adds each one and no more.
 
 ---
 

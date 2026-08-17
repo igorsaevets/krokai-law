@@ -298,11 +298,15 @@ def superseded_paths(root):
     revisions at all.
     """
     out = set()
-    for entry in _registry(root).values():
+    reg = _registry(root)
+    path_to_entry = {e.get("path"): e for e in reg.values() if e.get("path")}
+    for entry in reg.values():
         p = entry.get("supersedes")
-        while p:
+        # `p not in out` handles both cycles and already-walked chains in O(1).
+        while p and p not in out:
             out.add(p)
-            p = None
+            prev = path_to_entry.get(p)
+            p = prev.get("supersedes") if prev else None
     return out
 
 

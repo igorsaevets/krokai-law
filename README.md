@@ -164,18 +164,13 @@ entire argument for the hooks, and it is why this is a tool and not a checklist.
 ## Install in about a minute
 
 ```bash
-git clone https://github.com/igorsaevets/krokai-law
+pip install krokai            # or: pip install "krokai[all]" for PDF + DOCX + web fetch
 cd /path/to/your/matter
-python /path/to/krokai-law/krokai init .
+krokai init .
+krokai check
 ```
 
-Then put your downloaded statutes, regulations and decisions in `law/`, your drafts in `case/`, and:
-
-```bash
-python /path/to/krokai-law/krokai check
-```
-
-**No programming needed, no account, no API key, nothing leaves your machine.** Four install
+**No programming needed, no account, no API key, nothing leaves your machine.** Five install
 methods, including plain file copy for a locked-down work laptop: [INSTALL.md](INSTALL.md).
 
 **Or hand it to your AI.** Send it the repository link and say *"install this for me, including the
