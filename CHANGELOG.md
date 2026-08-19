@@ -10,6 +10,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.8.4] - 2026-08-19
+
+**The 0.8.3 repair recognised two spellings of an ellipsis and missed the one legal citation
+actually prescribes. Found by the panel that reviewed 0.8.3, confirmed by execution the same hour.**
+
+The Bluebook (rule 5.3) marks an omission with three periods **separated by spaces**: `. . .`.
+Three separate places in this codebase each spelled "an ellipsis" for themselves, and all three
+wrote `...` or `…`:
+
+| where | what it said |
+|---|---|
+| `ellipsis_parts` | `re.split(r"\.\.\.\|…", q)` |
+| `truncation_anywhere` | `quote_n.rstrip().endswith(("...", "…"))` |
+| `check()`'s ellipsis branch | `if ("..." in n or "…" in quote)` |
+
+The consequence was not silence — it was the opposite, and worse. A quotation ending `. . .` fell
+past the ellipsis machinery entirely and came back **`TRUNCATED_CONDITION`**: *"you cut this off
+silently."* That is the exact false accusation against honest citation practice that 0.8.2 was
+written to remove, still live one release later for the one dialect that matters most in law.
+
+Measured on a real filing: **80 quotations** use the spaced form. They were invisible both to the
+0.8.3 measurement (so the 1 118 population was a count about a dialect) and to the repair.
+
+`ELLIPSIS_RE` is now defined once in `normalize.py` and imported by everything that asks the
+question. `\.\s?\.\s?\.` allows **at most one space** between periods, so `U.S.`, `see id. at 12`
+and `decided in 1990. J. Smith wrote` cannot match — letters sit between their periods. Four
+negative controls assert that on real citation shapes rather than on the argument.
+
+The general lesson, which is the round's: **a question about a CONCEPT, answered by listing two of
+its spellings.** Every defect in the 0.8.x series has that shape — a guard on one branch of six, a
+gap computed between fragments but not at the tail, an exhibit id matched by shape rather than
+position. Naming the concept once and referring to it is the repair in each case.
+
 ## [0.8.3] - 2026-08-19
 
 **The sentence 0.8.2 used to justify itself was not true of the code, and the hole it left is the

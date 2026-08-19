@@ -342,6 +342,26 @@ def dehyph(s: str) -> str:
     return re.sub(r"(\w)-(\w)", r"\1\2", s)
 
 
+# 🔴🔴 ONE SPELLING OF "AN ELLIPSIS", FOR EVERY PLACE THAT ASKS THE QUESTION.
+#
+# Found by the review panel that reviewed the v0.8.3 repair, and confirmed by execution the same
+# hour. Three separate places each spelled the ellipsis themselves, and all three spelled it
+# `...` or `…` — omitting `. . .`, **the spaced form that legal citation actually prescribes**
+# (The Bluebook, rule 5.3: an omission is marked by three periods separated by spaces). Measured
+# on the live filing: 80 quotations carry the spaced form.
+#
+# The consequence was not silence, it was the opposite and worse. A quotation ending `. . .` fell
+# past the ellipsis machinery entirely and was reported `TRUNCATED_CONDITION` — "you cut this off
+# silently" — which is the exact false accusation against honest practice that v0.8.2 was written
+# to remove. So the 0.8.1 defect was still live for the one dialect that matters most, one release
+# after being fixed for the two that matter least.
+#
+# `\.\s?\.\s?\.` and not `\.\s*\.` : at most ONE space between periods. "U.S." cannot match (letters
+# sit between the periods) and neither can a sentence boundary followed by an initial ("in 1990. J.
+# Smith"), because that has a letter between them too.
+ELLIPSIS_RE = re.compile(r"\.\s?\.\s?\.|…")
+
+
 def ellipsis_parts(q: str, minlen: int = 25):
     """Split a quotation on its ellipses. Cutting with an ellipsis is legitimate citation style,
     not an alteration, so the fragments are checked one at a time; the ellipsis itself is ours and
@@ -356,7 +376,7 @@ def ellipsis_parts(q: str, minlen: int = 25):
     *checked for position only*: short strings match everywhere, so their presence proves little on
     its own, but their POSITION still does.
     """
-    parts = [p.strip(" .,;:-—") for p in re.split(r"\.\.\.|…", q or "")]
+    parts = [p.strip(" .,;:-—") for p in ELLIPSIS_RE.split(q or "")]
     return [p for p in parts if len(p) >= minlen]
 
 

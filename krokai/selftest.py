@@ -560,6 +560,31 @@ def suite_r51_tail_elision(corpus):
     p, _l, _t = tail_elision_hides(truncated, truncated, corpus)
     ok("r51 NEG-3 inert when the quotation does not end in an ellipsis", p is None, str(p))
 
+    # 🔴🔴 POS-3/NEG-4: THE BLUEBOOK SPACED ELLIPSIS, found by the panel that reviewed v0.8.3 and
+    # confirmed by execution the same hour. Three places each spelled "an ellipsis" for themselves
+    # and all three wrote `...` or `…`. The Bluebook (rule 5.3) marks an omission with periods
+    # SEPARATED BY SPACES, so `. . .` is the form legal citation actually prescribes - and it fell
+    # past the ellipsis machinery entirely and came back TRUNCATED_CONDITION, i.e. "you cut this
+    # off silently". That is the exact false accusation v0.8.2 removed, still live one release
+    # later for the one dialect that matters most. 80 quotations on the live filing use it.
+    for tail in (". . .", " . . ."):
+        v, _w, _d = check(truncated + tail, corpus)
+        ok("r51 POS-3 a Bluebook spaced ellipsis is an ELLIPSIS, not a silent truncation (%r)"
+           % tail, v == "ELLIPSIS_HIDES", v)
+        v, _w, _d = check(complete + tail, corpus)
+        ok("r51 NEG-4 a Bluebook spaced ellipsis hiding nothing stays green (%r)" % tail,
+           v not in ("ELLIPSIS_HIDES", "TRUNCATED_CONDITION"), v)
+
+    # The negative control that keeps ELLIPSIS_RE from eating ordinary prose: an abbreviation and a
+    # sentence boundary followed by an initial both contain periods near each other, and neither is
+    # an omission. `\.\s?\.\s?\.` cannot match them because letters sit between the periods - but
+    # that is an argument, and an argument is not a test.
+    from krokai.normalize import ELLIPSIS_RE as _ER
+    for benign in ("8 U.S.C. 1255", "decided in 1990. J. Smith wrote", "see id. at 12",
+                   "Cf. Matter of A-B-, 27 I&N Dec. 316"):
+        ok("r51 NEG-5 ELLIPSIS_RE does not fire on ordinary prose: %r" % benign[:28],
+           not _ER.search(benign), benign)
+
 
 def suite_word_diff():
     from krokai.verify import word_diff

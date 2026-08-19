@@ -11,7 +11,8 @@ import difflib
 import os
 import re
 
-from .normalize import normalise, alnum, dehyph, ellipsis_parts, prepare_quote
+from .normalize import (normalise, alnum, dehyph, ellipsis_parts, prepare_quote,
+                        ELLIPSIS_RE)
 from .verdicts import CLEAN
 
 __all__ = ["check", "word_diff", "neighbours", "OPERATORS"]
@@ -236,7 +237,11 @@ def truncation_anywhere(quote_n, corpus):
     # at silent truncation, which destroys the distinction the verdict exists to draw.
     # A disclosed elision belongs to the ellipsis machinery below, which already asks what was
     # hidden (NARROWER_RE) - so hand it back rather than pre-empting it.
-    if quote_n.rstrip().endswith(("...", "…")):
+    # 🔴 v0.8.4: was `endswith(("...", "…"))`, which cannot see the Bluebook spaced form `. . .`.
+    # Ends-with on a fixed pair of literals is the same class of mistake as the rest of this file:
+    # a question about a CONCEPT answered by listing two of its spellings. ELLIPSIS_RE is the one
+    # definition; `_TAIL_ELLIPSIS_RE` below anchors it to the end.
+    if _TAIL_ELLIPSIS_RE.search(quote_n or ""):
         return None, None, None
     seen = set()
     for cand in (quote_n,
@@ -278,7 +283,7 @@ def truncated_condition(quote_n, corpus):
     return None, None, None
 
 
-_TAIL_ELLIPSIS_RE = re.compile(r"(\.\.\.|…)\s*[»\"'”)\]]*\s*$")
+_TAIL_ELLIPSIS_RE = re.compile(r"(?:%s)\s*[»\"'”)\]]*\s*$" % ELLIPSIS_RE.pattern)
 
 
 def tail_elision_hides(quote_n, quote_raw, corpus):
@@ -470,7 +475,7 @@ def _check_inner(quote, corpus):
     if tp:
         return "ELLIPSIS_HIDES", tp, ("the elision at the END hides: «%s…»"
                                       % " ".join(ttail.split())[:200])
-    if ("..." in n or "…" in quote) and len(parts) > 1:
+    if (ELLIPSIS_RE.search(n) or ELLIPSIS_RE.search(quote or "")) and len(parts) > 1:
         one, offs = corpus.all_in_order(parts)
         if one:
             gaps = corpus.gaps(one, parts, offs)
