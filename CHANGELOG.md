@@ -10,6 +10,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.8.2] - 2026-08-19
+
+**The fix in 0.8.1 shouted at honest citation practice. The review panel that reviewed the fix
+found it, 7 channels of 13 converging on the same hole, and it reproduced on the first try.**
+
+`truncation_anywhere` strips trailing punctuation so it can re-locate an exact span. That strip
+also ate a trailing **ellipsis** — and an ellipsis is the drafter *disclosing* the elision. So
+`«…within 180 days of the qualifying event…»` came back `TRUNCATED_CONDITION`, exactly as loudly as
+a silent truncation of the same sentence.
+
+That is the failure mode 0.8.1's own changelog warned about — "a false alarm in a safety gate
+teaches the reader to click past it" — introduced by the very change that quoted the warning. The
+distinction the verdict exists to draw is *disclosed* versus *silent*, and the first version erased
+it.
+
+A disclosed elision is now handed back to the ellipsis machinery, which already asks what the
+elision hid (`NARROWER_RE`) instead of assuming. `NEG-3` covers both spellings, `...` and `…`.
+
+Sequence worth recording, because it is the argument for running the panel at all: the fix was
+built with controls, proven to bite, shipped — and a hole in it was still found by outside readers
+within the hour. Suite: 467/467.
+
 ## [0.8.1] - 2026-08-19
 
 **A green verdict could be bought with one character. The truncation guard covered one branch of

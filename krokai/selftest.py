@@ -473,6 +473,16 @@ def suite_r50_no_green_without_guard(corpus):
     ok("r50 NEG-2 a genuine punctuation-only drift is still reported as PUNCTUATION",
        v in ("PUNCTUATION", "VERIFIED"), v)
 
+    # 🔴 NEG-3 was NOT in the first version of this suite, and the first version of the fix
+    # failed it. Found by the review panel that reviewed the fix - 7 of 13 channels named the
+    # same hole - and reproduced by execution before it was believed. An ellipsis is the
+    # drafter DISCLOSING the elision; shouting at it as loudly as at a silent truncation
+    # destroys the distinction the verdict exists to draw.
+    for tail in ("...", "…"):
+        v, _w, _d = check(truncated + tail, corpus)
+        ok("r50 NEG-3 a DISCLOSED elision (%s) is not reported as a silent truncation" % tail,
+           v != "TRUNCATED_CONDITION", v)
+
 
 def suite_word_diff():
     from krokai.verify import word_diff

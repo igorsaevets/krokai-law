@@ -228,6 +228,16 @@ def truncation_anywhere(quote_n, corpus):
     quoter added, heal a line-break hyphen, and if that lands on an exact span, the original
     guard applies unchanged.
     """
+    # 🔴 FOUND BY THE REVIEW PANEL THAT REVIEWED THIS VERY FIX (7 of 13 channels converged,
+    # reproduced by execution before it was believed). Stripping trailing punctuation also
+    # eats a trailing ELLIPSIS - and an ellipsis is the drafter DISCLOSING the elision. The
+    # first version of this helper reported «An applicant must file … the qualifying event…»
+    # as TRUNCATED_CONDITION, i.e. it shouted equally loudly at honest citation practice and
+    # at silent truncation, which destroys the distinction the verdict exists to draw.
+    # A disclosed elision belongs to the ellipsis machinery below, which already asks what was
+    # hidden (NARROWER_RE) - so hand it back rather than pre-empting it.
+    if quote_n.rstrip().endswith(("...", "…")):
+        return None, None, None
     seen = set()
     for cand in (quote_n,
                  quote_n.rstrip(" .,;:!?»”\"'"),
