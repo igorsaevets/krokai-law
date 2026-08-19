@@ -10,6 +10,58 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.8.1] - 2026-08-19
+
+**A green verdict could be bought with one character. The truncation guard covered one branch of
+six, and adding a full stop to a truncated quotation moved it from the loudest verdict to a
+cosmetic one.**
+
+`truncated_condition` needs an exact substring hit, so it could only ever run on the exact-match
+branch — and it was called there, once, together with `leading_cut` and `wrong_speaker`.
+`_check_inner` has 20 returns, 8 of them green, and **6 of those 8 returned without consulting any
+guard**. That is not a guard on the verdict; it is a guard on one branch.
+
+Measured with one distortion — a sentence cut off before its proviso — presented three ways. The
+meaning is identical every time; only the surface differs:
+
+| what the drafter pasted | before | after |
+|---|---|---|
+| the quotation as-is | `TRUNCATED_CONDITION` | `TRUNCATED_CONDITION` |
+| the same + a trailing full stop | **`PUNCTUATION`** | `TRUNCATED_CONDITION` |
+| the same + a line-break hyphen | **`PUNCTUATION`** | `TRUNCATED_CONDITION` |
+
+The mechanism: `alnum` drops *all* punctuation, so the alphanumeric index cannot tell "the same
+words with a comma moved" from "a **prefix** of the words, stopped before the proviso" — both are
+substrings of the same haystack. Ending a quotation with a full stop is the ordinary thing to do, so
+the laundering needed no ill intent and left no trace.
+
+Worse than silence: `_punctuation_detail` then printed ``our quotation adds `.` `` — a precise,
+confident explanation of the *wrong difference*, which is exactly what makes a reader stop looking.
+
+**Fixed** by `truncation_anywhere()`, which asks the existing question on the projections that
+produced the match (strip the trailing punctuation the quoter added, heal a line-break hyphen,
+retry). It is called before `PUNCTUATION`, before `TYPESETTING`, and on the shingle path's green
+exit. No new detector and no new class of alarm — the same alarm, on the branches that skipped it.
+
+**The regression lock is the part worth copying.** The existing suite passed *before* this fix and
+after it: every truncation case it owned was written without trailing punctuation, so it could not
+fail on the bug. `suite_r50_no_green_without_guard` states the bug in the shape it had — three
+positive controls and, deliberately, **two negative controls** asserting that a complete quotation
+with an added full stop, and a genuine punctuation drift, both stay green. Turning every near-miss
+red would pass the positives and produce a worse tool, because a false alarm in a safety gate
+teaches the reader to click past it. Proven to bite: with the helper neutralised, 2 of the 5 go red
+and the other 3 stay green.
+
+Found while auditing a sibling instrument on a live filing, which has the identical shape. Measured
+there over 14 902 quotations: 3 939 green verdicts, of which **1 960 were reached by a branch that
+never consulted a guard**, and 20 sit on a source that demonstrably continues with a limiter. The
+20 is a floor, not a total — it counts only cases where an exact span could be re-located.
+
+**Known and NOT changed.** A quotation of a whole sentence whose *next* sentence is the carve-out
+still returns `VERIFIED`. Quoting the first sentence is verbatim and complete, and it is also a
+common way a rule gets misrepresented. Flagging it needs a false-alarm rate measured on real
+material first, so it is recorded rather than half-fixed.
+
 ## [0.8.0] - 2026-08-10
 
 **One subcommand updates any install. Four extractor misses closed, one verifier trap closed.**

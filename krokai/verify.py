@@ -199,6 +199,50 @@ def _punctuation_detail(quote_n, path, corpus):
     return "; ".join(bits)
 
 
+def truncation_anywhere(quote_n, corpus):
+    """Ask the truncation question about a quotation that is NOT an exact substring.
+
+    🔴🔴 THE DEFECT THIS EXISTS FOR (measured 2026-08-19, present since the verdict tree was
+    written). `truncated_condition` needs an exact hit, so it could only ever run on the
+    exact-match branch. Every other route to a green verdict - PUNCTUATION, TYPESETTING, the
+    shingle path - returned without ever asking whether the source continues with a limiter.
+    That is not a guard on the verdict, it is a guard on one branch, and the difference
+    between them is one character:
+
+        the quotation as-is                -> TRUNCATED_CONDITION   loud, correct
+        the same + a trailing full stop    -> PUNCTUATION           green
+        the same + a line-break hyphen     -> PUNCTUATION           green
+
+    The mechanism is that `alnum` drops ALL punctuation, so the alphanumeric index cannot
+    tell "the same words with a comma moved" from "a PREFIX of the words, stopped before the
+    proviso" - both are substrings of the same haystack. Ending a quotation with a full stop
+    is the ordinary thing a drafter does, so the laundering needed no ill intent and left no
+    trace.
+
+    Worse than silence: `_punctuation_detail` then printed «our quotation adds `.`» - a
+    precise, confident explanation of the WRONG difference, which is what makes a reader stop
+    looking. A vaguer message would have done less damage.
+
+    The repair introduces no new detector and no new class of alarm. It asks the EXISTING
+    question on the projections that produced the match: strip the trailing punctuation the
+    quoter added, heal a line-break hyphen, and if that lands on an exact span, the original
+    guard applies unchanged.
+    """
+    seen = set()
+    for cand in (quote_n,
+                 quote_n.rstrip(" .,;:!?»”\"'"),
+                 dehyph(quote_n),
+                 dehyph(quote_n).rstrip(" .,;:!?»”\"'")):
+        cand = cand.strip()
+        if len(cand) < 25 or cand in seen:
+            continue
+        seen.add(cand)
+        p, limiter, tail = truncated_condition(cand, corpus)
+        if p:
+            return p, limiter, tail
+    return None, None, None
+
+
 def truncated_condition(quote_n, corpus):
     """Does an exactly-matching quotation stop right before the clause that limits it?
 
@@ -384,6 +428,11 @@ def _check_inner(quote, corpus):
     # opposite instruction. Narrower diagnosis first.
     hh = corpus.find_hyph(dehyph(n))
     if hh:
+        # 🔴 Guard first, THEN diagnose. A word broken across a line is the corpus copy's
+        # problem; a clause cut off before its proviso is ours, and ours outranks.
+        tp, _lim, ttail = truncation_anywhere(n, corpus)
+        if tp:
+            return "TRUNCATED_CONDITION", tp, "the source continues: «%s…»" % ttail
         return "TYPESETTING", hh, "word broken across a line in the source"
 
     # --- same words, drifted punctuation ----------------------------------------------------------
@@ -391,6 +440,12 @@ def _check_inner(quote, corpus):
     if len(a) >= 30:
         hit = corpus.find_alnum(a)
         if hit:
+            # 🔴 See truncation_anywhere(). The alphanumeric index cannot distinguish a
+            # punctuation drift from a PREFIX that stops before the limiting clause, so the
+            # truncation question must be asked before this branch may call itself green.
+            tp, _lim, ttail = truncation_anywhere(n, corpus)
+            if tp:
+                return "TRUNCATED_CONDITION", tp, "the source continues: «%s…»" % ttail
             return "PUNCTUATION", hit, _punctuation_detail(n, hit, corpus)
 
     # --- every sentence verbatim, but not adjacent -------------------------------------------------
@@ -443,6 +498,14 @@ def _check_inner(quote, corpus):
             if hitwords:
                 return "OPERATOR", anchor[0], ", ".join(hitwords)
             if not changed:
+                # The last route by which a green verdict can be issued without the
+                # truncation question. Expected to fire rarely - reaching here means no
+                # exact, alnum or dehyph span matched, so truncation_anywhere usually finds
+                # nothing. It is here so the rule reads "no green without the guard", with no
+                # exception a future reader has to rediscover the hard way.
+                tp, _lim, ttail = truncation_anywhere(n, corpus)
+                if tp:
+                    return "TRUNCATED_CONDITION", tp, "the source continues: «%s…»" % ttail
                 return "TYPESETTING", anchor[0], ""
             return "PARTIAL", anchor[0], ", ".join(sorted(set(changed))[:8])
         if frac >= 0.5:

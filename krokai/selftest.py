@@ -419,6 +419,61 @@ def suite_verify(corpus):
        str(nbf)[:200])
 
 
+def suite_r50_no_green_without_guard(corpus):
+    """🔴🔴 NO GREEN VERDICT WITHOUT THE TRUNCATION QUESTION (2026-08-19).
+
+    The defect, and it was shipped: `truncated_condition` needs an exact hit, so it could only
+    ever run on the exact-match branch. PUNCTUATION, TYPESETTING and the shingle path returned
+    green without ever asking whether the source continues with a limiter. One character
+    decided which:
+
+        the quotation as-is                -> TRUNCATED_CONDITION   loud, correct
+        the same + a trailing full stop    -> PUNCTUATION           green
+        the same + a line-break hyphen     -> PUNCTUATION           green
+
+    Ending a quotation with a full stop is the normal thing a drafter does, so the laundering
+    needed no ill intent. And the detail line printed «our quotation adds `.`» - a precise
+    explanation of the WRONG difference, which is worse than silence: it stops the reader
+    looking.
+
+    🔴 WHY THIS IS A SEPARATE SUITE. The whole existing suite passed BEFORE the fix and after
+    it. Every truncation case it owned was written without trailing punctuation, so it could
+    not fail on the bug. A suite that cannot fail on a bug is not covering it - so the lock is
+    stated here, in the shape the bug actually had.
+
+    The last two checks are what keep this honest. Turning every near-miss red would pass the
+    first three and produce a WORSE tool, because a false alarm in a safety gate teaches the
+    reader to click past the gate. NEG-1 and NEG-2 assert that a quotation which is not
+    truncated stays green while taking exactly the same branches.
+    """
+    from krokai.verify import check
+
+    truncated = ("The district director may consider reinstating a student who makes a request "
+                 "for reinstatement")
+    complete = ("certified by a designated school official to consist of at least eighteen "
+                "clock hours of attendance a week")
+
+    v, _w, _d = check(truncated, corpus)
+    ok("r50 POS-1 exact truncation is loud", v == "TRUNCATED_CONDITION", v)
+
+    v, _w, _d = check(truncated + ".", corpus)
+    ok("r50 POS-2 a trailing full stop does NOT launder a truncation into PUNCTUATION",
+       v == "TRUNCATED_CONDITION", v)
+
+    v, _w, _d = check(truncated.replace("reinstating", "reinstat-ing") + ".", corpus)
+    ok("r50 POS-3 a line-break hyphen does NOT launder a truncation into TYPESETTING",
+       v == "TRUNCATED_CONDITION", v)
+
+    # --- negative controls: the guard must not turn honest near-misses red -------------------
+    v, _w, _d = check(complete + ".", corpus)
+    ok("r50 NEG-1 a COMPLETE quotation with an added full stop stays green",
+       v != "TRUNCATED_CONDITION", v)
+
+    v, _w, _d = check(complete.replace("clock hours", "clock hours,"), corpus)
+    ok("r50 NEG-2 a genuine punctuation-only drift is still reported as PUNCTUATION",
+       v in ("PUNCTUATION", "VERIFIED"), v)
+
+
 def suite_word_diff():
     from krokai.verify import word_diff
     changed, hits, unaligned = word_diff(
@@ -2322,6 +2377,7 @@ def main():
         suite_extract()
         suite_corpus(corpus, law)
         suite_verify(corpus)
+        suite_r50_no_green_without_guard(corpus)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)
