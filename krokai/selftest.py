@@ -2054,6 +2054,80 @@ def suite_readers_signature():
        "%d chars/page from %d pages up" % (R.MIN_CHARS_PER_PAGE, R.PAGES_BEFORE_RATE_APPLIES))
 
 
+def suite_write_only_accumulator():
+    """🔴🔴 A list that is only ever appended to is a SILENT DROP wearing a variable name.
+
+    Found 2026-08-19 in my own work, by the sister project, in the patch I had written the day
+    before. `NEIGHBOUR_SKIPS = []  # печатается в конце прогона` - declared with that comment,
+    appended to in one place, and read in none. 104 rows vanished from a report without a word,
+    in code whose entire purpose was to STOP silent dropping. The comment was an assertion by
+    the author about a program that never did it.
+
+    This is the same shape as R51's `tail_elision_hides`: a sentence about control flow that was
+    never executed. The difference is that this one is mechanically detectable, so it does not
+    have to be remembered - an accumulator with zero reads is a defect by construction.
+
+    The POSITIVE CONTROL is the point of this suite. A scanner that returns "nothing found"
+    against a codebase that has nothing to find is indistinguishable from a scanner that cannot
+    find anything, so a known-bad snippet must come back red in the same run.
+    """
+    import ast
+    import collections
+    import inspect
+    import os
+
+    from krokai import __file__ as pkg_file
+
+    def write_only(src):
+        """Names appended to but never loaded for any other purpose."""
+        tree = ast.parse(src)
+        appended, read = collections.Counter(), collections.Counter()
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in ("append", "add", "extend", "update")
+                    and isinstance(node.func.value, ast.Name)):
+                appended[node.func.value.id] += 1
+            elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                read[node.id] += 1
+        # every Load of the name, minus the ones that are just the `.append` receiver
+        return sorted(n for n, c in appended.items() if read.get(n, 0) - c <= 0)
+
+    BAD = (
+        "SKIPS = []\n"
+        "def f(rows):\n"
+        "    for r in rows:\n"
+        "        if drop(r):\n"
+        "            SKIPS.append(r)   # printed at the end of the run - except it is not\n"
+    )
+    GOOD = BAD + "def report():\n    return len(SKIPS)\n"
+    ok("accumulator: the detector BITES on a write-only list", "SKIPS" in write_only(BAD))
+    ok("accumulator: and stays quiet once the name is read back",
+       "SKIPS" not in write_only(GOOD))
+
+    root = os.path.dirname(os.path.abspath(pkg_file))
+    offenders = []
+    scanned = 0
+    for dp, _dn, fns in os.walk(root):
+        for fn in sorted(fns):
+            if not fn.endswith(".py"):
+                continue
+            path = os.path.join(dp, fn)
+            try:
+                with io.open(path, encoding="utf-8") as fh:
+                    names = write_only(fh.read())
+            except (SyntaxError, OSError):
+                continue
+            scanned += 1
+            for n in names:
+                offenders.append("%s:%s" % (fn, n))
+    ok("accumulator: no write-only accumulator anywhere in krokai",
+       not offenders, "%d файлов просмотрено%s"
+       % (scanned, ("; " + ", ".join(offenders[:4])) if offenders else ""))
+    # coverage: a green above is only meaningful if the walk actually saw the package
+    ok("accumulator: and the scan really opened the package", scanned >= 8,
+       "%d .py" % scanned)
+
+
 def suite_fetch(tmp):
     """The download layer: trust, refusal, revisions - and no model anywhere in the path."""
     from krokai import fetch as F
@@ -2508,6 +2582,7 @@ def main():
         suite_hooks_stdin(tmp)
         suite_sidecar_not_a_source(tmp)
         suite_readers_signature()
+        suite_write_only_accumulator()
         suite_missing_engine_is_loud(tmp)
         suite_fetch(tmp)
         suite_placeholder()

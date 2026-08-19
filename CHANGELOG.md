@@ -10,6 +10,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.8.5] - 2026-08-19
+
+**A list that is only ever appended to is a silent drop wearing a variable name. Found in my own
+code, by the project I had just sent a patch to, one day after I wrote the rule it breaks.**
+
+The sister project's round 49 reviewed a patch written for it here, and found:
+
+```python
+NEIGHBOUR_SKIPS = []      # (файл, сколько блоков вырезано) — печатается в конце прогона
+```
+
+Declared with that comment. Appended to in exactly one place. **Read in none.** 104 rows vanished
+from a report without a word — in code whose entire purpose was to stop a silent drop. The comment
+was an assertion by its author about a program that never did it.
+
+Same shape as 0.8.3's `tail_elision_hides` justification: *a sentence about control flow that was
+never executed.* The difference is that this one is mechanically detectable, so it need not be
+remembered. `suite_write_only_accumulator` walks the package with `ast` and fails on any name that
+is `append`/`add`/`extend`/`update`-ed and never loaded back.
+
+The suite carries a **positive control**, because that is what decides whether it is a measurement
+or a decoration: a known-bad snippet must come back red in the same run, and a `scanned >= 8`
+coverage assertion proves the walk actually opened the package. Verified independently by
+neutralising the sister project's repair on the live file — the detector went red on the version
+that provably had the defect and stayed green on the repaired one.
+
+No behaviour change. `krokai` itself was already clean of this class; the point is that "clean" is
+now a result rather than an opinion.
+
 ## [0.8.4] - 2026-08-19
 
 **The 0.8.3 repair recognised two spellings of an ellipsis and missed the one legal citation
