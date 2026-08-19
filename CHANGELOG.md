@@ -10,6 +10,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.8.6] - 2026-08-19
+
+**A scanner tested only on the tree it ships with has been tested on one sample. 0.8.5's new
+detector called correct code a defect, and the suite that proves it works was green throughout.**
+
+`suite_write_only_accumulator` shipped yesterday with a positive control, a negative control and a
+coverage assertion — and it was still wrong for anybody but us. Run against a foreign codebase
+(this project's own review harness, ~40 000 lines) it flagged:
+
+```python
+def record_refusal(msg, hard, soft):     # hard/soft: filled here, read by the CALLER
+    if is_soft(msg):
+        soft.append(msg[len(SOFT):])
+    else:
+        hard.append(msg)
+```
+
+Two names appended to and never read — *inside this file, under these names*. The nine call sites
+pass `warn`, `note` and `fail`, and read them there. The helper is correct; the detector was not.
+
+The reason 0.8.5's controls did not catch it is worth stating plainly: **krokai contains no helper
+of that shape**, so the in-tree scan was green by accident of sample, not by correctness. A
+detector's controls test the detector against the cases its author thought of; only a foreign
+codebase tests it against the cases they did not.
+
+- **Fixed.** A name bound as a parameter of any enclosing function is excluded. The exclusion is
+  lexical and deliberately generous — it can miss a module-level accumulator that happens to share
+  a name with some parameter elsewhere in the file. That trade is chosen knowingly: **a false
+  positive in a safety gate is worse than a miss**, because it teaches the reader to wave the check
+  through, and that disables the whole class — including the real `NEIGHBOUR_SKIPS` this suite
+  exists to catch.
+- **Two permanent cases added.** The 0.8.5 false positive, verbatim in shape; and — in the same
+  file as a real defect — proof that the new exemption did **not** blunt the detector. A fix that
+  silences a check passes every test that only asks for silence.
+
+Nothing else changed. 488 self-tests (486 + these two).
+
 ## [0.8.5] - 2026-08-19
 
 **A list that is only ever appended to is a silent drop wearing a variable name. Found in my own

@@ -2078,19 +2078,63 @@ def suite_write_only_accumulator():
 
     from krokai import __file__ as pkg_file
 
+    GROW = ("append", "add", "extend", "update")
+
     def write_only(src):
-        """Names appended to but never loaded for any other purpose."""
+        """Names appended to but never loaded for any other purpose.
+
+        🔴 0.8.6: PARAMETERS ARE EXCLUDED, and 0.8.5 was wrong to include them. A helper whose
+        whole job is to fill a list handed to it — `def record(msg, hard, soft): hard.append(msg)`
+        — appends and never reads, inside this file, under that name. The caller reads it under
+        a different one. That is correct design and 0.8.5 called it a defect.
+
+        Found by running this detector against a foreign codebase rather than only against
+        krokai, which happens to contain no such helper: the suite below was green and the
+        shipped detector was still wrong for its users. A scanner tested only on the tree it
+        ships with has been tested on one sample.
+
+        This matters more than a tidy report. A false positive in a safety gate is worse than a
+        miss — it teaches the reader to wave the check through, and that disables the whole
+        class, including the real `NEIGHBOUR_SKIPS` this suite exists to catch.
+
+        The exclusion is lexical and deliberately generous: if any enclosing function binds the
+        name as a parameter, the name is not reported. That can hide a module-level accumulator
+        that shares a name with some parameter elsewhere in the file — a MISS. Chosen knowingly,
+        because the cost of the two errors is not symmetric.
+        """
         tree = ast.parse(src)
         appended, read = collections.Counter(), collections.Counter()
         for node in ast.walk(tree):
             if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                    and node.func.attr in ("append", "add", "extend", "update")
+                    and node.func.attr in GROW
                     and isinstance(node.func.value, ast.Name)):
                 appended[node.func.value.id] += 1
             elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
                 read[node.id] += 1
+
+        param_bound = set()
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            args = fn.args
+            params = {a.arg for a in
+                      list(args.posonlyargs) + list(args.args) + list(args.kwonlyargs)}
+            if args.vararg:
+                params.add(args.vararg.arg)
+            if args.kwarg:
+                params.add(args.kwarg.arg)
+            if not params:
+                continue
+            for node in ast.walk(fn):
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and node.func.attr in GROW
+                        and isinstance(node.func.value, ast.Name)
+                        and node.func.value.id in params):
+                    param_bound.add(node.func.value.id)
+
         # every Load of the name, minus the ones that are just the `.append` receiver
-        return sorted(n for n, c in appended.items() if read.get(n, 0) - c <= 0)
+        return sorted(n for n, c in appended.items()
+                      if read.get(n, 0) - c <= 0 and n not in param_bound)
 
     BAD = (
         "SKIPS = []\n"
@@ -2103,6 +2147,25 @@ def suite_write_only_accumulator():
     ok("accumulator: the detector BITES on a write-only list", "SKIPS" in write_only(BAD))
     ok("accumulator: and stays quiet once the name is read back",
        "SKIPS" not in write_only(GOOD))
+
+    # 🔴 The 0.8.5 false positive, kept as a permanent case. Verbatim shape of the helper that
+    # exposed it: a routing function that fills two lists its caller owns and names differently.
+    PARAM = (
+        "def record(msg, hard, soft):\n"
+        "    if msg.startswith('~soft~'):\n"
+        "        soft.append(msg)\n"
+        "    else:\n"
+        "        hard.append(msg)\n"
+        "def run():\n"
+        "    warn, note = [], []\n"
+        "    record('x', warn, note)\n"
+        "    return len(warn), len(note)\n"
+    )
+    ok("accumulator: a list PASSED IN and filled is not an orphan (0.8.5 said it was)",
+       write_only(PARAM) == [], repr(write_only(PARAM)))
+    # ...and the exclusion must not have blunted the detector: same file, real defect added.
+    ok("accumulator: the parameter exemption did not disable the check",
+       "SKIPS" in write_only(PARAM + BAD))
 
     root = os.path.dirname(os.path.abspath(pkg_file))
     offenders = []
