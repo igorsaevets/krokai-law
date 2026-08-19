@@ -278,6 +278,68 @@ def truncated_condition(quote_n, corpus):
     return None, None, None
 
 
+_TAIL_ELLIPSIS_RE = re.compile(r"(\.\.\.|…)\s*[»\"'”)\]]*\s*$")
+
+
+def tail_elision_hides(quote_n, quote_raw, corpus):
+    """The elision nobody looks at: the one at the END of the quotation.
+
+    🔴🔴 THE DEFECT, and it is one I introduced myself. Measured 2026-08-19.
+
+    ``Corpus.gaps`` computes ``for k in range(len(parts) - 1)`` - the spans BETWEEN fragments.
+    A quotation that ENDS with an ellipsis has elided the TAIL of the sentence, and a tail is
+    not between anything, so no gap is ever computed for it and ``NARROWER_RE`` never sees it.
+    Worse, ``check`` only enters the ellipsis section when ``len(parts) > 1``, and a quotation
+    that merely ends with an ellipsis yields ONE fragment - so it did not reach that machinery
+    at all and fell through to PUNCTUATION, green.
+
+    In legal drafting the proviso is at the END of the sentence: "..., provided that",
+    "..., unless", "..., except that", "... subject to". The one elision position the
+    instrument did not examine is the position where the limiter almost always is.
+
+    Demonstrated with one variable - where the ellipsis sits, same hidden words, same source:
+
+        «An applicant must file … and the Secretary may extend»  -> ELLIPSIS_HIDES   loud
+        «An applicant must file …»                              -> PUNCTUATION      GREEN
+
+    🔴 AND THE GREEN ONE EXPLAINED ITSELF WRONGLY: «our quotation adds `.`». That is the R50
+    defect verbatim - a confident description of the WRONG difference, which is what stops a
+    reader looking. It was reintroduced by the v0.8.2 fix: that fix correctly stopped calling a
+    disclosed elision TRUNCATED_CONDITION (the review panel was right), but the comment
+    justifying it said the case "belongs to the ellipsis machinery below", and the machinery
+    below could not be reached. A claim about control flow that was never executed.
+
+    The repair keeps BOTH findings. A disclosed elision is not silent truncation, so the verdict
+    is not TRUNCATED_CONDITION; but what it hides can still narrow the rule, so it is not
+    silence either. It is the ELLIPSIS verdict, which exists for exactly this.
+
+    MEASURED ON A REAL FILING before it was believed - 1 118 quotations that end in an ellipsis:
+    552 already loud, 539 stay green, and 26 turn loud (2.3% of the population). Read by eye,
+    all 26 hide a real carve-out: "employee means an individual..." hiding "but does not mean
+    independent contractors"; "No appeal lies from the denial..." hiding "but the applicant
+    retains the right to renew"; "Applications that are rejected and returned..." hiding "do
+    not retain a filing date".
+
+    The 25-character floor is not a threshold invented for this check. A 27th alarm read
+    «(ii) Physicians working in shortage areas ... (I) In general...», whose last fragment is a
+    14-character heading that occurs all over the U.S. Code - so the locator matched a different
+    statute and reported the continuation of the wrong place. That is the short-fragment problem
+    ``ellipsis_parts`` already documents, and 25 is already this codebase's floor for "this
+    fragment proves something on its own". Applying it removes exactly that one alarm and no
+    other.
+    """
+    if not (_TAIL_ELLIPSIS_RE.search(quote_n or "")
+            or _TAIL_ELLIPSIS_RE.search(quote_raw or "")):
+        return None, None, None
+    parts = ellipsis_parts(quote_n, 10)
+    if not parts:
+        return None, None, None
+    last = parts[-1]
+    if len(last) < 25:          # too short to locate a unique place - see the docstring
+        return None, None, None
+    return truncated_condition(last, corpus)
+
+
 def leading_cut(quote_n, corpus):
     """The mirror image. An exact substring can invert its own meaning by starting one word too
     late: the negation stands in FRONT of it, not behind.
@@ -401,6 +463,13 @@ def _check_inner(quote, corpus):
     # --- ellipsis quotation ----------------------------------------------------------------------
     parts = ellipsis_parts(n, 10)
     short = [p for p in parts if len(p) < 25]
+    # 🔴🔴 R51. Stands BEFORE the `len(parts) > 1` gate on purpose, because the case it exists for
+    # is the case that gate excludes: a quotation ending in an ellipsis has ONE fragment. It also
+    # covers a MULTI-fragment quotation that ends in an ellipsis, whose tail no gap reaches either.
+    tp, _tlim, ttail = tail_elision_hides(n, quote, corpus)
+    if tp:
+        return "ELLIPSIS_HIDES", tp, ("the elision at the END hides: «%s…»"
+                                      % " ".join(ttail.split())[:200])
     if ("..." in n or "…" in quote) and len(parts) > 1:
         one, offs = corpus.all_in_order(parts)
         if one:

@@ -10,6 +10,54 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.8.3] - 2026-08-19
+
+**The sentence 0.8.2 used to justify itself was not true of the code, and the hole it left is the
+one an immigration filing actually has: the elision at the END of a quotation.**
+
+0.8.2 said a disclosed elision "belongs to the ellipsis machinery below, which already asks what
+was hidden". `check()` enters that machinery only when `len(parts) > 1`, and a quotation that
+merely *ends* with an ellipsis splits into **one** fragment. It never arrived. It fell through to
+`PUNCTUATION` — green — with the detail line **«our quotation adds `.`»**, which is the exact
+confident-wrong-answer defect 0.8.1 was written to remove, reintroduced one release later by the
+comment that claimed to have handled it. A statement about control flow, written in prose, never
+executed.
+
+Underneath it, a defect older than either release: `Corpus.gaps` computes
+`for k in range(len(parts) - 1)` — the spans **between** fragments. A tail is not between anything,
+so the span a trailing ellipsis hides was never handed to `NARROWER_RE` at all, in any code path.
+In legal drafting the proviso is at the end of the sentence — `", provided that"`, `", unless"`,
+`", except that"`, `" subject to"` — so the single elision position the tool did not examine is the
+position where the limiter almost always is.
+
+One variable, same hidden words, same source:
+
+| where the ellipsis sits | verdict before |
+|---|---|
+| in the middle | `ELLIPSIS_HIDES` — loud, correct |
+| **at the end** | **`PUNCTUATION` — green** |
+
+`tail_elision_hides()` asks the existing two-signal `truncated_condition` about the last fragment,
+and returns `ELLIPSIS_HIDES` — not `TRUNCATED_CONDITION`, because the drafter *did* disclose, and
+not silence, because what was disclosed still narrows the rule. Both findings survive: 0.8.2's
+panel was right about the name, 0.8.3 is right about the colour.
+
+**Measured on a real filing before it was believed.** Of 1 118 quotations that end in an ellipsis:
+552 were already loud, 539 stay green, **26 turn loud (2.3%)**. All 26 read by eye, all 26 hide a
+real carve-out — `"employee means an individual…"` hiding *"but does not mean independent
+contractors"*; `"No appeal lies from the denial…"` hiding *"but the applicant retains the right to
+renew"*; `"Applications that are rejected and returned…"` hiding *"do not retain a filing date"*.
+
+A 27th alarm was a false one and produced the only threshold here: its last fragment was
+`«(I) In general»`, fourteen characters, a heading that occurs throughout the U.S. Code — so the
+locator matched a different statute and reported that one's continuation. The 25-character floor is
+not invented for this check; `ellipsis_parts` already uses 25 for *"this fragment proves something
+on its own"*. It removes exactly that alarm and no other.
+
+`suite_r51_tail_elision` locks it with two positive and three negative controls, and one of the
+positives asserts the **detail line** rather than the verdict — because the regression was never
+only about the colour, it was about telling the reader a confident wrong thing.
+
 ## [0.8.2] - 2026-08-19
 
 **The fix in 0.8.1 shouted at honest citation practice. The review panel that reviewed the fix

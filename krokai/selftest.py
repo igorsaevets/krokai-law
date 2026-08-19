@@ -478,10 +478,87 @@ def suite_r50_no_green_without_guard(corpus):
     # same hole - and reproduced by execution before it was believed. An ellipsis is the
     # drafter DISCLOSING the elision; shouting at it as loudly as at a silent truncation
     # destroys the distinction the verdict exists to draw.
+    # 🔴 AMENDED IN R51. "Not a silent truncation" is the whole of what this control asserts, and
+    # that is deliberate: it must NOT also assert "and therefore green". The v0.8.2 fix read it
+    # that way and returned silence, which is what suite_r51_tail_elision now forbids. The two
+    # controls are the two halves of one sentence - a disclosed elision gets a different NAME,
+    # not a pass.
     for tail in ("...", "…"):
         v, _w, _d = check(truncated + tail, corpus)
         ok("r50 NEG-3 a DISCLOSED elision (%s) is not reported as a silent truncation" % tail,
            v != "TRUNCATED_CONDITION", v)
+
+
+def suite_r51_tail_elision(corpus):
+    """🔴🔴 THE ELISION AT THE END IS THE ONE NOBODY LOOKED AT (2026-08-19).
+
+    `Corpus.gaps` computes `for k in range(len(parts) - 1)` - the spans BETWEEN fragments. A
+    quotation that ENDS with an ellipsis elided the TAIL of the sentence, and a tail is not
+    between anything, so no gap was ever computed for it. On top of that, `check` entered the
+    ellipsis section only when `len(parts) > 1`, and a quotation that merely ends with an
+    ellipsis yields ONE fragment - so it never reached that machinery at all.
+
+    In legal drafting the proviso is at the END: "..., provided that", "..., unless",
+    "..., except that", "... subject to". The single elision position the instrument did not
+    examine is the position where the limiter almost always is.
+
+    🔴 THIS WAS SELF-INFLICTED AND THE SUITE IS THE APOLOGY. v0.8.2 stopped calling a disclosed
+    elision TRUNCATED_CONDITION - correct, the panel was right - but justified it with the claim
+    that the case "belongs to the ellipsis machinery below". That machinery could not be reached.
+    A sentence about control flow, written in a comment, never executed. The verdict that came
+    out instead was PUNCTUATION «our quotation adds `.`» - the R50 confident-wrong-answer defect,
+    reintroduced one round after it was named.
+
+    POS-1/2 are the shape the bug had. NEG-1/2/3 are what stops the repair becoming a nuisance:
+    measured over 1 118 ellipsis-terminated quotations in a real filing, this turns 26 green
+    verdicts loud (2.3%), and reading all 26 by eye every one hides a real carve-out.
+    """
+    from krokai.verify import check, tail_elision_hides
+
+    truncated = ("The district director may consider reinstating a student who makes a request "
+                 "for reinstatement")
+    complete = ("certified by a designated school official to consist of at least eighteen "
+                "clock hours of attendance a week")
+
+    for tail in ("...", "…"):
+        v, _w, _d = check(truncated + tail, corpus)
+        ok("r51 POS-1 a trailing ellipsis over a hidden limiter is LOUD, not green (%s)" % tail,
+           v == "ELLIPSIS_HIDES", v)
+
+    # 🔴 POS-2 locks the SENTENCE, not just the verdict. The regression this suite exists for did
+    # not merely return green - it returned green with «our quotation adds `.`», a confident
+    # description of a difference that was not the difference. R50 measured that a wrong
+    # explanation is worse than silence, because silence makes a reader look and a confident
+    # answer stops them. So assert what the reader is actually told.
+    #
+    # (An earlier draft of POS-2 asserted that a MID-elision agrees with a tail-elision, and it
+    # failed - SPLICED - because the two halves I glued together came from different sentences of
+    # the fixture. Kept in the comment rather than deleted: the agreement claim is real, but it is
+    # demonstrated on a synthetic statute in r51_trailing_ellipsis.py, where the source can be
+    # written to contain both halves in order. A test must not assert geography it does not own.)
+    _v, _w, detail = check(truncated + "…", corpus)
+    ok("r51 POS-2 the detail line says what was hidden, not what punctuation changed",
+       "elision at the END" in detail and "adds `.`" not in detail, detail[:120])
+
+    # --- negative controls -------------------------------------------------------------------
+    for tail in ("...", "…"):
+        v, _w, _d = check(complete + tail, corpus)
+        ok("r51 NEG-1 a disclosed elision hiding nothing material stays green (%s)" % tail,
+           v not in ("ELLIPSIS_HIDES", "TRUNCATED_CONDITION"), v)
+
+    # 🔴 NEG-2 is the 27th alarm from the real-material measurement, the only false one. Its last
+    # fragment was «(I) In general» - 14 characters, a heading that occurs all over the U.S. Code,
+    # so the locator matched a DIFFERENT statute and reported that one's continuation. 25 is not a
+    # threshold invented here: it is already this codebase's floor for "this fragment proves
+    # something on its own" (see ellipsis_parts). Applying it removed exactly that alarm.
+    p, _l, _t = tail_elision_hides("some heading … (I) In general…", "x", corpus)
+    ok("r51 NEG-2 a last fragment under 25 chars is too short to locate - no alarm", p is None,
+       str(p))
+
+    # NEG-3: no ellipsis at the end at all => this helper must be inert, or it would double up
+    # with the R50 guard and report the same thing twice under two names.
+    p, _l, _t = tail_elision_hides(truncated, truncated, corpus)
+    ok("r51 NEG-3 inert when the quotation does not end in an ellipsis", p is None, str(p))
 
 
 def suite_word_diff():
@@ -2388,6 +2465,7 @@ def main():
         suite_corpus(corpus, law)
         suite_verify(corpus)
         suite_r50_no_green_without_guard(corpus)
+        suite_r51_tail_elision(corpus)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)
