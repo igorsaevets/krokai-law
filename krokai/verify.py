@@ -345,6 +345,55 @@ def tail_elision_hides(quote_n, quote_raw, corpus):
     return truncated_condition(last, corpus)
 
 
+def tail_short_enough_to_decline(quote_n, quote_raw):
+    """True when ``tail_elision_hides`` above declines on the 25-character floor.
+
+    🔴🔴 R56 — THE r55 PANEL SAID THIS SILENCE WAS A DEFECT, AND THE MEASUREMENT SAYS THE BRANCH
+    CANNOT BE REACHED WITH A CLEAN VERDICT. Both halves are worth keeping.
+
+    Finding 4 of the r55 brief showed reviewers three lines of source: the floor, the bare
+    ``return None, None, None``, and the sibling forty lines down that counts short fragments
+    out loud. Every channel that answered called it a real defect - a tool whose output decides
+    whether a filing's quotations are safe must not report «could not check» as «checked, clean».
+    The reasoning is right. A disclosure was written on the strength of it.
+
+    Then the shapes were enumerated and run (``r56_finding4_reachability.py``, six shapes over a
+    corpus containing all of them):
+
+        single fragment, long, tail hides a limiter    ELLIPSIS_HIDES   loud
+        single fragment, long, tail hides nothing      ELLIPSIS_HIDES   loud
+        single fragment, SHORT (<25)                   NOT_FOUND        loud
+        multi fragment, last fragment SHORT (<25)      OPERATOR         loud
+        multi fragment, last fragment long             ELLIPSIS_HIDES   loud
+        no trailing ellipsis                           VERIFIED         nothing skipped
+
+    **Zero shapes reach a CLEAN verdict with an unexamined tail.** The reason is upstream and it
+    is the interesting part: ``ellipsis_parts`` ALREADY drops fragments under the floor, so by
+    the time ``tail_elision_hides`` reads ``parts[-1]`` the value is short only when the whole
+    quotation is one short fragment - and a quotation that short cannot be located at all, so it
+    comes back NOT_FOUND, which is loud. The floor at line ~343 is therefore belt over braces.
+
+    agy37flash called this exactly, in its own «what would change my conclusion»: *"If verify.py
+    has an upstream pre-filter that guarantees parts[-1] is always >= 25 characters, the branch
+    would be dead code rather than an active defect."* It is. That single sentence was worth more
+    than the four verdicts that agreed with each other, and it is why a reviewer is asked what
+    would change its mind.
+
+    So no disclosure ships: a guard that cannot fire is decoration with a green tick, which is a
+    defect this project has named repeatedly. What ships is this predicate plus the assertion in
+    ``suite_r51_tail_elision`` that pins the finding - if a future change to ``ellipsis_parts``
+    lets a short tail through to a clean verdict, that assertion goes red and Finding 4 becomes
+    live. **Not disproved - unreachable on every shape tried.** The population that would settle
+    it is the 384 unread tail-ellipsis quotations from real material (backlog #261); until those
+    are read, «this cannot happen» is a claim about six synthetic shapes, not about filings.
+    """
+    if not (_TAIL_ELLIPSIS_RE.search(quote_n or "")
+            or _TAIL_ELLIPSIS_RE.search(quote_raw or "")):
+        return False
+    parts = ellipsis_parts(quote_n, 10)
+    return bool(parts) and len(parts[-1]) < 25
+
+
 def leading_cut(quote_n, corpus):
     """The mirror image. An exact substring can invert its own meaning by starting one word too
     late: the negation stands in FRONT of it, not behind.

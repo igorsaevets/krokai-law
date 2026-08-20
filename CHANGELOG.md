@@ -10,6 +10,52 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.8.7] - 2026-08-19
+
+**A review panel called the silent 25-character floor a real defect. It is unreachable, and the
+one reviewer who said what would change its mind is why we know.**
+
+`tail_elision_hides` declines to examine a quotation's tail when the fragment before the final
+ellipsis is under 25 characters, and returns the same `None, None, None` it returns for "checked,
+nothing hidden". Put to an eleven-channel review panel, every channel that answered called it a
+real defect — a tool whose output decides whether a filing's quotations are safe must not report
+*could not check* as *checked, clean*. Three of them (`grokbuild`, `spark12cont`, `mimo25pro`)
+additionally argued **against** a fourth verdict state and for a counted disclosure on the
+existing one, which is what the sibling path forty lines below already does. A disclosure was
+written on the strength of that.
+
+Then the shapes were enumerated and run against a corpus containing all of them:
+
+| quotation shape | verdict | tail unexamined? |
+|---|---|---|
+| single fragment, long, tail hides a limiter | `ELLIPSIS_HIDES` | no |
+| single fragment, long, tail hides nothing | `ELLIPSIS_HIDES` | no |
+| single fragment, **short (<25)** | `NOT_FOUND` | — quotation not locatable |
+| multi fragment, **last fragment short** | `OPERATOR` | — short fragment dropped upstream |
+| multi fragment, last fragment long | `ELLIPSIS_HIDES` | no |
+| no trailing ellipsis | `VERIFIED` | n/a |
+
+**Zero shapes reach a clean verdict with an unexamined tail.** `ellipsis_parts` already discards
+sub-floor fragments *before* `tail_elision_hides` reads `parts[-1]`, so the value is short only
+when the whole quotation is one short fragment — and a quotation that short cannot be located, so
+it comes back `NOT_FOUND`, which is loud.
+
+`agy37flash` called this exactly, in its own *what would change my conclusion*: **"If `verify.py`
+has an upstream pre-filter that guarantees `parts[-1]` is always ≥ 25 characters, the branch would
+be dead code rather than an active defect."** It does. That single sentence was worth more than
+the four verdicts that agreed with each other, and it is the reason a reviewer is asked what would
+change its mind rather than only what it concludes.
+
+So **no disclosure ships** — a guard that cannot fire is decoration with a green tick, a defect
+this project has named repeatedly. What ships instead is `tail_short_enough_to_decline` plus an
+assertion that pins the finding: if a future change to `ellipsis_parts` lets a short tail through
+to a clean verdict, the suite goes red and the panel's finding becomes live. The assertion carries
+its own positive control, because "no clean verdict over an unexamined tail" is trivially satisfied
+by a predicate that never fires.
+
+**Not disproved — unreachable on every shape tried.** Six synthetic shapes are not a filing; the
+population that settles it is the 384 unread tail-ellipsis quotations from real material.
+
 ## [0.8.6] - 2026-08-19
 
 **A scanner tested only on the tree it ships with has been tested on one sample. 0.8.5's new

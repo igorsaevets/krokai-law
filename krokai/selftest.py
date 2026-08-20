@@ -560,6 +560,49 @@ def suite_r51_tail_elision(corpus):
     p, _l, _t = tail_elision_hides(truncated, truncated, corpus)
     ok("r51 NEG-3 inert when the quotation does not end in an ellipsis", p is None, str(p))
 
+    # 🔴🔴 R56 / r55 panel Finding 4 — NEG-2 IS RIGHT TO BE SILENT AND WAS WRONG TO BE INVISIBLE.
+    # NEG-2 above asserts the tool raises no ALARM on a sub-25-character tail, and that is correct:
+    # the locator would match the wrong provision. But «no alarm» reached the reader as «checked,
+    # clean», which for a tool that grades legal filings is a false clean bill. Every panel channel
+    # that returned called it a real defect; the three that argued the design (spark12cont,
+    # mimo25pro, grokbuild) all rejected a fourth verdict state in favour of a disclosure on the
+    # existing one.
+    #
+    # The pair below is the whole test, and the second half is what makes it a test rather than a
+    # restatement: a check that fires everywhere is indistinguishable from a check that is stuck on.
+    # 🔴🔴 R56 / r55 panel Finding 4 — THE ANSWER IS «UNREACHABLE», AND THIS PINS IT.
+    #
+    # The panel was unanimous that declining in silence is a defect, and the reasoning is sound.
+    # It is also unreachable: `ellipsis_parts` drops sub-floor fragments UPSTREAM, so `parts[-1]`
+    # is short only when the whole quotation is one short fragment, and a quotation that short
+    # cannot be located, so it returns NOT_FOUND - loud. Six shapes measured, zero silent passes;
+    # see `tail_short_enough_to_decline`. agy37flash predicted precisely this in its own «what
+    # would change my conclusion», which is the one place a reviewer can be more useful than four
+    # reviewers agreeing.
+    #
+    # No disclosure was shipped, because a guard that cannot fire is decoration. THIS assertion
+    # is what ships instead: it fails the day `ellipsis_parts` starts letting a short tail through
+    # to a clean verdict, and on that day Finding 4 stops being theoretical.
+    from krokai.verify import CLEAN, normalise, prepare_quote, tail_short_enough_to_decline
+    for name, q in (("single short fragment", "clock hours…"),
+                    ("multi fragment, short tail",
+                     "certified by a designated school official … a week…")):
+        v, _w, _d = check(q, corpus)
+        n_ = normalise(prepare_quote(q))
+        ok("r56 no CLEAN verdict is returned over a tail the floor declined to examine (%s) - "
+           "the silent pass the r55 panel warned about is unreachable, not merely unobserved"
+           % name,
+           not (v in CLEAN and tail_short_enough_to_decline(n_, q)),
+           "%s + declined=%s" % (v, tail_short_enough_to_decline(n_, q)))
+    # POSITIVE CONTROL for the predicate itself: it must be able to say True, or the assertion
+    # above is satisfied by a function that always returns False and proves nothing.
+    ok("r56 the predicate CAN report a declined tail - without this the assertion above passes "
+       "on a helper that is simply stuck off",
+       tail_short_enough_to_decline(normalise(prepare_quote("clock hours…")), "clock hours…"),
+       "predicate never fires")
+    ok("r56 NEG the predicate is silent on a quotation with no trailing ellipsis",
+       not tail_short_enough_to_decline(truncated, truncated), "fired anyway")
+
     # 🔴🔴 POS-3/NEG-4: THE BLUEBOOK SPACED ELLIPSIS, found by the panel that reviewed v0.8.3 and
     # confirmed by execution the same hour. Three places each spelled "an ellipsis" for themselves
     # and all three wrote `...` or `…`. The Bluebook (rule 5.3) marks an omission with periods
