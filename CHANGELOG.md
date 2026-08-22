@@ -10,6 +10,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.9.0] - 2026-08-22
+
+### Added
+- **PDF repair pipeline** (`krokai/repair.py`): detect and fix PDFs with broken PScript5 / Type 3
+  text layers — the glyph-substitution cipher that makes text extraction return control characters.
+  - `is_broken_type3(path)` — lightweight detection (pymupdf only).
+  - `scan_broken_pdfs(directory)` — recursive scanner.
+  - `fix_broken_pdf(src, dest)` — renders at 300 DPI, runs RapidOCR (PP-OCRv6), overlays invisible
+    TrueType text layer. Cross-platform font discovery (Windows/macOS/Linux).
+  - `fix_batch(directory, output_dir)` — batch repair with progress callback.
+- Three new CLI commands: `krokai scan-pdfs`, `krokai fix-pdf`, `krokai fix-pdfs`.
+- Auto-repair in `read_pdf()`: when both extraction engines return garbage and the PDF is a broken
+  Type 3 document, the repair pipeline runs transparently (if rapidocr is installed).
+- `engines_available()` now reports RapidOCR presence.
+- New `[ocr]` install extra: `pip install "krokai[ocr]"` installs rapidocr + onnxruntime + numpy.
+
 ## [0.8.7] - 2026-08-19
 
 **A review panel called the silent 25-character floor a real defect. It is unreachable, and the

@@ -13,6 +13,7 @@ import os
 import re
 
 from .normalize import normalise, strip_scrape_artifacts
+from .repair import is_broken_type3
 
 
 class MissingReader(RuntimeError):
@@ -28,7 +29,8 @@ class MissingReader(RuntimeError):
 
 
 __all__ = ["MissingReader", "read_any", "read_pdf", "read_docx", "no_text_layer", "engines_available",
-           "_choose_extraction", "_form_values", "EXTRACTOR_VERSION", "MIN_CHARS_PER_PAGE"]
+           "_choose_extraction", "_form_values", "EXTRACTOR_VERSION", "MIN_CHARS_PER_PAGE",
+           "is_broken_type3"]
 
 _PAGE_MARK = re.compile(r"\[\[Page\s+[\w.-]+\]\]")
 _MD_FOOTNOTE = re.compile(r"\[\\?\[[^\]]*\\?\]\]\([^)]*\)")
@@ -64,6 +66,11 @@ def engines_available():
             out[label] = True
         except Exception:
             out[label] = False
+    try:
+        from rapidocr import RapidOCR  # noqa: F401
+        out["RapidOCR"] = True
+    except Exception:
+        out["RapidOCR"] = False
     return out
 
 
@@ -270,6 +277,33 @@ def read_pdf(path, cache_dir=None):
             "Install one:  pip install \"krokai[pdf]\"   (or krokai[all])" % os.path.basename(path))
 
     text, _why = _choose_extraction(primary, alt)
+
+    # 🔴 A BROKEN PSCRIPT5 PDF RETURNS TEXT THAT LOOKS ALIVE BUT IS A SUBSTITUTION CIPHER.
+    #
+    # Type 3 fonts from Windows virtual printers carry glyphs with no ToUnicode mapping. Both
+    # engines extract *something* — often hundreds of characters — but the bytes bear no
+    # relationship to what the page displays. The signature is Type 3 fonts plus a high ratio
+    # of control characters (ord < 32). When detected, the repair module renders the page as an
+    # image, runs OCR, and overlays a clean text layer. The repaired copy is cached so the next
+    # read is fast.
+    if text and is_broken_type3(path):
+        try:
+            from .repair import fix_broken_pdf
+            import tempfile
+            fd, tmp = tempfile.mkstemp(suffix=".pdf")
+            os.close(fd)
+            try:
+                fix_broken_pdf(path, tmp)
+                d2 = __import__("fitz").open(tmp)
+                text = "\n".join(pg.get_text() for pg in d2)
+                d2.close()
+            finally:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+        except (RuntimeError, Exception):
+            pass
 
     # 🔴 A FILLED FORM IS NOT A BLANK ONE, AND THE TEXT LAYER CANNOT TELL THEM APART.
     #

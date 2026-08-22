@@ -789,6 +789,43 @@ def cmd_selftest(a):
     return st()
 
 
+def cmd_scan_pdfs(a):
+    from .repair import scan_broken_pdfs
+    found = scan_broken_pdfs(a.directory, skip_dirs=a.skip)
+    if not found:
+        print("No broken PDFs found.")
+        return 0
+    print("Found %d broken PDF(s):" % len(found))
+    for rel, _full in found:
+        print("  %s" % rel)
+    return 0
+
+
+def cmd_fix_pdf(a):
+    from .repair import fix_broken_pdf
+    dest = a.output
+    if not dest:
+        base, ext = os.path.splitext(a.source)
+        dest = base + "_fixed" + ext
+    print("Fixing: %s" % a.source)
+    print("Output: %s" % dest)
+    pages, chars = fix_broken_pdf(a.source, dest, dpi=a.dpi,
+                                  callback=lambda p, t, c: print(
+                                      "  Page %d/%d: %d chars" % (p, t, c)))
+    print("Done. %d pages, %d characters embedded." % (pages, chars))
+    return 0
+
+
+def cmd_fix_pdfs(a):
+    from .repair import fix_batch
+    results = fix_batch(a.directory, a.output, skip_dirs=a.skip, dpi=a.dpi, log=print)
+    if results:
+        print("\nFixed %d file(s)." % len(results))
+    else:
+        print("\nNothing to fix.")
+    return 0
+
+
 # ----------------------------------------------------------------------------------------
 def build_parser():
     ap = argparse.ArgumentParser(
@@ -916,6 +953,29 @@ def build_parser():
 
     p = sub.add_parser("packs", help="list the citation packs that ship")
     p.set_defaults(fn=cmd_packs)
+
+    p = sub.add_parser("scan-pdfs",
+                       help="find PDFs with broken text layers (PScript5 / Type 3)")
+    p.add_argument("directory", help="folder to scan recursively")
+    p.add_argument("--skip", nargs="*", default=[], metavar="DIR",
+                   help="directory basenames to skip")
+    p.set_defaults(fn=cmd_scan_pdfs)
+
+    p = sub.add_parser("fix-pdf",
+                       help="repair a broken PScript5/Type 3 PDF via OCR overlay")
+    p.add_argument("source", help="path to the broken PDF")
+    p.add_argument("--output", "-o", help="output path (default: <source>_fixed.pdf)")
+    p.add_argument("--dpi", type=int, default=300, help="render DPI (default: 300)")
+    p.set_defaults(fn=cmd_fix_pdf)
+
+    p = sub.add_parser("fix-pdfs",
+                       help="scan a folder and repair all broken PDFs in batch")
+    p.add_argument("directory", help="folder to scan recursively")
+    p.add_argument("--output", "-o", required=True, help="output folder for fixed PDFs")
+    p.add_argument("--skip", nargs="*", default=[], metavar="DIR",
+                   help="directory basenames to skip")
+    p.add_argument("--dpi", type=int, default=300, help="render DPI (default: 300)")
+    p.set_defaults(fn=cmd_fix_pdfs)
 
     p = sub.add_parser("selftest", help="behavioural checks; contacts nothing")
     p.set_defaults(fn=cmd_selftest)

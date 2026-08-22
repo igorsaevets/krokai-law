@@ -56,7 +56,8 @@ dependencies = []
 pdf = ["pypdf>=4", "pymupdf>=1.24"]
 docx = ["mammoth>=1.6"]
 fetch = ["requests>=2.28"]
-all = ["pypdf>=4", "pymupdf>=1.24", "mammoth>=1.6", "requests>=2.28"]
+ocr = ["pymupdf>=1.24", "rapidocr", "onnxruntime", "numpy"]
+all = ["pypdf>=4", "pymupdf>=1.24", "mammoth>=1.6", "requests>=2.28", "rapidocr", "onnxruntime", "numpy"]
 
 [project.scripts]
 krokai = "krokai.cli:main"
