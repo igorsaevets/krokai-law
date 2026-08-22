@@ -10,6 +10,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.9.2] - 2026-08-22
+
+### Added
+- **Form field dumper** (`krokai/form_dump.py`, `krokai dump-forms`): extracts filled AcroForm
+  field values from USCIS PDF forms with dual-engine cross-verification.
+  - Dual engine: fitz (PyMuPDF) for coordinate-sorted reading order, pypdf for independent
+    verification. Either engine works alone; both together produce a cross-check report.
+  - G-1450 exclusion: credit-card authorisation forms are skipped by default (cardholder data).
+  - Cross-engine agreement report (`cross-check.md`) with per-form divergence counts.
+  - Multi-copy field diff (`i485-diff.md`) when two or more copies of the same form are found.
+  - Machine-readable manifest (`manifest.json`) for downstream tooling.
+  - `[BLANK]` markers on empty fields — the absence of an answer in a USCIS form is itself
+    a statement.
+  - Tested on real AOS filing package: 17 forms, 5 G-1450s excluded, 0 errors, 99.1-100%
+    cross-engine agreement.
+
 ## [0.9.1] - 2026-08-22
 
 ### Added

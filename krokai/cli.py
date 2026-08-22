@@ -806,6 +806,22 @@ def cmd_check_exhibits(a):
     return 0
 
 
+def cmd_dump_forms(a):
+    from .form_dump import dump_forms
+    dirs = a.dir if isinstance(a.dir, list) else [a.dir]
+    result = dump_forms(dirs, out=a.out, nonempty=a.nonempty)
+    for line in result["report_lines"]:
+        print(line)
+    m = result["manifest"]
+    total = len(m["forms"])
+    excluded = len(m["excluded"])
+    errors = len(m["errors"])
+    print("\n%d forms processed, %d excluded, %d errors" % (total, excluded, errors))
+    if a.out:
+        print("outputs -> %s" % os.path.abspath(a.out))
+    return 1 if errors else 0
+
+
 def cmd_scan_pdfs(a):
     from .repair import scan_broken_pdfs
     found = scan_broken_pdfs(a.directory, skip_dirs=a.skip)
@@ -1004,6 +1020,15 @@ def build_parser():
                    help="form directory(ies) to scan (optional)")
     p.add_argument("--out", help="write the report to this file")
     p.set_defaults(fn=cmd_check_exhibits)
+
+    p = sub.add_parser("dump-forms",
+                       help="extract filled AcroForm field values from PDF forms")
+    p.add_argument("--dir", "-d", nargs="+", required=True,
+                   help="directory(ies) to scan for PDF forms")
+    p.add_argument("--out", "-o", help="output directory for per-form dumps and reports")
+    p.add_argument("--nonempty", action="store_true",
+                   help="only show filled fields, hide blanks")
+    p.set_defaults(fn=cmd_dump_forms)
 
     p = sub.add_parser("selftest", help="behavioural checks; contacts nothing")
     p.set_defaults(fn=cmd_selftest)
