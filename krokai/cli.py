@@ -789,6 +789,23 @@ def cmd_selftest(a):
     return st()
 
 
+def cmd_check_exhibits(a):
+    from .exhibit_check import reconcile
+    petition = a.petition if isinstance(a.petition, list) else [a.petition]
+    exhibits = a.exhibits if isinstance(a.exhibits, list) else [a.exhibits]
+    forms = a.forms if a.forms else None
+    if forms and not isinstance(forms, list):
+        forms = [forms]
+    result = reconcile(petition, exhibits, form_dirs=forms, out=a.out)
+    for line in result["report_lines"]:
+        print(line)
+    if result.get("refused"):
+        return 2
+    if result["cited_no_file"] or result.get("form_cited_no_file"):
+        return 1
+    return 0
+
+
 def cmd_scan_pdfs(a):
     from .repair import scan_broken_pdfs
     found = scan_broken_pdfs(a.directory, skip_dirs=a.skip)
@@ -976,6 +993,17 @@ def build_parser():
                    help="directory basenames to skip")
     p.add_argument("--dpi", type=int, default=300, help="render DPI (default: 300)")
     p.set_defaults(fn=cmd_fix_pdfs)
+
+    p = sub.add_parser("check-exhibits",
+                       help="cross-check exhibits/forms in petitions against files on disk")
+    p.add_argument("--petition", "-p", nargs="+", required=True,
+                   help="petition document(s) or folder(s) to read for exhibit references")
+    p.add_argument("--exhibits", "-e", nargs="+", required=True,
+                   help="exhibit directory(ies) to scan for files")
+    p.add_argument("--forms", "-f", nargs="*", default=None,
+                   help="form directory(ies) to scan (optional)")
+    p.add_argument("--out", help="write the report to this file")
+    p.set_defaults(fn=cmd_check_exhibits)
 
     p = sub.add_parser("selftest", help="behavioural checks; contacts nothing")
     p.set_defaults(fn=cmd_selftest)

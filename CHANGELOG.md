@@ -10,6 +10,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.9.1] - 2026-08-22
+
+### Added
+- **Exhibit / form cross-checker** (`krokai/exhibit_check.py`): verifies that exhibits and forms
+  referenced in petition documents actually exist as files on disk, and flags orphan files that
+  no petition mentions. Designed for pre-print review of immigration filing packages.
+  - `ids_in_text(text)` — extract exhibit IDs from document text, with guards against
+    A-numbers, receipt numbers, and form codes that look like exhibit IDs.
+  - `forms_in_text(text)` — extract form IDs (I-485, G-1450, ETA-9089, etc.).
+  - `scan_exhibit_dir(root)` / `scan_form_dir(root)` — recursive file scanners.
+  - `reconcile(petition_paths, exhibit_dirs, form_dirs)` — the full cross-check, producing
+    a structured report with four verdict classes: CITED-NO-FILE, FILE-NO-CITE, DUPLICATE,
+    and form-level equivalents.
+- New CLI command: `krokai check-exhibits --petition <paths> --exhibits <dirs> [--forms <dirs>]`.
+  Reads petition documents (.md, .txt, .docx), scans exhibit and form directories, reports
+  mismatches. Exits 1 when any cited exhibit or form is missing.
+
 ## [0.9.0] - 2026-08-22
 
 ### Added
