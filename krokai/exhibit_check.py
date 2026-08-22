@@ -32,6 +32,9 @@ DEFAULT_SERIES = "A B C D E F G H J K L M P V W X".split()
 # folder — a false alarm on every run.
 NOT_EXHIBIT = frozenset({
     "G-28", "G-325", "G-884", "G-1055", "G-1145", "G-1450",
+    "F-1", "F-2", "F-3", "B-1", "B-2", "H-1", "H-1b", "H-2",
+    "J-1", "J-2", "L-1", "L-1a", "L-1b", "E-1", "E-2", "E-3",
+    "K-1", "K-2", "K-3", "K-4", "K-12",
 })
 
 # Series whose "exhibits" are the documents themselves (memoranda, legal-base appendices),
@@ -44,22 +47,22 @@ DOC_SERIES = frozenset({"M", "W"})
 def _build_id_re(series):
     s = "|".join(sorted(series, key=len, reverse=True))
     return re.compile(
-        r"(?<![A-Za-z])(?:Exhibit\s+)?(%s)\s*[-–—]\s*0*(\d{1,3})([a-zA-Z]?\d?)"
-        r"(?![-–—\d])" % s)
+        r"(?<![A-Za-z])(?:Exhibit\s+)?(%s)\s*[-–—]\s*0*(\d{1,4})([a-zA-Z]?\d?)"
+        r"(?![-–—\d])" % s, re.I)
 
 # K-series: often written WITHOUT hyphen ("K1", "K12") in some briefs.
-_K_RE = re.compile(r"(?<![A-Za-z])\bK\s*[-–—]?\s*0*(\d{1,3})([a-zA-Z]?)(?![-–—\d])")
+_K_RE = re.compile(r"(?<![A-Za-z])\bK\s*[-–—]?\s*0*(\d{1,4})([a-zA-Z]?)(?![-–—\d])")
 
 # Exhibit-ID extraction from FILENAMES. More lenient: the hyphen between letter and number
 # is optional because some files are named "Exhibit P01 - ..." without the hyphen.
 def _build_file_re(series):
     s = "|".join(sorted(series, key=len, reverse=True))
     return re.compile(
-        r"^(?:Exhibit\s+)?(%s)\s*[-–—]?\s*0*(\d{1,3})([a-zA-Z]?\d?)"
+        r"^(?:Exhibit\s+)?(%s)\s*[-–—]?\s*0*(\d{1,4})([a-zA-Z]?\d?)"
         r"(?![0-9])" % s, re.I)
 
 # Multi-part file suffix: B-03_1, B-03_2 are parts of the same exhibit, not duplicates.
-PART_RE = re.compile(r"_(\d{1,2})(?:\D|$)")
+PART_RE = re.compile(r"[-_](\d{1,2})(?:\D|$)")
 
 # Document file extensions. Sidecar files (.evidence.json, .unconfirmed.json, .progress.json,
 # .txt sidecars) are auxiliary data, not exhibits. Including them inflates duplicate counts.
