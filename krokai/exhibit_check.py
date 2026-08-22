@@ -127,11 +127,32 @@ def forms_in_text(text):
 
 # ------------------------------------------------------------------------------- file reading
 
+def _read_docx(path):
+    """Extract text from a .docx file using only stdlib (zipfile + xml.etree)."""
+    try:
+        import zipfile
+        import xml.etree.ElementTree as ET
+        ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        with zipfile.ZipFile(path) as z:
+            with z.open("word/document.xml") as f:
+                tree = ET.parse(f)
+        parts = []
+        for t in tree.iter("{%s}t" % ns):
+            if t.text:
+                parts.append(t.text)
+        return " ".join(parts)
+    except Exception:
+        return ""
+
+
 def _read_text(path):
     """Read a text file, returning empty string on failure or for binary files."""
     low = path.lower()
+    if low.endswith(".docx"):
+        return _read_docx(path)
     if low.endswith((".pdf", ".jpg", ".jpeg", ".png", ".gif", ".tif", ".tiff",
-                     ".bmp", ".webp", ".zip", ".7z", ".rar")):
+                     ".bmp", ".webp", ".zip", ".7z", ".rar", ".doc",
+                     ".xlsx", ".xls", ".pptx", ".ppt")):
         return ""
     try:
         return io.open(path, encoding="utf-8", errors="replace").read()
