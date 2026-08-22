@@ -32,9 +32,8 @@ DEFAULT_SERIES = "A B C D E F G H J K L M P V W X".split()
 # folder — a false alarm on every run.
 NOT_EXHIBIT = frozenset({
     "G-28", "G-325", "G-884", "G-1055", "G-1145", "G-1450",
-    "F-1", "F-2", "F-3", "B-1", "B-2", "H-1", "H-1b", "H-2",
-    "J-1", "J-2", "L-1", "L-1a", "L-1b", "E-1", "E-2", "E-3",
-    "K-1", "K-2", "K-3", "K-4", "K-12",
+    "F-1", "F-2", "F-3", "H-1", "H-1b", "H-2",
+    "J-1", "J-2", "L-1", "L-1a", "L-1b",
 })
 
 # Series whose "exhibits" are the documents themselves (memoranda, legal-base appendices),
