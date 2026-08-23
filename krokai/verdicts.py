@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""The verdict vocabulary: fifteen outcomes, not two.
+"""The verdict vocabulary: sixteen outcomes, not two.
 
 WHY NOT "PASS / FAIL"
 ---------------------
@@ -48,6 +48,7 @@ ORDER = [
     "FOUND_ELSEWHERE",
     "SUPERSEDED_EDITION",
     "ELLIPSIS_HIDES",
+    "FRAGMENTS",
     "NOT_FOUND",
     "NO_SOURCE_ON_DISK",
     "PARTIAL",
@@ -63,7 +64,7 @@ ORDER = [
 # Verdicts that must be read by a human before the document goes anywhere.
 DANGEROUS = ["TRUNCATED_CONDITION", "TRUNCATED_OPENING", "OPERATOR", "SPLICED", "FOUND_ELSEWHERE",
              "SUPERSEDED_EDITION",
-             "ELLIPSIS_HIDES", "PARTIAL", "ALTERED", "SCATTERED", "NOT_FOUND"]
+             "ELLIPSIS_HIDES", "FRAGMENTS", "PARTIAL", "ALTERED", "SCATTERED", "NOT_FOUND"]
 
 # Verdicts meaning "the words are genuinely in the source". NOT the same as "the quotation is
 # sound": WRONG_SPEAKER and ASSEMBLED are here and both can still be misleading in context.
@@ -121,7 +122,7 @@ MARK = {
     "TRUNCATED_CONDITION": "!!", "TRUNCATED_OPENING": "!!", "OPERATOR": "!!",
     "SPLICED": "!!", "FOUND_ELSEWHERE": "!!",
     "SUPERSEDED_EDITION": "!!",
-    "ELLIPSIS_HIDES": "! ", "NOT_FOUND": "! ", "NO_SOURCE_ON_DISK": "? ",
+    "ELLIPSIS_HIDES": "! ", "FRAGMENTS": "! ", "NOT_FOUND": "! ", "NO_SOURCE_ON_DISK": "? ",
     "PARTIAL": "! ", "ALTERED": "! ",
     "SCATTERED": "  ", "WRONG_SPEAKER": "~ ", "PUNCTUATION": "  ", "TYPESETTING": "~ ",
     "ASSEMBLED": "  ", "VERIFIED": "OK",
@@ -147,8 +148,10 @@ LABEL = {
         "NOT_FOUND": "НЕ НАЙДЕНО",
         "NO_SOURCE_ON_DISK": "ИСТОЧНИКА НЕТ НА ДИСКЕ",
         "WRONG_SPEAKER": "ЧУЖОЙ ГОЛОС",
+        "FRAGMENTS": "ФРАГМЕНТЫ",
     },
 }
+LABEL["en"]["FRAGMENTS"] = "fragments found"
 LABEL["en"]["VERIFIED"] = "verified"
 LABEL["en"]["NOT_FOUND"] = "not found"
 LABEL["en"]["NO_SOURCE_ON_DISK"] = "no source on disk"
@@ -178,6 +181,9 @@ MEANING = {
                               "the edition then in force or the current text, and read the "
                               "revision report",
         "ELLIPSIS_HIDES": "! the fragments are there; the ellipsis hides words that narrow the rule",
+        "FRAGMENTS": "! large fragments (>=8 words) found verbatim; the full quotation is not. "
+                     "Either an outdated edition, a corpus gap, or a silent splice - "
+                     "read the six causes of a false NOT FOUND before concluding fabrication",
         "NOT_FOUND": "absent from the corpus, AND the cited source is one you have - so this is "
                      "the shape a fabrication makes",
         "NO_SOURCE_ON_DISK": "? NOT CHECKED - the address beside it names something you have not "
@@ -201,6 +207,9 @@ MEANING = {
                               "новая. Это не обвинение: решите, на какую редакцию ссылаться — "
                               "действовавшую тогда или нынешнюю, — и откройте отчёт о ревизии",
         "ELLIPSIS_HIDES": "! куски найдены, многоточие скрыло слова, сужающие норму",
+        "FRAGMENTS": "! крупные фрагменты (>=8 слов) найдены дословно, целая цитата — нет. "
+                     "Либо устаревшая редакция, либо дыра библиотеки, либо тихая склейка — "
+                     "разобрать по шести причинам ложного NOT FOUND до вывода «выдумано»",
         "NOT_FOUND": "в корпусе нет, а указанный источник у вас ЕСТЬ — это форма выдумки",
         "NO_SOURCE_ON_DISK": "? НЕ ПРОВЕРЕНО — адрес рядом называет то, что не скачано. "
                              "Это не «чисто»: скачайте источник и прогоните снова",

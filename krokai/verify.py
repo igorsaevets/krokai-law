@@ -258,7 +258,7 @@ def truncation_anywhere(quote_n, corpus):
     return None, None, None
 
 
-def truncated_condition(quote_n, corpus):
+def truncated_condition(quote_n, corpus, restrict_to=None):
     """Does an exactly-matching quotation stop right before the clause that limits it?
 
     Two independent signals, and **both** are required, because either alone cries wolf:
@@ -268,11 +268,17 @@ def truncated_condition(quote_n, corpus):
 
     Checked at EVERY occurrence: the same sentence lives in several preambles, and the first hit is
     not necessarily the copy that was quoted.
+
+    ``restrict_to``: when given, only check occurrences in these paths. Used by
+    ``tail_elision_hides`` to anchor the search to files where earlier fragments were found,
+    preventing a short last fragment from matching in an unrelated statute (AOS R71, v2.8.5).
     """
     q = quote_n.rstrip()
     if q[-1:] in ".?!":
         return None, None, None                # a complete sentence: nothing was cut off
     for path, off in corpus.find_all_pos(quote_n):
+        if restrict_to is not None and path not in restrict_to:
+            continue
         tail = corpus.after(path, off, len(quote_n))
         if not tail:
             continue
@@ -342,7 +348,18 @@ def tail_elision_hides(quote_n, quote_raw, corpus):
     last = parts[-1]
     if len(last) < 25:          # too short to locate a unique place - see the docstring
         return None, None, None
-    return truncated_condition(last, corpus)
+    # 🔴 AOS R71 (v2.8.5): anchor the search to files where EARLIER fragments were found.
+    # Without this, a 25-character last fragment like "the Secretary may" matches in an unrelated
+    # statute, the locator finds a limiter in the wrong place, and the verdict is a false
+    # ELLIPSIS_HIDES. Proven by probe_d6_false_negative.py (AOS R70) and confirmed by a
+    # 12-channel panel: grok420 + agy37flash found the same scenario independently.
+    anchor_files = set()
+    for p in parts[:-1]:
+        if len(p) >= 10:
+            for hit_path, _ in corpus.find_all_pos(p, cap=5):
+                anchor_files.add(hit_path)
+    return truncated_condition(last, corpus,
+                               restrict_to=anchor_files or None)
 
 
 def tail_short_enough_to_decline(quote_n, quote_raw):
@@ -569,8 +586,11 @@ def _check_inner(quote, corpus):
         return "TYPESETTING", hh, "word broken across a line in the source"
 
     # --- same words, drifted punctuation ----------------------------------------------------------
+    # 🔴 AOS R66-D4 (panel 5/11 HIGH): an ellipsis quotation must NOT enter this branch.
+    # `alnum()` strips ALL punctuation including the ellipsis, so "A ... B" becomes "AB" and
+    # falsely matches as PUNCTUATION — a green verdict on a quotation that silently skipped text.
     a = alnum(n)
-    if len(a) >= 30:
+    if len(a) >= 30 and not ELLIPSIS_RE.search(n):
         hit = corpus.find_alnum(a)
         if hit:
             # 🔴 See truncation_anywhere(). The alphanumeric index cannot distinguish a
@@ -644,7 +664,57 @@ def _check_inner(quote, corpus):
         if frac >= 0.5:
             return "PARTIAL", None, ""
 
+    # 🔴 AOS R66-O4: large shingle search BEFORE declaring NOT_FOUND. A long quotation whose
+    # full text is absent may still have 8-16 word chunks present verbatim — an outdated edition
+    # of a regulation, a corpus gap, or a silent splice without ellipsis. Declaring NOT_FOUND —
+    # this tool's fabrication signal — without checking costs a public accusation that may be
+    # wrong. Five of eight NOT_FOUND entries in the sister project were later found to be
+    # "source not downloaded", not fabrications.
+    hits = _fragment_hits(n, corpus)
+    if hits:
+        hosts = sorted({p for _, p in hits})
+        return "FRAGMENTS", hits[0][1], (
+            "%d large shingle(s) (>=%d words) found in the corpus, full quotation not. "
+            "Documents with fragments: %d. Read the six causes of a false NOT_FOUND before "
+            "concluding fabrication; found: %s"
+            % (len(hits), 8, len(hosts),
+               " | ".join("'%s'" % s[:80].replace("\n", " ")
+                          for s, _ in hits[:3])))
+
     return "NOT_FOUND", None, ""
+
+
+def _fragment_hits(text, corpus, min_words=8, min_chars=40, max_hits=5):
+    """Large shingles that exist verbatim in the corpus, searched before NOT_FOUND.
+
+    Sizes 16, 12, 10, 8 — largest first. A 16-word hit covers several 8-word windows, so
+    ``used_ranges`` prevents double counting. ``max_hits=5`` caps the report: five places
+    already show whether the quotation is fragmentary or absent.
+    """
+    if not text:
+        return []
+    words = text.split()
+    if len(words) < min_words:
+        return []
+    hits = []
+    used_ranges = []
+    for size in (16, 12, 10, min_words):
+        if size < min_words:
+            continue
+        for i in range(len(words) - size + 1):
+            j = i + size
+            if any(a < j and i < b for a, b in used_ranges):
+                continue
+            shingle = " ".join(words[i:j])
+            if len(shingle) < min_chars:
+                continue
+            p = corpus.find(shingle) or corpus.find_alnum(alnum(shingle))
+            if p:
+                hits.append((shingle, p))
+                used_ranges.append((i, j))
+                if len(hits) >= max_hits:
+                    return hits
+    return hits
 
 
 def check(quote, corpus, *a, **kw):

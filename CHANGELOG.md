@@ -10,6 +10,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.9.3] - 2026-08-22
+
+### Added
+- **FRAGMENTS verdict** — a new 16th verdict for quotations where large shingles (>=8 words)
+  exist verbatim in the corpus but the full quotation does not. Sits between ELLIPSIS_HIDES and
+  NOT_FOUND in severity order. Prevents a public accusation of fabrication when the real cause is
+  an outdated edition, a corpus gap, or a silent splice. Ported from AOS verify_batch.py R66-O4.
+
+### Fixed
+- **Tail-ellipsis anchoring** (AOS R71, v2.8.5): `tail_elision_hides` now restricts the search
+  to files where earlier fragments were found. Without this, a short last fragment like "the
+  Secretary may" could match in an unrelated statute, producing a false ELLIPSIS_HIDES. Proven by
+  probe and confirmed by a 12-channel panel (grok420 + agy37flash found the scenario independently).
+- **Ellipsis-alnum guard** (AOS R66-D4): an ellipsis quotation no longer enters the alphanumeric
+  branch, where `alnum()` would concatenate "A ... B" into "AB" and falsely report PUNCTUATION —
+  a green verdict on a quotation that silently skipped text. Panel finding, 5/11 rated HIGH.
+- `truncated_condition` gains a `restrict_to` parameter for the anchoring fix above.
+
 ## [0.9.2] - 2026-08-22
 
 ### Added
