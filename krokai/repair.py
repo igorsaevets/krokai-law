@@ -127,7 +127,15 @@ def scan_broken_pdfs(directory, skip_dirs=None):
 # ---------------------------------------------------------------------------
 
 def _sanitize_ocr_text(text):
-    """Clean OCR output: normalise whitespace, replace non-breaking spaces and soft hyphens."""
+    """Clean OCR output: normalise whitespace, replace non-breaking spaces and soft hyphens.
+
+    🔴 R77 (#344, qwen38max): keep-what-is-printable, never an allowlist of scripts. The old
+    allowlist held ASCII, a handful of symbols and one Cyrillic block - so `José`, `Müller`,
+    Greek, Hebrew and CJK came out of OCR as spaces, and a name search over the repaired layer
+    failed for exactly the documents OCR exists for. Probe-confirmed: fitz `insert_text` does
+    not raise on glyphs the overlay font lacks, so keeping the characters costs nothing even
+    where the invisible layer cannot draw them.
+    """
     out = []
     for c in text:
         o = ord(c)
@@ -135,10 +143,10 @@ def _sanitize_ocr_text(text):
             out.append(" ")
         elif o in (0xAD, 0x2010, 0x2011, 0x2012, 0x2013, 0x2014, 0x2015):
             out.append("-")
-        elif 32 <= o <= 126 or c in "©®™№€£¥°±§«»—–" or ("Ѐ" <= c <= "ӿ"):
-            out.append(c)
-        else:
+        elif c == "�" or not c.isprintable():
             out.append(" ")
+        else:
+            out.append(c)
     return "".join(out)
 
 
@@ -230,14 +238,20 @@ def fix_broken_pdf(src_path, dest_path, dpi=300, callback=None):
 
 def fix_batch(directory, output_dir, skip_dirs=None, dpi=300, log=None):
     """Scan *directory* for broken PDFs and fix them into *output_dir*, preserving subdirectory
-    structure. Returns a list of ``(rel_path, pages, chars)`` for each fixed file.
+    structure. Returns ``(results, errors)``: ``(rel_path, pages, chars)`` per fixed file and
+    ``(rel_path, message)`` per failure.
+
+    🔴 R77 (#352, lunapro): failures used to live only in the log lines, so a run that found
+    ten broken PDFs and repaired none returned an empty list - the same value as "nothing was
+    broken" - and the CLI exited 0 saying "Nothing to fix." over ten still-broken files. The
+    exit code is the surface a script reads; errors are now part of the return value.
 
     *log* is an optional callable that receives status strings.
     """
     _log = log or (lambda msg: None)
     broken = scan_broken_pdfs(directory, skip_dirs=skip_dirs)
     _log("Found %d broken PDF(s) to fix." % len(broken))
-    results = []
+    results, errors = [], []
     for rel, full in broken:
         dest = os.path.join(output_dir, rel)
         try:
@@ -248,4 +262,5 @@ def fix_batch(directory, output_dir, skip_dirs=None, dpi=300, log=None):
             results.append((rel, pages, chars))
         except Exception as e:
             _log("  ERROR fixing %s: %s" % (rel, e))
-    return results
+            errors.append((rel, "%s: %s" % (type(e).__name__, e)))
+    return results, errors

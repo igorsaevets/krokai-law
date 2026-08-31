@@ -221,6 +221,19 @@ def cmd_check(a):
         return 1
     if a.strict and unknown:
         return 4
+    # 🔴 R77 (#340, orglm53/lunapro): the address layer's own doctrine - "NO_NEARBY_CITATION on
+    # something you file means do not award a green" - was prose without a mechanism: nothing a
+    # script reads ever reflected it. Opt-in, because a matter mid-drafting legitimately has
+    # unaddressed quotations and a default-on gate would teach people to pass it by reflex.
+    if getattr(a, "strict_address", False):
+        from .run import _tier_of
+        na = sum(1 for r in res["rows"]
+                 if _tier_of(r) in ("A", "B")
+                 and (r.get("address") or {}).get("status") in ("NO_NEARBY_CITATION",
+                                                                "ADDRESS_NOT_IN_CORPUS"))
+        if na:
+            print("--strict-address: %d filed-tier quotation(s) have no checkable address" % na)
+            return 5
     return 0
 
 
@@ -472,7 +485,20 @@ def cmd_review(a):
     from .review import prepare, audit_answers
 
     cfg = load(a.dir)
+    # 🔴 R77 (#337, orgemini37flash): the documented second-best home for a key - the keys.env
+    # file OUTSIDE the project - was loaded by `krokai keys` (the command that only REPORTS) and
+    # by nothing else. So the user proved the key was set, ran `krokai review`, and the round
+    # dispatched channels with no key in the environment. Loaded here, names-only printing, and
+    # a key already in the environment still wins.
+    from .keys import load_key_file
+    load_key_file(printer=print)
     out = os.path.abspath(a.out or os.path.join(cfg.root, "reviews", "round"))
+
+    # 🔴 R77 (#339, kimik3/lunapro): the audit's verdicts REACH THE EXIT CODE. `_audit` returned
+    # its rows and both call sites discarded them - a reviewer's fabricated quotation printed a
+    # red table and exited 0, so a hook or CI over this command could never see the one thing it
+    # runs for. 5, distinct from 1 (a channel failed) - transport and trust are different alarms.
+    from .verdicts import CLEAN as _CLEAN
 
     def _audit(folder):
         from .run import corpus_for
@@ -482,8 +508,8 @@ def cmd_review(a):
                              cfg["min_quote_length"])
 
     if a.audit:
-        _audit(os.path.abspath(a.audit))
-        return 0
+        audit_rows = _audit(os.path.abspath(a.audit))
+        return 5 if any(r[1] not in _CLEAN for r in audit_rows) else 0
 
     reg = load_registry(a.registry, start=cfg.root)
     harness = find_harness(reg, a.harness)
@@ -537,8 +563,10 @@ def cmd_review(a):
         return 0
 
     print("\n--- checking the reviewers' quotations against YOUR corpus ---")
-    _audit(out)
-    return 1 if any(r["verdict"] == "FAILED" for r in rows) else 0
+    audit_rows = _audit(out)
+    if any(r["verdict"] == "FAILED" for r in rows):
+        return 1
+    return 5 if any(r[1] not in _CLEAN for r in audit_rows) else 0
 
 
 # ---------------------------------------------------------------------------------- keys
@@ -854,12 +882,16 @@ def cmd_fix_pdf(a):
 
 def cmd_fix_pdfs(a):
     from .repair import fix_batch
-    results = fix_batch(a.directory, a.output, skip_dirs=a.skip, dpi=a.dpi, log=print)
+    results, errors = fix_batch(a.directory, a.output, skip_dirs=a.skip, dpi=a.dpi, log=print)
     if results:
         print("\nFixed %d file(s)." % len(results))
-    else:
+    if errors:
+        print("\n🔴 %d file(s) FAILED to repair - they are still broken:" % len(errors))
+        for rel, msg in errors:
+            print("   %s  (%s)" % (rel, msg[:120]))
+    if not results and not errors:
         print("\nNothing to fix.")
-    return 0
+    return 1 if errors else 0
 
 
 # ----------------------------------------------------------------------------------------
@@ -890,6 +922,9 @@ def build_parser():
     p.add_argument("--tiers", default="ABCD")
     p.add_argument("--out", help="report directory")
     p.add_argument("--strict", action="store_true", help="exit non-zero if tiers A+B have findings")
+    p.add_argument("--strict-address", action="store_true",
+                   help="also exit non-zero (5) when a filed-tier quotation has no checkable "
+                        "address beside it - 'found somewhere' is not 'found where you said'")
     p.set_defaults(fn=cmd_check)
 
     p = common(sub.add_parser("quote", help="check ONE quotation, right now"))

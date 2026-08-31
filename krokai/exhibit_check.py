@@ -10,8 +10,12 @@ weight; a human decides.
 Forms get the same treatment: the petition says "Form I-485 (Exhibit A-1)" and the forms folder
 should contain a file whose name starts with "I-485" or "i-485".
 
-The tool reads petition documents (.md, .txt, .docx) and scans exhibit/form directories. It does
-NOT read PDF content — only filenames. The match is by exhibit ID, never by description.
+The tool reads petition documents (.md, .txt, .docx, and .pdf where a PDF engine is installed)
+and scans exhibit/form directories. Exhibit FILES are matched by filename only. 🔴 R77 (#334,
+spark12cont + 3) SUPERSEDES the older "does NOT read PDF content" line: a petition saved as PDF
+in a mixed folder used to contribute zero references, silently — the reconciliation then reported
+its exhibits as FILE-NO-CITE and missed its broken references entirely. A petition file that
+cannot be read is now a LOUD report row, never a quiet zero.
 """
 from __future__ import annotations
 
@@ -20,6 +24,22 @@ import os
 import re
 
 from .corpus import walk_error
+from .readers import MissingReader
+from .run import SENTINELS
+
+
+def _is_tool_output(path):
+    """A file stamped as this toolkit's own output (sidecars, dumps, reports). Content, not name:
+    the sentinel doctrine from `run.py`, applied to the scanners here so a `X.text.md` sidecar
+    sitting beside its PDF is not counted as an exhibit file or a petition (R77, #347 class)."""
+    if not path.lower().endswith((".md", ".txt")):
+        return False
+    try:
+        with io.open(path, encoding="utf-8", errors="replace") as fh:
+            head = fh.read(2000)
+        return any(s in head for s in SENTINELS)
+    except OSError:
+        return False
 
 
 # ------------------------------------------------------------------------------- exhibit IDs
@@ -132,29 +152,50 @@ def forms_in_text(text):
 # ------------------------------------------------------------------------------- file reading
 
 def _read_docx(path):
-    """Extract text from a .docx file using only stdlib (zipfile + xml.etree)."""
+    """Extract text from a .docx file using only stdlib (zipfile + xml.etree).
+
+    🔴 R77 (#335, agy31pro): runs are concatenated WITHOUT an invented separator, paragraphs
+    with a newline. The old form space-joined every `<w:t>` piece, and Word freely splits a
+    word across runs at a spell-check or formatting boundary - probe-proven: «Exhibit D-19»
+    stored as `Exh` + `ibit D-19` came out as «Exh ibit D-19», so the ID regex never saw it
+    and the reference silently vanished from the reconciliation. Word keeps real spaces
+    INSIDE the runs; inventing one at every boundary breaks words instead of separating them.
+    (grok420's «tables are dropped» half was wrong - `iter()` is recursive and reaches table
+    cells; the paragraph walk below keeps that property, since `w:p` inside `w:tc` is found.)
+    """
     try:
         import zipfile
         import xml.etree.ElementTree as ET
-        ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
         with zipfile.ZipFile(path) as z:
             with z.open("word/document.xml") as f:
                 tree = ET.parse(f)
-        parts = []
-        for t in tree.iter("{%s}t" % ns):
-            if t.text:
-                parts.append(t.text)
-        return " ".join(parts)
+        paras = []
+        for p in tree.iter(ns + "p"):
+            pieces = []
+            for el in p.iter():
+                if el.tag == ns + "t" and el.text:
+                    pieces.append(el.text)
+                elif el.tag in (ns + "tab", ns + "br"):
+                    pieces.append(" ")
+            if pieces:
+                paras.append("".join(pieces))
+        return "\n".join(paras)
     except Exception:
         return ""
 
 
 def _read_text(path):
-    """Read a text file, returning empty string on failure or for binary files."""
+    """Text of a petition document. Empty string only for formats this tool does not handle;
+    a HANDLED format that cannot be read raises `MissingReader` so the caller reports it loudly
+    (R77, #334 - a silent "" here is how a PDF petition's references vanished)."""
     low = path.lower()
     if low.endswith(".docx"):
         return _read_docx(path)
-    if low.endswith((".pdf", ".jpg", ".jpeg", ".png", ".gif", ".tif", ".tiff",
+    if low.endswith(".pdf"):
+        from .readers import read_pdf
+        return read_pdf(path)                  # raises MissingReader when no engine is installed
+    if low.endswith((".jpg", ".jpeg", ".png", ".gif", ".tif", ".tiff",
                      ".bmp", ".webp", ".zip", ".7z", ".rar", ".doc",
                      ".xlsx", ".xls", ".pptx", ".ppt")):
         return ""
@@ -188,6 +229,8 @@ def scan_exhibit_dir(root, series=None):
             ext = os.path.splitext(fn)[1].lower()
             if ext not in DOC_EXTS:
                 continue
+            if _is_tool_output(full):
+                continue                     # a sidecar beside its PDF is not a second exhibit
             m = file_re.match(fn) or id_re.search(fn[:50])
             if not m:
                 problems.append(("NO-ID", full))
@@ -217,6 +260,16 @@ def scan_form_dir(root):
         dirs.sort()
         for fn in sorted(fns):
             full = os.path.join(dp, fn)
+            # 🔴 R77 (#347, goog37flash): this walker had NO extension filter, so
+            # `I-485.forms.txt` - this toolkit's own field dump, named after the form it dumps -
+            # registered as a second copy of the form, and so did every sidecar JSON. Same
+            # DOC_EXTS gate as the exhibit walker, the sentinel test for stamped output, and a
+            # name-suffix skip for dumps written before the stamp existed.
+            ext = os.path.splitext(fn)[1].lower()
+            if ext not in DOC_EXTS:
+                continue
+            if fn.lower().endswith(".forms.txt") or _is_tool_output(full):
+                continue
             m = FORM_FILE_RE.match(fn)
             if not m:
                 problems.append(("NO-FORM-ID", full))
@@ -259,31 +312,42 @@ def reconcile(petition_paths, exhibit_dirs, form_dirs=None, series=None, out=Non
     per_doc = {}
     per_doc_forms = {}
     docs_read = 0
+    # 🔴 R77 (#334): a petition file this tool SHOULD read but could not is a report row, never
+    # a silent zero. The mixed-folder case is the dangerous one: with one readable .md beside
+    # three unreadable PDFs, `docs_read` was 1, the REFUSED guard below stayed quiet, and every
+    # reference living only in the PDFs was simply absent from the reconciliation.
+    unread = []
+
+    def _take(fp, fn):
+        nonlocal docs_read
+        if _is_tool_output(fp):
+            return
+        try:
+            text = _read_text(fp)
+        except MissingReader as exc:
+            unread.append((fn, str(exc).splitlines()[0]))
+            return
+        if not text:
+            if fp.lower().endswith(".pdf"):
+                unread.append((fn, "the PDF has no usable text layer (a scan?) - OCR it, "
+                                   "or supply the petition as .docx/.md"))
+            return
+        refs = ids_in_text(text, series)
+        frefs = forms_in_text(text)
+        per_doc[fn] = refs
+        per_doc_forms[fn] = frefs
+        cited.update(refs)
+        cited_forms.update(frefs)
+        docs_read += 1
+
     for p in petition_paths:
         if os.path.isdir(p):
             for fn in sorted(os.listdir(p)):
                 fp = os.path.join(p, fn)
                 if os.path.isfile(fp):
-                    text = _read_text(fp)
-                    if text:
-                        refs = ids_in_text(text, series)
-                        frefs = forms_in_text(text)
-                        per_doc[fn] = refs
-                        per_doc_forms[fn] = frefs
-                        cited |= refs
-                        cited_forms |= frefs
-                        docs_read += 1
+                    _take(fp, fn)
         elif os.path.isfile(p):
-            text = _read_text(p)
-            if text:
-                fn = os.path.basename(p)
-                refs = ids_in_text(text, series)
-                frefs = forms_in_text(text)
-                per_doc[fn] = refs
-                per_doc_forms[fn] = frefs
-                cited |= refs
-                cited_forms |= frefs
-                docs_read += 1
+            _take(p, os.path.basename(p))
 
     say("petition documents read: **%d**" % docs_read)
     if per_doc:
@@ -292,12 +356,22 @@ def reconcile(petition_paths, exhibit_dirs, form_dirs=None, series=None, out=Non
                 % (fn, len(per_doc[fn]), len(per_doc_forms.get(fn, set()))))
     say("")
 
+    if unread:
+        say("## 🔴 PETITION FILES NOT READ — %d" % len(unread))
+        say("")
+        say("References inside these files are INVISIBLE to every count below. A zero here is "
+            "an artifact of the reader, not a fact about the filing.")
+        say("")
+        for fn, why in unread:
+            say("* `%s` — %s" % (fn, why))
+        say("")
+
     if docs_read == 0:
         say("## REFUSED: no petition documents read")
         say("")
         say("Zero documents read means zero references found, which means zero defects — ")
         say("but that is an artifact of empty input, not a measurement. Check the paths.")
-        return {"report_lines": L, "refused": True}
+        return {"report_lines": L, "refused": True, "unread": unread}
 
     say("exhibit IDs cited in petitions: **%d**" % len(cited))
     say("form IDs cited in petitions: **%d** — %s" % (
@@ -369,8 +443,21 @@ def reconcile(petition_paths, exhibit_dirs, form_dirs=None, series=None, out=Non
     say("")
 
     # --- duplicates (multiple files, no part suffix) ---
+    # 🔴 R77 (#346, kimik3/grokbuild, probe-proven): the part suffix is searched AFTER the
+    # exhibit ID, never across the whole name. `PART_RE` on the full basename matched the
+    # exhibit's OWN number - `B-03 old.pdf` "has a part suffix" via `-03` - so `all(...)` was
+    # true for every set of files that spell their ID with a hyphen, and this class had never
+    # once fired. Position is the key, the R51 lesson: the same characters mean a part suffix
+    # after the ID and the ID itself before it.
+    dup_re = _build_file_re(series)
+
+    def _part_after_id(x):
+        b = os.path.basename(x)
+        m = dup_re.match(b)
+        return bool(PART_RE.search(b[m.end():] if m else b))
+
     duplicates = {k: v for k, v in on_disk.items()
-                  if len(v) > 1 and not all(PART_RE.search(os.path.basename(x)) for x in v)}
+                  if len(v) > 1 and not all(_part_after_id(x) for x in v)}
     say("## DUPLICATE: one ID, multiple files without part suffix (_1, _2) — %d" % len(duplicates))
     say("")
     if duplicates:
@@ -495,4 +582,5 @@ def reconcile(petition_paths, exhibit_dirs, form_dirs=None, series=None, out=Non
         "problems": all_problems,
         "report_lines": L,
         "refused": False,
+        "unread": unread,
     }

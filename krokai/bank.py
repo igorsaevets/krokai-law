@@ -199,8 +199,16 @@ def candidates(text, min_len=55, min_latin_share=0.75):
             return
         # The same span is caught by more than one pass. Without dedup the guard showed the
         # quotation twice in a row, which reads as two problems.
-        if any(q in s or s in q for s in seen):
+        # 🔴 R77 (#357, probe-proven): containment keeps the LONGER text, whichever arrived
+        # first. The old symmetric test dropped a full provision because a clause of it had
+        # been quoted earlier in the same document - the guard then never saw the quotation
+        # most worth checking, precisely because part of it had been seen before.
+        if any(q in s for s in seen):
             return
+        swallowed = [i for i, s in enumerate(seen) if s in q]
+        for i in reversed(swallowed):
+            del seen[i]
+            del out[i]
         seen.append(q)
         out.append(q)
 

@@ -27,7 +27,7 @@ import os
 import re
 
 from .normalize import alnum, dehyph
-from .readers import corpus_text, MIN_TEXT_LAYER
+from .readers import corpus_text, no_text_layer, MIN_TEXT_LAYER
 
 __all__ = ["Corpus", "walk"]
 
@@ -210,7 +210,12 @@ class Corpus(object):
             except Exception as exc:
                 self.unreadable.append((p, type(exc).__name__))
                 continue
-            if any(s in t[:400] for s in sents):
+            # 🔴 R77 (#336, agy37flash): 2000, not 400. The stamp is read from EXTRACTED text,
+            # whose head an extractor is free to pad - a long source basename in a sidecar's
+            # frontmatter alone eats 250 of the old 400. The write side cannot promise an offset
+            # for every future artifact, so the read side carries the margin; suite_r77
+            # enumerates every stamped writer in the package against this window.
+            if any(s in t[:2000] for s in sents):
                 self.excluded_derived.append(p)      # stamped as this toolkit's own output
                 continue
             # 🔴 THE FLOOR APPLIES ONLY WHERE IT MEANS WHAT IT SAYS.
@@ -241,7 +246,17 @@ class Corpus(object):
             # Excluding on the second signal is how a true statement about a placeholder became a
             # false statement about a savings clause.
             if _extracted_format(p):
-                if len(t.strip()) < MIN_TEXT_LAYER:
+                # 🔴 R77 (#351, lunapro): for a PDF the question is asked of `no_text_layer`,
+                # which tests the per-page RATE as well as the total. The bare floor here was
+                # the one place the 41-page-scan lesson (see MIN_CHARS_PER_PAGE in readers)
+                # had not reached: a long scan accumulates enough page furniture to pass any
+                # document-wide floor, so the biggest scans were exactly the ones indexed as
+                # thin garbage. The extraction is already cached, so the re-ask is cheap.
+                if p.lower().endswith(".pdf"):
+                    if no_text_layer(p, cache_dir):
+                        self.excluded_stub.append(p)
+                        continue
+                elif len(t.strip()) < MIN_TEXT_LAYER:
                     self.excluded_stub.append(p)
                     continue
             elif not t.strip():

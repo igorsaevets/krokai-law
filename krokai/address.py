@@ -69,15 +69,52 @@ class KeyMap(object):
 
     def resolve(self, key):
         if key not in self._cache:
-            hits = []
+            hits, fails = [], 0
             for path, text in zip(self.corpus.paths, self.corpus.texts):
                 try:
                     if self.packs.file_matches(key, path, text):
                         hits.append(path)
-                except Exception:
+                except Exception as exc:
+                    # 🔴 R77 (#356 / F15, qwen38max + orglm53): a bare `continue` here made a
+                    # broken pack rule indistinguishable from a non-matching file - the file
+                    # silently left the resolution, the address then read ADDRESS_NOT_IN_CORPUS,
+                    # and the advice said "download it" about a source already on disk. Loud,
+                    # bounded, never fatal: one broken rule must not kill the whole check.
+                    fails += 1
+                    if fails <= 3:
+                        print("  !! address rule failed on %s for %s: %s"
+                              % (os.path.basename(path), "/".join(str(x) for x in key),
+                                 type(exc).__name__))
                     continue
+            if fails > 3:
+                print("  !! ...and %d more rule failures for %s"
+                      % (fails - 3, "/".join(str(x) for x in key)))
             self._cache[key] = hits
         return self._cache[key]
+
+
+def _excluded_match(keys, corpus, packs):
+    """Files the corpus EXCLUDED whose filename matches one of the cited keys, with the reason.
+
+    Filename rules only (`body=""`): the excluded file's content is exactly what could not be
+    trusted, so it does not get a vote. Returns `[(path, why), ...]`, worst reason first.
+    """
+    pools = (("a failed download - the file itself says it is an error page or a bot wall",
+              getattr(corpus, "excluded_placeholder", ())),
+             ("a scan with no usable text layer (or a stub)",
+              getattr(corpus, "excluded_stub", ())),
+             ("an empty file", getattr(corpus, "excluded_empty", ())))
+    out = []
+    for why, paths in pools:
+        for p in paths:
+            for k in keys:
+                try:
+                    if packs.file_matches(k, p, ""):
+                        out.append((p, why))
+                        break
+                except Exception:
+                    continue
+    return out
 
 
 def address_check(near_cites, found_path, keymap, packs):
@@ -157,6 +194,20 @@ def fold(quote, verdict, path, detail, near_cites, corpus, keymap, packs):
         if verdict == "NOT_FOUND" and near_cites:
             a = address_check(near_cites, None, keymap, packs)
             if a["status"] == "ADDRESS_NOT_IN_CORPUS":
+                # 🔴 R77 (#354, orgrok420): "not in the corpus" has two causes and the advice
+                # differs. The keymap walks INDEXED files only, so a source that IS on disk but
+                # was excluded - a bot wall saved as the chapter, a scan with no text layer, an
+                # empty download - read as "not downloaded", and the advice said to download a
+                # file the user already has. The exclusion lists know the truth; say it.
+                excl = _excluded_match(packs.keys(near_cites), keymap.corpus, packs)
+                if excl:
+                    p, why = excl[0]
+                    return ("NO_SOURCE_ON_DISK", None,
+                            "not checked: %s resolves to «%s», which IS on disk but was "
+                            "EXCLUDED from the corpus as %s. Re-fetch or repair that file - "
+                            "downloading it again from the same URL will likely fail the same "
+                            "way. This is not a pass" % ("; ".join(a["keys"]),
+                                                         os.path.basename(p), why), a)
                 return ("NO_SOURCE_ON_DISK", None,
                         "not checked: %s is not in your sources folder. Download it and run again "
                         "- this is not a pass" % "; ".join(a["keys"]), a)

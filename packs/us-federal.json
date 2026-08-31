@@ -18,11 +18,18 @@
         "kind": "cfr",
         "groups": [1, 2],
         "label": "%s CFR part %s",
+        "_reject_doc": "R77 (#333 class): part numbers repeat across TITLES — 26 CFR also has a part 245 — and the part-only and body rules cannot see the title. The negative guard rejects a file whose own head explicitly names a DIFFERENT title; a head naming no title stays soft, which keeps eCFR downloads whose head says only 'Title 8' matchable via the second scan.",
         "file_match": [
           {"where": "filename_flat", "all": ["{g1}cfr", "{g2}"]},
-          {"where": "filename_flat", "all": ["part{g2}"], "any": ["cfr", "title{g1}"]},
+          {"where": "filename_flat", "all": ["part{g2}"], "any": ["cfr", "title{g1}"],
+           "reject_if_head_names": [
+             {"scan": "\\b(\\d{1,2})\\s*c\\.?\\s?f\\.?\\s?r\\.?\\b", "expect": "{g1}"},
+             {"scan": "\\btitle\\s+(\\d{1,2})\\s*[—–:-]", "expect": "{g1}"}]},
           {"_what": "Three or more section numbers of the form 214.x is what a real part looks like; one stray mention is a cross-reference in someone else's document.",
-           "where": "body", "regex_all": [{"pattern": "(?<![\\d.]){g2}\\.\\d", "min_count": 3}]}
+           "where": "body", "regex_all": [{"pattern": "(?<![\\d.]){g2}\\.\\d", "min_count": 3}],
+           "reject_if_head_names": [
+             {"scan": "\\b(\\d{1,2})\\s*c\\.?\\s?f\\.?\\s?r\\.?\\b", "expect": "{g1}"},
+             {"scan": "\\btitle\\s+(\\d{1,2})\\s*[—–:-]", "expect": "{g1}"}]}
         ]
       }
     },
@@ -34,12 +41,20 @@
         "kind": "usc",
         "groups": [1, 2],
         "label": "%s U.S.C. § %s",
+        "_reject_doc": "R77 (#333, lunapro): the filename rule asked for 'usc' and the section but never the TITLE, so 26USC-1255 satisfied a key for 8 U.S.C. § 1255 — a different statute under the same section number. The CFR rule one shape up always carried its title; this one had lost it. A title-bearing filename form is preferred, the title-less form stays for real download names (USCODE-2024-title8-section1255) but under the same negative guard as the CFR shape: a head that explicitly names a different title rejects the file.",
         "file_match": [
-          {"where": "filename_flat", "all": ["usc", "{g2}"]},
+          {"where": "filename_flat", "all": ["{g1}usc", "{g2}"]},
+          {"where": "filename_flat", "all": ["usc", "{g2}"],
+           "reject_if_head_names": [
+             {"scan": "\\b(\\d{1,2})\\s*u\\.?\\s?s\\.?\\s?c\\.?\\b", "expect": "{g1}"},
+             {"scan": "\\btitle\\s+(\\d{1,2})\\s*[—–:-]", "expect": "{g1}"}]},
           {"_what": "Two bare occurrences AND at least one that is explicitly a section reference. Either test alone is noise: a four-digit number occurs everywhere, and a single section sign proves nothing about which section the file is.",
            "where": "body", "regex_all": [
              {"pattern": "(?<!\\d){g2}(?!\\d)", "min_count": 2},
-             {"pattern": "(?:§+|section)\\s*{g2}(?!\\d)", "min_count": 1}]}
+             {"pattern": "(?:§+|section)\\s*{g2}(?!\\d)", "min_count": 1}],
+           "reject_if_head_names": [
+             {"scan": "\\b(\\d{1,2})\\s*u\\.?\\s?s\\.?\\s?c\\.?\\b", "expect": "{g1}"},
+             {"scan": "\\btitle\\s+(\\d{1,2})\\s*[—–:-]", "expect": "{g1}"}]}
         ]
       }
     },

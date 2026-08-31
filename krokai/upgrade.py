@@ -271,7 +271,12 @@ def _refresh_hooks(a):
         return
     matter = os.path.dirname(cfgp)
     print("\nrefreshing hooks in matter: %s" % matter)
-    cmd = [sys.executable, "-m", "krokai", "install-hooks",
+    # 🔴 R77 (#342, four channels): NOT `-m krokai`. The subprocess inherits the MATTER's cwd,
+    # and for a clone or copy layout the package is not on that interpreter's sys.path - so the
+    # refresh died with ModuleNotFoundError on exactly the installs the upgrade had just
+    # updated. `python <package-dir>` runs `__main__.py` in every layout; its own docstring
+    # names both invocation paths, and the copy-layout advice below already used this form.
+    cmd = [sys.executable, os.path.dirname(os.path.abspath(__file__)), "install-hooks",
            "--scope", getattr(a, "scope", "project"), "--dir", matter]
     try:
         subprocess.check_call(cmd)

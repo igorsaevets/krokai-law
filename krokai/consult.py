@@ -181,17 +181,23 @@ def _expand(p):
 
 
 def find_harness(reg, explicit=None):
-    """Locate a separate review harness. Absence is 'not installed here', never 'does not exist'."""
+    """Locate a separate review harness. Absence is 'not installed here', never 'does not exist'.
+
+    🔴 R77 (#342, agy37flash): the returned path is ABSOLUTE. A relative `--harness` was tested
+    against the launch directory and then executed after `neutral_cwd()` had changed it - so the
+    same path existed at the check and did not exist at the call, and the round died between the
+    two with a "file not found" pointing at a file the user could see.
+    """
     ch = (reg.get("channels") or {}).get("harness") or {}
     if explicit:
-        return explicit if os.path.exists(explicit) else None
+        return os.path.abspath(explicit) if os.path.exists(explicit) else None
     env = os.environ.get(ch.get("env") or "KROKAI_REVIEW_HARNESS")
     if env and os.path.exists(env):
-        return env
+        return os.path.abspath(env)
     for c in ch.get("candidates") or []:
         p = _expand(c)
         if os.path.exists(p):
-            return p
+            return os.path.abspath(p)
     return None
 
 
@@ -504,7 +510,7 @@ def call_http(name, ch, system, brief, marker, floor, timeout, printer=print):
 _OURS = {"brief.md", "system.md", "analytics.md", "run.log"}
 
 
-def absorb_delegated(out_dir, marker, floor):
+def absorb_delegated(out_dir, marker, floor, since=None):
     """Grade and record the answers a delegated harness produced.
 
     🔴 THIS FUNCTION EXISTS BECAUSE THE FIRST LIVE ROUND EXPOSED THE HOLE IT FILLS. With a harness
@@ -520,19 +526,33 @@ def absorb_delegated(out_dir, marker, floor):
     judged its own transports more strictly than a delegate's would be measuring the transport, not
     the answer.
     """
-    rows = []
+    rows, stale = [], []
     for fn in sorted(os.listdir(out_dir)):
         if not fn.lower().endswith(".md") or fn.lower() in _OURS:
             continue
         path = os.path.join(out_dir, fn)
         if not os.path.isfile(path):
             continue
+        # 🔴 R77 (#341, kimik3/codex/lunapro): only answers WRITTEN BY THIS DISPATCH are graded.
+        # A reused output folder held last round's answers, and they were absorbed as this
+        # round's - a stale answer to an old brief read as a fresh voice agreeing. The margin
+        # absorbs filesystem mtime granularity; the skip is printed, because a silently ignored
+        # file in an answers folder is how the opposite defect starts.
+        try:
+            if since and os.path.getmtime(path) < since:
+                stale.append(fn)
+                continue
+        except OSError:
+            pass
         text = io.open(path, encoding="utf-8", errors="replace").read()
         r = _result(os.path.splitext(fn)[0].lower(), text=text)
         # The delegate reports its own telemetry in its own format; this layer does not parse it.
         # Saying "not measured here" is honest. Saying "0" would not be.
         r["quality"].append(("NO_TELEMETRY", "graded from the answer; the harness keeps its own"))
         rows.append(_finish(r, marker, floor))
+    if stale:
+        print("  skipped %d file(s) already in the folder BEFORE this dispatch (a previous "
+              "round's answers): %s" % (len(stale), ", ".join(stale)))
     return rows
 
 
@@ -959,14 +979,23 @@ def neutral_cwd(printer=print):
     """
     scratch = os.path.join(os.environ.get("TEMP") or os.environ.get("TMPDIR") or ".",
                            "krokai-neutral-cwd")
-    os.makedirs(scratch, exist_ok=True)
     try:
+        os.makedirs(scratch, exist_ok=True)
         os.chdir(scratch)
         printer("  cwd -> %s" % scratch)
         printer("     (neutral: stops your own instruction files reaching a vendor outside the gate)")
     except OSError as exc:
-        printer("  could not change to a neutral directory (%r) - a CLI channel may pick up the "
-                "instruction files in this folder" % (exc,))
+        # 🔴 R77 (#341, kimik3/codex/lunapro): a hard stop, not a warning. The docstring above
+        # records the CONFIRMED leak this directory prevents; proceeding after the chdir failed
+        # would dispatch CLI channels from the matter's own folder, sending the instruction
+        # files to the vendor outside the gate - a confidentiality failure dressed as
+        # convenience. The failure is all but impossible (TEMP exists on every living system),
+        # which is exactly why paying for it with a refused round is cheap.
+        raise SystemExit(
+            "refusing to dispatch: could not enter a neutral working directory (%r).\n"
+            "CLI channels launched from this folder would carry your own instruction files "
+            "(CLAUDE.md and the like) to the vendor OUTSIDE the outbound gate - a confirmed "
+            "leak, not a hypothesis. Fix TEMP/TMPDIR and run again." % (exc,))
     return scratch
 
 
@@ -1056,9 +1085,10 @@ def run_round(reg, system, brief, out_dir, marker="REVIEW-COMPLETE", only=(), sk
     try:
         delegated = []
         if delegating:
+            t_dispatch = time.time() - 2          # margin for coarse filesystem mtimes
             call_delegate(harness, brief_path, system_path, out_dir, marker=marker,
                           extra=harness_args or (), printer=printer)
-            delegated = absorb_delegated(out_dir, marker, floor)
+            delegated = absorb_delegated(out_dir, marker, floor, since=t_dispatch)
 
         jobs = {}
         with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:

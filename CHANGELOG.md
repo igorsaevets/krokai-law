@@ -10,6 +10,94 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.10.1] - 2026-08-31
+
+The R76 panel's deferred backlog, closed item by item (R77). Every claim was re-verified against
+the code — six by probe — before its fix; each fix is pinned with a positive AND a negative
+control in `suite_r77` / `suite_r77_cli`. Three items were deferred again with reasons
+(per-site address folding needs primary-citation semantics; the `body_head` window and the
+minimum-length floors need a measured corpus first), and one panel claim was refuted on
+re-reading: the guard hook's "cross-drive relpath crash" cannot trigger — the config walk starts
+at the edited file's own folder, so the two paths share a mount in every constructible case.
+The hardening went in anyway, with a log line, because an exception path that bypasses the log
+makes "dead" look like "quiet".
+
+### Fixed — exit codes a script can finally trust
+- **`krokai review` reflects the QUOTATION audit in its exit code** (kimik3, lunapro). Both the
+  full round and `--audit` discarded the audit rows: a reviewer's fabricated quotation printed a
+  red table and exited 0 — invisible to every hook and CI job. A non-clean audited quotation now
+  exits 5, distinct from 1 (a channel failed): transport and trust are different alarms.
+- **`krokai check --strict-address`** (opt-in): the address layer's own doctrine — «NO_NEARBY_CITATION
+  on something you file means do not award a green» — was prose with no mechanism. With the flag,
+  a filed-tier quotation with no checkable address exits 5.
+- **`krokai fix-pdfs` exits 1 when repairs failed** (lunapro), and says which files are still
+  broken. An all-fail batch used to print "Nothing to fix." and exit 0.
+
+### Fixed — silent losses
+- **`krokai review` now loads `keys.env`** (orgemini37flash). The documented second-best home for
+  a key was read by `krokai keys` — the command that only reports — and by nothing that dispatches.
+- **Exhibit reconciliation reads PDF petitions** (spark12cont +3) and reports every petition file
+  it could NOT read as a loud section instead of a silent zero — the mixed-folder case dropped
+  every reference living only in the PDFs. `.docx` petitions no longer break words at run
+  boundaries («Exh|ibit» — probe-proven, agy31pro), and table cells are still walked.
+- **The DUPLICATE class was unreachable** (kimik3, grokbuild; probe-proven): the part-suffix
+  regex matched the exhibit's own number («B-03 old.pdf» "has a part suffix" via `-03`), so
+  `all(...)` held for every hyphenated ID. The suffix is now searched only AFTER the matched ID.
+- **`scan_form_dir` no longer counts this toolkit's own output as forms** (goog37flash): it had
+  no extension filter, so `I-485.forms.txt` registered as a second copy of the form. Both
+  exhibit and form walkers now skip sentinel-stamped files, and `form-dump` stamps everything it
+  writes — an unstamped dump inside a sources folder was the 0.6.x sidecar incident waiting to
+  repeat.
+- **The quote-guard hook reads `NotebookEdit`** (orglm53): the tool was in its list, but the
+  hook read only `file_path` while the tool sends `notebook_path` — so notebook edits were
+  never guarded. `new_source` is now also read.
+- **`bank.candidates` keeps the LONGER quotation** (probe-proven): a full provision arriving
+  after its own clause was silently swallowed by the symmetric containment dedup — the guard
+  then never saw the quotation most worth checking.
+- **OCR sanitize keeps every script** (qwen38max): the allowlist held ASCII plus one Cyrillic
+  block, so `José`, Greek, Hebrew and CJK became spaces in the repaired text layer. Now
+  keep-what-is-printable; controls and U+FFFD still fold to spaces. `EXTRACTOR_VERSION` bumped
+  so cached extractions notice.
+- **`.doc` refuses loudly** (grokbuild): binary Word decoded as UTF-8 soup — probe: 3 798
+  characters from a 4 KB file — passed every floor and indexed. Now `MissingReader`, with
+  conversion advice, and the corpus reports the file unreadable.
+- **`read_docx` no longer doubles the body** (agy31pro, lunapro): the raw-XML pass re-read
+  `document.xml` even when mammoth had already returned the body, tables included
+  (probe-proven) — every phrase count over a .docx measured the reader, not the document. The
+  XML pass now takes the body only when mammoth produced nothing; footnotes/headers stay.
+
+### Fixed — misdiagnoses and rot
+- **«Download it» is no longer said about a file already on disk** (orgrok420): when the cited
+  address resolves to a file the corpus EXCLUDED — a bot wall saved as the chapter, a scan, an
+  empty download — the NO_SOURCE_ON_DISK advice now names the file and the exclusion reason.
+- **A broken pack rule is printed, not swallowed** (qwen38max, orglm53): `KeyMap.resolve`'s bare
+  `except: continue` made a rule crash indistinguishable from a non-matching file.
+- **`us-federal` addresses now know their titles** (lunapro): `26USC-1255` satisfied a key for
+  8 U.S.C. § 1255 — the USC filename rule had lost the title the CFR rule always carried. Both
+  shapes also gained a negative head guard: a file whose own head names a DIFFERENT title is
+  rejected for that key.
+- **The corpus PDF stub test uses the per-page rate** (lunapro): `no_text_layer` carried the
+  41-page-scan lesson and nothing in the corpus path called it — long thin scans passed the
+  document-wide floor exactly as documented against.
+- **The tool-output sentinel is read from a 2000-character window** (agy37flash), and a new
+  test enumerates every stamped writer in the package against that window.
+- **`fetch` probes the whole refusable region for placeholder text** (grokbuild, lunapro) —
+  4 000 of a possible 20 000 bytes left the tell-tale of most modern interstitials unread — and
+  a trailing-slash URL takes its extension from Content-Type instead of minting `.gov` from the
+  hostname (goog37flash; probe-proven), which had been re-opening the unstripped-markup defect
+  this module documents for query strings.
+- **A reused answers folder cannot resurrect last round's answers** (kimik3, codex, lunapro):
+  `absorb_delegated` grades only files written by THIS dispatch and prints what it skipped.
+  A failed `neutral_cwd` now REFUSES the round instead of dispatching CLI channels from the
+  matter's own folder — the leak it prevents is confirmed, not hypothetical.
+- **`krokai upgrade` refreshes hooks in every install layout** (agy37flash, goog36/37flash,
+  orgemini37flash): the refresh spawned `-m krokai` from the matter's cwd, where a clone or
+  copy layout has no `krokai` on `sys.path`. It now runs the package directory, which
+  `__main__.py` supports in all four layouts. `find_harness` returns absolute paths — a
+  relative one was checked in the launch directory and executed after the cwd had changed.
+- **`review.py`'s dead twin of `find_harness`/`run_harness` deleted** — nothing imported it,
+  which is precisely how a fork rots while looking authoritative. One home: `consult.py`.
+
 ## [0.10.0] - 2026-08-31
 
 19-channel independent audit round (R76). Every fix below was reproduced by execution BEFORE it

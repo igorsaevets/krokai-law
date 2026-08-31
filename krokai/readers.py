@@ -54,7 +54,7 @@ PAGES_BEFORE_RATE_APPLIES = 3
 # key, because a downloaded statute never changes and `mtime` alone therefore cannot notice that
 # the reader got better - the fix would ship, the suite would pass, and every sidecar already on
 # disk would stay exactly as wrong as before.
-EXTRACTOR_VERSION = "2"
+EXTRACTOR_VERSION = "3"
 
 
 def engines_available():
@@ -91,6 +91,49 @@ def _alpha_tokens(s):
     return len(re.findall(r"[A-Za-z]+", s))
 
 
+def _form_values_fitz(path):
+    """The same question answered through PyMuPDF widgets, for installs that have fitz but not
+    pypdf (R77, #355 / F5 - the field reader was single-engine while the text reader was dual).
+
+    The `/Off` discipline is kept by TYPE here rather than by the slash: fitz strips the name-
+    object slash, so an unticked checkbox reports the bare word `Off` - exactly the string a text
+    field may legitimately contain. `field_type` says which is which; only checkbox/radio `Off`
+    is the absence of an answer.
+    """
+    try:
+        import fitz
+    except Exception:
+        return ""
+    try:
+        doc = fitz.open(path)
+    except Exception:
+        return ""
+    out = []
+    try:
+        boxes = {getattr(fitz, "PDF_WIDGET_TYPE_CHECKBOX", 2),
+                 getattr(fitz, "PDF_WIDGET_TYPE_RADIOBUTTON", 5)}
+        sig = getattr(fitz, "PDF_WIDGET_TYPE_SIGNATURE", 7)
+        for page in doc:
+            for w in (page.widgets() or []):
+                try:
+                    if w.field_type == sig:
+                        continue
+                    v = w.field_value
+                except Exception:
+                    continue
+                if v is None or not isinstance(v, (str, int, float)):
+                    continue
+                v = str(v).strip()
+                if not v or (w.field_type in boxes and v == "Off"):
+                    continue
+                out.append("%s = %s" % (w.field_name, v.lstrip("/")))
+    finally:
+        doc.close()
+    if not out:
+        return ""
+    return "[FORM FIELDS: %d filled]\n" % len(out) + "\n".join(out)
+
+
 def _form_values(path):
     """`field name = value` for every FILLED field of an AcroForm PDF. Empty string if none.
 
@@ -108,11 +151,13 @@ def _form_values(path):
     try:
         import pypdf
     except Exception:
-        return ""
+        return _form_values_fitz(path)
     try:
         fields = pypdf.PdfReader(path).get_fields() or {}
     except Exception:
-        return ""                      # not a form, encrypted, or malformed: silent is right here
+        # Not a form, encrypted, or malformed FOR THIS ENGINE - the other engine still gets to
+        # answer before the silence. Silent stays right when both say nothing.
+        return _form_values_fitz(path)
     out = []
     for name, f in fields.items():
         try:
@@ -355,8 +400,13 @@ def read_docx(path):
     case files - and also headers, footers, footnotes and unaccepted revisions. Those are precisely
     where a citation likes to sit: a footnote *is* the pincite.
 
-    Both passes are concatenated. Duplication is harmless here, because the corpus is only ever
-    searched, never displayed; a missing table is not harmless at all.
+    🔴 R77 (#345, agy31pro/lunapro) SUPERSEDES the old "duplication is harmless" note that stood
+    here: the XML pass re-read `document.xml` even when mammoth had already returned the body -
+    including its tables, probe-confirmed - so every body phrase existed twice in the corpus and
+    every count over it measured the reader, not the document. The XML pass now takes the body
+    only when mammoth produced nothing; footnotes, endnotes, headers and footers stay
+    unconditional, because they are what the mammoth pass genuinely lacks and a pincite lives
+    there.
     """
     out = []
     # Same distinction as read_pdf: a missing engine is not an empty document. See MissingReader.
@@ -373,12 +423,13 @@ def read_docx(path):
             out.append(mammoth.extract_raw_text(fh).value)
     except Exception:
         pass
+    body_covered = bool(out and out[0].strip())
+    xml_keys = ("footnote", "endnote", "header", "footer") + (() if body_covered else ("document",))
     try:
         import zipfile
         with zipfile.ZipFile(path) as z:
             for n in z.namelist():
-                if n.endswith(".xml") and any(k in n for k in
-                                              ("document", "footnote", "endnote", "header", "footer")):
+                if n.endswith(".xml") and any(k in n for k in xml_keys):
                     out.append(re.sub(r"<[^>]+>", " ", z.read(n).decode("utf-8", "replace")))
     except Exception:
         pass
@@ -392,6 +443,17 @@ def read_any(path, cache_dir=None):
         return read_pdf(path, cache_dir)
     if low.endswith(".docx"):
         return read_docx(path)
+    if low.endswith(".doc"):
+        # 🔴 R77 (#350, grokbuild): pre-2007 binary Word fell through to the plain-text reader,
+        # which decoded the OLE container with errors="replace" - probe-measured 3 798 characters
+        # of soup from a 4 KB file, comfortably past every floor, indexed as a primary source.
+        # Every honest quotation of the document then read NOT_FOUND, the fabrication signal.
+        # No pure-Python .doc engine exists to install, so the honest answer is the loud one.
+        raise MissingReader(
+            "%s is a pre-2007 binary .doc and no reader for that format exists here, so its "
+            "text was never read.\nThis is NOT the same as 'the document contains no "
+            "quotations' - nothing was examined.\nConvert it once:  open in Word/LibreOffice "
+            "and save as .docx (or export to PDF)." % os.path.basename(path))
     try:
         raw = io.open(path, encoding="utf-8", errors="replace").read()
     except OSError:

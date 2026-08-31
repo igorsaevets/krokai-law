@@ -2828,6 +2828,424 @@ def suite_r76(tmp):
 
 
 # ------------------------------------------------------------------------------------------------
+def suite_r77(tmp):
+    """R77 backlog round (#333-#359): each verifiable claim reproduced before its fix, each fix
+    pinned WITH a control - the honest case must keep working, or the fix disables the tool."""
+    import time as _time
+    import zipfile as _zf
+    from krokai.corpus import Corpus
+    from krokai import address as addr_mod
+    from krokai.citations import load_packs
+    from krokai.exhibit_check import reconcile, scan_form_dir, scan_exhibit_dir
+    from krokai.run import SENTINELS
+
+    d77 = os.path.join(tmp, "r77x")
+    os.makedirs(d77, exist_ok=True)
+    packs = load_packs(["us-federal"])
+
+    # --- #333: a same-numbered section under ANOTHER title is not a home ---------------------
+    key = ("usc", "8", "1255")
+    wrong = "26 U.S.C. § 1255 Gain from dispositions. See section 1255; also 1255 applies."
+    right = "8 U.S.C. § 1255 Adjustment of status. See section 1255; also 1255 applies."
+    ok("r77: 26USC-1255 no longer satisfies 8 U.S.C. § 1255 (#333, lunapro)",
+       not packs.file_matches(key, "26USC-1255-uscode.xml", wrong), "")
+    ok("r77 control: the true 8 USC 1255 file still matches, by name and by body",
+       packs.file_matches(key, "8USC-1255-uscode.xml", right)
+       and packs.file_matches(key, "8usc-1255.xml", ""), "")
+    ok("r77: a 26-CFR part under an 8 CFR key is rejected by its own head (#333 class)",
+       not packs.file_matches(("cfr", "8", "245"), "part-245-cfr.xml",
+                              "26 CFR part 245 rules. 245.1 text. 245.2 text. 245.3 text."), "")
+    ok("r77 control: an eCFR-style part file with the right title still matches",
+       packs.file_matches(("cfr", "8", "245"), "part-245-ecfr.xml",
+                          "8 CFR Part 245 - Adjustment. 245.1 a. 245.2 b. 245.3 c."), "")
+
+    # --- #346 + #335 + #334: the exhibit reconciliation ---------------------------------------
+    pet = os.path.join(d77, "pet")
+    exd = os.path.join(d77, "ex")
+    os.makedirs(pet)
+    os.makedirs(exd)
+    doc_xml = ('<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/'
+               'wordprocessingml/2006/main"><w:body>'
+               '<w:p><w:r><w:t>Exh</w:t></w:r><w:r><w:t>ibit B-3 is attached; see also </w:t>'
+               '</w:r></w:p>'
+               '<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Exhibit D-19 in the table</w:t></w:r></w:p>'
+               '</w:tc></w:tr></w:tbl></w:body></w:document>')
+    px = os.path.join(pet, "brief.docx")
+    with _zf.ZipFile(px, "w") as z:
+        z.writestr("word/document.xml", doc_xml)
+    for fn in ("B-03 old.pdf", "B-03 new.pdf", "D-19_1.pdf", "D-19_2.pdf"):
+        io.open(os.path.join(exd, fn), "w").write("x")
+    r = reconcile([pet], [exd])
+    ok("r77: a run-split «Exh|ibit» docx reference is still read (#335, agy31pro, probe-proven)",
+       "B-3" in (r.get("matched") or set()), str(sorted(r.get("matched") or [])))
+    ok("r77: a table-cell reference survives the paragraph walk (#335 control)",
+       "D-19" in (r.get("matched") or set()), str(sorted(r.get("matched") or [])))
+    ok("r77: two same-ID files without part suffixes are DUPLICATE at last (#346, probe-proven)",
+       "B-3" in r["duplicates"], str(sorted(r["duplicates"])))
+    ok("r77 control: _1/_2 multi-part files are still not duplicates",
+       "D-19" not in r["duplicates"], str(sorted(r["duplicates"])))
+
+    pet2 = os.path.join(d77, "pet2")
+    os.makedirs(pet2)
+    io.open(os.path.join(pet2, "note.md"), "w", encoding="utf-8").write("See Exhibit B-3.")
+    io.open(os.path.join(pet2, "scan.pdf"), "wb").write(b"%PDF-1.4 broken")
+    saved = {m: sys.modules.get(m) for m in ("pypdf", "fitz")}
+    sys.modules["pypdf"] = None
+    sys.modules["fitz"] = None
+    try:
+        r2 = reconcile([pet2], [exd])
+    finally:
+        for m, v in saved.items():
+            if v is None:
+                sys.modules.pop(m, None)
+            else:
+                sys.modules[m] = v
+    ok("r77: a MIXED folder reports the unreadable PDF petition instead of a silent zero (#334)",
+       not r2["refused"] and len(r2.get("unread") or []) == 1
+       and "PDF" in r2["unread"][0][1], str(r2.get("unread")))
+
+    # --- #347: this toolkit's own outputs are neither forms nor exhibits ---------------------
+    fdir = os.path.join(d77, "forms")
+    os.makedirs(fdir)
+    io.open(os.path.join(fdir, "I-485.pdf"), "w").write("x")
+    io.open(os.path.join(fdir, "I-485.forms.txt"), "w", encoding="utf-8").write("=== FORM ===")
+    io.open(os.path.join(fdir, "manifest.json"), "w").write("{}")
+    files, _probs = scan_form_dir(fdir)
+    ok("r77: the form counts once - its .forms.txt dump and manifest are not forms (#347)",
+       list(files) == ["I-485"] and len(files["I-485"]) == 1, str(files))
+    io.open(os.path.join(exd, "B-03 old.text.md"), "w", encoding="utf-8").write(
+        "<!-- %s : extracted layer --> body text" % SENTINELS[0])
+    files2, _p2 = scan_exhibit_dir(exd)
+    ok("r77: a stamped sidecar beside its exhibit is not a third copy (#347 class)",
+       len(files2.get("B-3") or []) == 2, str(files2.get("B-3")))
+
+    # --- #336: every stamped writer lands inside the widened corpus scan window --------------
+    from krokai.sidecar import HEADER
+    from krokai.form_dump import _STAMP_TXT, _STAMP_MD
+    wd = os.path.join(d77, "law36")
+    os.makedirs(wd)
+    long_src = "A" * 240 + ".pdf"
+    io.open(os.path.join(wd, "sc.text.md"), "w", encoding="utf-8").write(
+        HEADER.format(src=long_src, srcname=long_src, when="2026-08-31", extractor="3")
+        + "Statutory body text here. " * 40)
+    io.open(os.path.join(wd, "f.forms.txt"), "w", encoding="utf-8").write(
+        _STAMP_TXT + "[p 1] field <t> = value\n" * 40)
+    io.open(os.path.join(wd, "cc.md"), "w", encoding="utf-8").write(
+        _STAMP_MD + "# Cross-engine agreement\nrow after row\n" * 40)
+    io.open(os.path.join(wd, "real.txt"), "w", encoding="utf-8").write(
+        "A real short provision of law stands here, indexed as always. " * 5)
+    c36 = Corpus([wd], quiet=True, sentinel=SENTINELS)
+    ok("r77: all three stamped artifact shapes are excluded as tool output (#336, agy37flash)",
+       len(c36.excluded_derived) == 3 and len(c36.paths) == 1
+       and c36.paths[0].endswith("real.txt"),
+       "derived=%d paths=%s" % (len(c36.excluded_derived),
+                                [os.path.basename(p) for p in c36.paths]))
+
+    # --- #351: a long THIN scan is excluded by the per-page rate, not passed by the total ----
+    try:
+        import fitz as _fz
+    except ImportError:
+        _fz = None
+    if _fz is not None:
+        p51 = os.path.join(d77, "law51")
+        os.makedirs(p51)
+        doc = _fz.open()
+        for i in range(8):
+            pg = doc.new_page()
+            pg.insert_text(_fz.Point(30, 50), "thin page marker line %02d xx" % i)
+        doc.save(os.path.join(p51, "thin-scan.pdf"))
+        doc.close()
+        doc = _fz.open()
+        pg = doc.new_page()
+        pg.insert_text(_fz.Point(30, 50), "A dense single page. " * 30)
+        doc.save(os.path.join(p51, "dense.pdf"))
+        doc.close()
+        c51 = Corpus([p51], quiet=True)
+        ok("r77: a 240-char 8-page scan is a stub by RATE in the corpus path (#351, lunapro)",
+           any(p.endswith("thin-scan.pdf") for p in c51.excluded_stub),
+           str([os.path.basename(p) for p in c51.excluded_stub]))
+        ok("r77 control: a dense one-pager is still indexed",
+           any(p.endswith("dense.pdf") for p in c51.paths), "")
+    else:
+        print("note: r77 #351 rate-test pins skipped - fitz is not installed here")
+
+    # --- #350: pre-2007 .doc refuses loudly instead of indexing soup -------------------------
+    from krokai.readers import read_any, MissingReader
+    p50 = os.path.join(d77, "law50")
+    os.makedirs(p50)
+    # not "memo": DERIVED_DEFAULT matches that word in a filename and would bucket the fixture
+    # as our own writing before the reader ever ran
+    pdoc = os.path.join(p50, "signed-letter.doc")
+    open(pdoc, "wb").write(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + bytes(range(256)) * 20)
+    raised = False
+    try:
+        read_any(pdoc)
+    except MissingReader:
+        raised = True
+    ok("r77: .doc raises MissingReader - probe measured 3 798 chars of soup passing the floor "
+       "(#350, grokbuild)", raised, "")
+    c50 = Corpus([p50], quiet=True)
+    ok("r77: and the corpus reports it UNREADABLE, loudly, instead of indexing it",
+       any(p == pdoc and kind == "MissingReader" for p, kind in c50.unreadable)
+       and not c50.paths, str(c50.unreadable))
+
+    # --- #345: a mammoth-covered body is no longer doubled by the raw-XML pass ---------------
+    try:
+        import mammoth as _mam  # noqa: F401
+    except ImportError:
+        _mam = None
+    if _mam is not None:
+        from krokai.readers import read_docx
+        px45 = os.path.join(d77, "body.docx")
+        with _zf.ZipFile(px45, "w") as z:
+            z.writestr("[Content_Types].xml",
+                       '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/'
+                       'package/2006/content-types"><Default Extension="xml" ContentType='
+                       '"application/xml"/><Default Extension="rels" ContentType="application/'
+                       'vnd.openxmlformats-package.relationships+xml"/><Override PartName='
+                       '"/word/document.xml" ContentType="application/vnd.openxmlformats-'
+                       'officedocument.wordprocessingml.document.main+xml"/></Types>')
+            z.writestr("_rels/.rels",
+                       '<?xml version="1.0"?><Relationships xmlns="http://schemas.'
+                       'openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" '
+                       'Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+                       'relationships/officeDocument" Target="word/document.xml"/>'
+                       '</Relationships>')
+            z.writestr("word/document.xml",
+                       '<?xml version="1.0"?><w:document xmlns:w="http://schemas.'
+                       'openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r>'
+                       '<w:t>UNIQUEBODYPHRASE alpha</w:t></w:r></w:p></w:body></w:document>')
+            z.writestr("word/footnotes.xml",
+                       '<?xml version="1.0"?><w:footnotes xmlns:w="http://schemas.'
+                       'openxmlformats.org/wordprocessingml/2006/main"><w:footnote><w:p><w:r>'
+                       '<w:t>FOOTMARK beta</w:t></w:r></w:p></w:footnote></w:footnotes>')
+        t45 = read_docx(px45)
+        ok("r77: the body appears ONCE when mammoth read it (#345, agy31pro/lunapro)",
+           t45.count("UNIQUEBODYPHRASE") == 1, "count=%d" % t45.count("UNIQUEBODYPHRASE"))
+        ok("r77 control: footnote text is still appended from the XML pass",
+           "FOOTMARK" in t45, "")
+    else:
+        print("note: r77 #345 mammoth-gate pins skipped - mammoth is not installed here")
+
+    # --- #344: OCR sanitize keeps every script -----------------------------------------------
+    from krokai.repair import _sanitize_ocr_text
+    s = _sanitize_ocr_text("José — «да» 中文\x02ctrl�end")
+    ok("r77: sanitize keeps é/Cyrillic/CJK and drops controls + U+FFFD (#344, qwen38max)",
+       "José" in s and "да" in s and "中文" in s
+       and "\x02" not in s and "�" not in s, repr(s))
+    ok("r77 control: the dash family still folds to '-'",
+       "a-b" in _sanitize_ocr_text("a—b"), "")
+
+    # --- #348 + #343: the fetch layer --------------------------------------------------------
+    from krokai.fetch import _name_from
+    ok("r77: a trailing-slash URL takes its extension from Content-Type, not the hostname "
+       "(#348, probe-proven)",
+       _name_from("https://www.uscis.gov/laws-and-policy/", "text/html").endswith(".html"),
+       _name_from("https://www.uscis.gov/laws-and-policy/", "text/html"))
+    ok("r77 control: a path basename keeps its own extension, query in the stem",
+       _name_from("https://x.gov/title-8.xml?part=245", "text/html").endswith(".xml"), "")
+    import krokai.fetch as _fetch_mod
+    fsrc = io.open(_fetch_mod.__file__.replace(".pyc", ".py"), encoding="utf-8").read()
+    ok("r77: the placeholder probe covers the whole refusable region (#343, grokbuild/lunapro)",
+       "data[:20000]" in fsrc and "data[:4000]" not in fsrc, "")
+
+    # --- #341: stale answers are not this round's voices; a leaking cwd refuses --------------
+    from krokai.consult import absorb_delegated, neutral_cwd
+    ad = os.path.join(d77, "round")
+    os.makedirs(ad)
+    io.open(os.path.join(ad, "OLDCH.md"), "w", encoding="utf-8").write(
+        "an old answer from last round " * 20 + "\nR77-MARK")
+    stale_t = _time.time() - 3600
+    os.utime(os.path.join(ad, "OLDCH.md"), (stale_t, stale_t))
+    io.open(os.path.join(ad, "NEWCH.md"), "w", encoding="utf-8").write(
+        "a fresh answer from this dispatch " * 20 + "\nR77-MARK")
+    rows41 = absorb_delegated(ad, "R77-MARK", 10, since=_time.time() - 60)
+    ok("r77: an answer already in the folder BEFORE dispatch is skipped as stale (#341, "
+       "kimik3/codex/lunapro)",
+       [r["channel"] for r in rows41] == ["newch"], str([r["channel"] for r in rows41]))
+    real_chdir = os.chdir
+    os.chdir = lambda p: (_ for _ in ()).throw(OSError("denied"))
+    try:
+        refused = False
+        try:
+            neutral_cwd(printer=lambda *a, **k: None)
+        except SystemExit:
+            refused = True
+    finally:
+        os.chdir = real_chdir
+    ok("r77: a failed neutral cwd REFUSES the round - the leak it prevents is confirmed, "
+       "not hypothetical (#341)", refused, "")
+
+    # --- #342: harness paths absolute; hook refresh survives every install layout ------------
+    from krokai.consult import find_harness
+    hp = os.path.join(d77, "harness.py")
+    io.open(hp, "w").write("# stub")
+    cur = os.getcwd()
+    os.chdir(d77)
+    try:
+        got = find_harness({}, explicit="harness.py")
+    finally:
+        os.chdir(cur)
+    ok("r77: an explicit relative harness path comes back ABSOLUTE (#342, agy37flash)",
+       bool(got) and os.path.isabs(got), repr(got))
+    import krokai.upgrade as _up
+    usrc = io.open(_up.__file__.replace(".pyc", ".py"), encoding="utf-8").read()
+    ok("r77: the hook refresh never spawns `-m krokai` from a foreign cwd (#342, 4 channels)",
+       '"-m", "krokai"' not in usrc, "")
+
+    # --- #352: a repair batch that fails is a non-zero exit ----------------------------------
+    import krokai.repair as _rp
+    from krokai.cli import cmd_fix_pdfs
+
+    class _Args(object):
+        directory, output, skip, dpi = d77, os.path.join(d77, "outp"), None, 72
+
+    sv_scan, sv_fix = _rp.scan_broken_pdfs, _rp.fix_broken_pdf
+    _rp.scan_broken_pdfs = lambda d, skip_dirs=None: [("bad.pdf", os.path.join(d, "bad.pdf"))]
+    _rp.fix_broken_pdf = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    try:
+        res52, errs52 = _rp.fix_batch(d77, os.path.join(d77, "outp"))
+        rc52 = cmd_fix_pdfs(_Args())
+    finally:
+        _rp.scan_broken_pdfs, _rp.fix_broken_pdf = sv_scan, sv_fix
+    ok("r77: an all-fail repair batch returns its failures and exits 1 (#352, lunapro)",
+       res52 == [] and len(errs52) == 1 and "boom" in errs52[0][1] and rc52 == 1,
+       "rc=%s errs=%s" % (rc52, errs52))
+
+    # --- #354: «download it» is not said about a file already on disk ------------------------
+    law54 = os.path.join(d77, "law54")
+    os.makedirs(law54)
+    io.open(os.path.join(law54, "8USC-1255-download.xml"), "w", encoding="utf-8").write(
+        "Just a moment... Checking your browser before accessing this site. "
+        "Please enable JavaScript to continue.")
+    c54 = Corpus([law54], quiet=True)
+    ok("r77 control: the bot wall is excluded as a placeholder, not indexed",
+       any(p.endswith("8USC-1255-download.xml") for p in c54.excluded_placeholder)
+       and not c54.paths, "")
+    km54 = addr_mod.KeyMap(c54, packs)
+    v54, _w, d54, _a = addr_mod.fold(
+        "A quotation of the statute that is nowhere in this corpus at all today.",
+        "NOT_FOUND", None, "", ["8 U.S.C. § 1255"], c54, km54, packs)
+    ok("r77: the advice names the EXCLUDED file instead of saying «download it» (#354, "
+       "orgrok420)", v54 == "NO_SOURCE_ON_DISK" and "EXCLUDED" in d54
+       and "8USC-1255-download.xml" in d54, d54[:160])
+    law54b = os.path.join(d77, "law54b")
+    os.makedirs(law54b)
+    io.open(os.path.join(law54b, "unrelated.md"), "w", encoding="utf-8").write(
+        "Some other provision entirely, long enough to be a source.")
+    c54b = Corpus([law54b], quiet=True)
+    km54b = addr_mod.KeyMap(c54b, packs)
+    v54b, _w, d54b, _a = addr_mod.fold(
+        "A quotation of the statute that is nowhere in this corpus at all today.",
+        "NOT_FOUND", None, "", ["8 U.S.C. § 1255"], c54b, km54b, packs)
+    ok("r77 control: with nothing on disk the advice is still «download it»",
+       v54b == "NO_SOURCE_ON_DISK" and "Download it" in d54b, d54b[:120])
+
+    # --- #356: a broken pack rule is loud and does not kill the resolution -------------------
+    law56 = os.path.join(d77, "law56")
+    os.makedirs(law56)
+    io.open(os.path.join(law56, "one.md"), "w", encoding="utf-8").write(
+        "A provision long enough to stand in the corpus for this test to walk.")
+    c56 = Corpus([law56], quiet=True)
+
+    class _BoomPacks(object):
+        def file_matches(self, key, path, text):
+            raise re.error("a broken pack rule")
+
+    buf56 = io.StringIO()
+    stdout56 = sys.stdout
+    sys.stdout = buf56
+    try:
+        hits56 = addr_mod.KeyMap(c56, _BoomPacks()).resolve(("x", "1"))
+    finally:
+        sys.stdout = stdout56
+    ok("r77: a pack rule that raises is PRINTED, not swallowed into «not in corpus» (#356 / "
+       "F15, qwen38max+orglm53)",
+       hits56 == [] and "address rule failed" in buf56.getvalue(), buf56.getvalue()[:100])
+
+    # --- #357: the guard keeps the LONGER quotation ------------------------------------------
+    from krokai.bank import candidates
+    short_q = "the Secretary may in his discretion grant the application for adjustment"
+    long_q = ("no application shall be approved unless " + short_q
+              + " and the alien establishes eligibility at the time of filing")
+    got57 = candidates("> %s\n\nprose.\n\n> %s\n" % (short_q, long_q), min_len=55)
+    ok("r77: a longer quotation arriving after its own clause SURVIVES (#357, probe-proven)",
+       len(got57) == 1 and got57[0].startswith("no application"), str([q[:40] for q in got57]))
+    got57b = candidates("> %s\n\nprose.\n\n> %s\n" % (long_q, short_q), min_len=55)
+    ok("r77 control: the shorter-inside-longer still merges to one, either order",
+       len(got57b) == 1 and got57b[0].startswith("no application"), "")
+
+    # --- #359: notebook edits reach the guard ------------------------------------------------
+    qg = io.open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                              "hooks", "quote_guard.py"), encoding="utf-8", errors="replace"
+                 ).read() if _is_source_checkout(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) else ""
+    if qg:
+        ok("r77: the guard reads NotebookEdit's notebook_path and new_source (#359, orglm53)",
+           'inp.get("notebook_path")' in qg and 'inp.get("new_source")' in qg, "")
+    # #339/#337/#340 are pinned end-to-end in suite_r77_cli below via subprocesses.
+
+
+def suite_r77_cli(tmp):
+    """The R77 exit-code fixes, pinned through the real CLI - the surface a hook or CI reads."""
+    import subprocess as _sp
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    matter = os.path.join(tmp, "r77m")
+    os.makedirs(matter, exist_ok=True)
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    keydir = os.path.join(tmp, "r77keys")
+    os.makedirs(keydir, exist_ok=True)
+    io.open(os.path.join(keydir, "keys.env"), "w", encoding="utf-8").write(
+        "TESTKEY_R77=hunter2-value-r77\n")
+    env["KROKAI_KEY_DIR"] = keydir
+
+    def run(*args):
+        return _sp.run([sys.executable, "-m", "krokai"] + list(args),
+                       cwd=root, env=env, capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=240)
+
+    r = run("init", matter)
+    if r.returncode != 0:
+        ok("r77cli: init failed - remaining CLI pins skipped", False, r.stderr[-200:])
+        return
+    provision = ("No application for adjustment of status shall be approved unless the "
+                 "applicant establishes clear eligibility for the benefit sought at filing.")
+    io.open(os.path.join(matter, "law", "8USC-1255.md"), "w", encoding="utf-8").write(
+        "SEC. 1255. " + provision)
+
+    # --- #339: the audit's verdicts reach the exit code --------------------------------------
+    ans = os.path.join(tmp, "r77answers")
+    os.makedirs(ans, exist_ok=True)
+    io.open(os.path.join(ans, "CHAN.md"), "w", encoding="utf-8").write(
+        "The reviewer answers at length and then quotes:\n\n"
+        "> The Attorney General shall in every case waive the filing requirement without "
+        "exception or delay.\n\nEnd of answer.\n")
+    r = run("review", "--dir", matter, "--audit", ans)
+    ok("r77cli: a fabricated reviewer quotation exits 5, not 0 (#339, kimik3/lunapro)",
+       r.returncode == 5, "rc=%s tail=%s" % (r.returncode, (r.stdout or "")[-120:]))
+    io.open(os.path.join(ans, "CHAN.md"), "w", encoding="utf-8").write(
+        "The reviewer answers and quotes:\n\n> " + provision + "\n\nEnd.\n")
+    r = run("review", "--dir", matter, "--audit", ans)
+    ok("r77cli control: a verbatim reviewer quotation exits 0",
+       r.returncode == 0, "rc=%s" % r.returncode)
+    # --- #337: keys.env reaches the review path, names only ----------------------------------
+    ok("r77cli: the review path loads keys.env and prints the NAME only (#337, orgemini37flash)",
+       "TESTKEY_R77" in (r.stdout or ""), (r.stdout or "")[:200])
+    ok("r77cli control: the key VALUE never reaches the transcript",
+       "hunter2-value-r77" not in (r.stdout or "") + (r.stderr or ""), "")
+
+    # --- #340: --strict-address gives the address doctrine a mechanism -----------------------
+    io.open(os.path.join(matter, "case", "draft.md"), "w", encoding="utf-8").write(
+        "Our filing argues as follows:\n\n> " + provision + "\n\nNo citation stands nearby.\n")
+    r0 = run("check", "--dir", matter, "--strict")
+    r5 = run("check", "--dir", matter, "--strict", "--strict-address")
+    ok("r77cli: --strict-address exits 5 on a filed green with no checkable address (#340, "
+       "orglm53/lunapro)", r0.returncode == 0 and r5.returncode == 5,
+       "strict=%s strict-address=%s" % (r0.returncode, r5.returncode))
+
+
+# ------------------------------------------------------------------------------------------------
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if root not in sys.path:
@@ -2843,6 +3261,8 @@ def main():
         suite_r50_no_green_without_guard(corpus)
         suite_r51_tail_elision(corpus)
         suite_r76(tmp)
+        suite_r77(tmp)
+        suite_r77_cli(tmp)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)

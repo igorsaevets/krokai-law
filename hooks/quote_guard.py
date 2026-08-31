@@ -121,7 +121,11 @@ def main():
     if (ev.get("tool_name") or "") not in ("Edit", "Write", "NotebookEdit", "MultiEdit"):
         return 0
     inp = ev.get("tool_input") or {}
-    path = str(inp.get("file_path") or "")
+    # 🔴 R77 (#359, orglm53): NotebookEdit was in the tool list above and never once fired -
+    # its parameter is `notebook_path`, and reading only `file_path` sent every notebook edit
+    # out at the "no path" branch. A tool listed but unreadable is worse than one unlisted:
+    # the list reads as coverage.
+    path = str(inp.get("file_path") or inp.get("notebook_path") or "")
     if not path:
         return 0
 
@@ -131,7 +135,15 @@ def main():
 
     from krokai.bank import candidates, read_bank, in_bank
 
-    rel = os.path.relpath(os.path.abspath(path), cfg.root).replace("\\", "/").lower()
+    # `relpath` can raise on Windows when the two arguments sit on different mounts. The config
+    # walk starts at the file's own folder, so the pair shares a drive in every constructible
+    # case today - this guard is for the UNC and future-caller edges, and it LOGS, because an
+    # exception path that bypasses the log makes "dead" look like "quiet" (the module's own rule).
+    try:
+        rel = os.path.relpath(os.path.abspath(path), cfg.root).replace("\\", "/").lower()
+    except ValueError:
+        _log(cfg, "relpath failed (different mounts?): %s vs %s" % (path, cfg.root))
+        return 0
     if any(rel.startswith(x.lower().rstrip("/") + "/") or rel == x.lower()
            for x in cfg.get("guard_ignore", [])):
         _log(cfg, "ignored by guard_ignore: %s" % rel)
@@ -142,7 +154,7 @@ def main():
         _log(cfg, "not a watched path: %s" % rel)
         return 0
 
-    added = str(inp.get("new_string") or inp.get("content") or "")
+    added = str(inp.get("new_string") or inp.get("content") or inp.get("new_source") or "")
     if not added and inp.get("edits"):
         added = "\n".join(str(e.get("new_string") or "") for e in inp["edits"])
     if not added:

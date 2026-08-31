@@ -130,8 +130,17 @@ def _name_from(url, ctype):
     """
     from urllib.parse import urlsplit
     parts = urlsplit(url)
-    base = os.path.basename(parts.path) or (parts.netloc or "download")
-    stem, ext = os.path.splitext(base)
+    base = os.path.basename(parts.path)
+    if base:
+        stem, ext = os.path.splitext(base)
+    else:
+        # 🔴 R77 (#348, goog37flash): a trailing-slash URL has no basename, and running the
+        # HOSTNAME through splitext minted `.gov` as the extension - probe:
+        # `https://www.uscis.gov/laws-and-policy/` -> `www.uscis.gov`. That ends in nothing
+        # `read_any` recognises, so the very defect this docstring documents for query strings
+        # came back through the front door: tags unstripped, `&#xA7;` unescaped. The host is a
+        # STEM; the extension comes from the Content-Type below, same as any extension-less path.
+        stem, ext = (parts.netloc or "download"), ""
     if not ext:
         ext = {"application/pdf": ".pdf", "text/html": ".html", "text/plain": ".txt",
                "application/xml": ".xml", "text/xml": ".xml",
@@ -217,7 +226,11 @@ def fetch_url(url, root, cfg=None, packs=None, allow_unknown=False, timeout=45, 
     # stub, and that body saved into the library counts the topic as covered while the chapter is
     # missing - the stub failure this package documents elsewhere, arriving through the front door.
     if not (ctype or "").lower().startswith("application/pdf"):
-        probe = data[:4000].decode("utf-8", "replace")
+        # 🔴 R77 (#343, grokbuild/lunapro): probe the WHOLE region the size guard covers, not its
+        # first fifth. Only bodies under 20 000 bytes can be refused here, so decoding 4 000 of
+        # them meant a wall whose tell-tale sat past 4 000 - modern interstitials front-load
+        # kilobytes of script - passed the gate it was written for. One bound, one probe.
+        probe = data[:20000].decode("utf-8", "replace")
         if looks_like_placeholder(probe) and len(data) < 20000:
             printer("🔴 HTTP 200, but the body says it is an error page, a bot wall or a loading "
                     "stub. Nothing saved.")

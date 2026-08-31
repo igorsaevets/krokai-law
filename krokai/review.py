@@ -41,35 +41,17 @@ from __future__ import annotations
 
 import io
 import os
-import subprocess
-import sys
 
 from .extract import extract_quotes
 from .prompts import build_brief, anchor_warnings, RESEARCH_SYSTEM, CANARY_NOTE
 from .verdicts import CLEAN, label, meaning
 
-__all__ = ["find_harness", "prepare", "audit_answers"]
+__all__ = ["prepare", "audit_answers"]
 
-# Where a published review harness is usually installed. Probed, never assumed - and its absence is
-# reported as "not installed here", never as "does not exist".
-HARNESS_CANDIDATES = [
-    os.path.join(os.path.expanduser("~"), ".claude", "skills", "model-orchestration",
-                 "orchestrate.py"),
-    os.path.join(os.path.expanduser("~"), "ai-second-opinion", "orchestrate.py"),
-    os.path.join(os.path.expanduser("~"), "tools", "ai-second-opinion", "orchestrate.py"),
-]
-
-
-def find_harness(explicit=None):
-    if explicit:
-        return explicit if os.path.exists(explicit) else None
-    env = os.environ.get("KROKAI_REVIEW_HARNESS")
-    if env and os.path.exists(env):
-        return env
-    for p in HARNESS_CANDIDATES:
-        if os.path.exists(p):
-            return p
-    return None
+# 🔴 R77: this module used to carry its OWN `find_harness` and `run_harness`, next to the ones
+# in `consult.py` that the CLI actually calls. Nothing imported this copy - which is precisely
+# the trap: the executed twin gets corrected by failure, the read-only twin rots and waits for
+# someone to import it. Harness location and dispatch live in `consult.py`, one home.
 
 
 def prepare(question, material="", out_dir=".", marker="REVIEW-COMPLETE",
@@ -112,30 +94,6 @@ def prepare(question, material="", out_dir=".", marker="REVIEW-COMPLETE",
     printer("   comparison the exercise exists for: when two reviewers disagree you must be able to")
     printer("   say the disagreement is about the law and not about what you asked.")
     return bp, sp
-
-
-def run_harness(harness, brief_path, system_path, out_dir, extra=(), printer=print):
-    """Delegate. Absence is reported as 'not installed here', never as 'does not exist'."""
-    if not harness:
-        printer("""
-No review harness found on this machine. That is a statement about this machine, not about the
-world - set KROKAI_REVIEW_HARNESS to yours, or do it by hand:
-
-  1. Open each reviewer you use.
-  2. Paste system.md as the system prompt, brief.md as the message. BYTE-IDENTICAL to each.
-  3. Save each answer as <name>.md in the output folder.
-  4. Then run:  krokai review --audit <folder>
-
-Step 4 is the one that matters. Everything before it is transport.""")
-        return 1
-    cmd = [sys.executable, harness, "--brief", brief_path, "--system", system_path,
-           "--out", out_dir] + list(extra)
-    printer("running: %s" % " ".join(cmd))
-    try:
-        return subprocess.call(cmd)
-    except Exception as exc:
-        printer("could not run the harness: %r" % (exc,))
-        return 1
 
 
 def audit_answers(answers_dir, corpus, packs, min_len=45, printer=print):
