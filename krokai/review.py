@@ -145,9 +145,14 @@ def audit_answers(answers_dir, corpus, packs, min_len=45, printer=print):
     """
     from .verify import check
 
+    # R76 (orgemini37flash): our own round artifacts land in the SAME folder as the answers,
+    # and everything not excluded here is audited AS an answer - ANALYTICS.md was being graded
+    # as a failed reviewer. These are the harness's files, not voices.
+    ours = {"brief.md", "system.md", "analytics.md", "handoff.md", "report.md",
+            "adjudication.md"}
     rows = []
     for fn in sorted(os.listdir(answers_dir)):
-        if not fn.lower().endswith((".md", ".txt")) or fn in ("brief.md", "system.md"):
+        if not fn.lower().endswith((".md", ".txt")) or fn.lower() in ours:
             continue
         path = os.path.join(answers_dir, fn)
         body = io.open(path, encoding="utf-8", errors="replace").read()
@@ -156,10 +161,11 @@ def audit_answers(answers_dir, corpus, packs, min_len=45, printer=print):
             rows.append((fn, verdict, q, detail,
                          os.path.basename(where) if where else ""))
 
-    order = {v: i for i, v in enumerate(
-        ["NOT_FOUND", "OPERATOR", "TRUNCATED_CONDITION", "TRUNCATED_OPENING", "SPLICED",
-         "ELLIPSIS_HIDES", "ALTERED", "PARTIAL", "SCATTERED", "WRONG_SPEAKER",
-         "PUNCTUATION", "TYPESETTING", "ASSEMBLED", "VERIFIED"])}
+    # 🔴 R76 (agy37flash): this was a hand-typed 14-name list while ORDER holds 18 - the four
+    # missing verdicts (SUPERSEDED_EDITION, FRAGMENTS, FOUND_ELSEWHERE, NO_SOURCE_ON_DISK)
+    # ranked 99 and sorted BELOW verified. The vocabulary has one home.
+    from .verdicts import ORDER
+    order = {v: i for i, v in enumerate(ORDER)}
     rows.sort(key=lambda r: order.get(r[1], 99))
 
     by_file = {}

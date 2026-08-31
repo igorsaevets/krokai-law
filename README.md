@@ -215,7 +215,7 @@ Each finding names the file, the quotation, the source it was found in, and **wh
 differs** — not "there is a discrepancy" but `not`, or ``the source also has `*` ``, or *the source
 continues: "…, but do not include instances where…"*.
 
-### The fifteen verdicts, in plain words
+### The verdicts, in plain words
 
 | | |
 |---|---|

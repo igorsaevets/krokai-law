@@ -137,14 +137,26 @@ def looks_like_placeholder(text):
     return len(t) <= _AMBIGUOUS_MAX and bool(_AMBIGUOUS_RE.search(t))
 
 
+def walk_error(err):
+    """`os.walk` swallows an unreadable directory SILENTLY unless told otherwise (R76, #324):
+    a permissions error on one folder removed its whole subtree from the corpus with no
+    printed sign, and a source that is not indexed produces NOT_FOUND - the fabrication
+    signal - for honest quotations. Loud, never fatal: one bad directory must not kill a
+    scan. Shared by every walker in the package."""
+    print("  !! unreadable directory: %s (%s)"
+          % (getattr(err, "filename", None) or "?", getattr(err, "strerror", None) or err))
+
+
 def walk(roots, exts, skip_dirs=()):
     seen = set()
     for root in roots:
         if not os.path.isdir(root):
             continue
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames
-                           if d not in skip_dirs and not d.startswith(".")]
+        for dirpath, dirnames, filenames in os.walk(root, onerror=walk_error):
+            # sorted: the corpus index order - and therefore which duplicate a global search
+            # hits FIRST - must not depend on the filesystem's mood (R76, #324 second half).
+            dirnames[:] = sorted(d for d in dirnames
+                                 if d not in skip_dirs and not d.startswith("."))
             for fn in sorted(filenames):
                 if fn.startswith("~$") or not fn.lower().endswith(exts):
                     continue

@@ -301,6 +301,14 @@ def superseded_paths(root):
     reg = _registry(root)
     path_to_entry = {e.get("path"): e for e in reg.values() if e.get("path")}
     for entry in reg.values():
+        # 🔴 R76 (orgemini37flash, confirmed by probe P8): the registry keeps ONE entry per
+        # kid, overwritten on every revision - so `path_to_entry` only ever holds the newest
+        # edition, the `supersedes` walk below dies at depth one, and from the THIRD edition
+        # on the first edition silently left this set and verified green again. New intake
+        # entries now carry the whole chain in `superseded_paths`; the walk stays for
+        # registries written before R76.
+        for p in entry.get("superseded_paths") or []:
+            out.add(p)
         p = entry.get("supersedes")
         # `p not in out` handles both cycles and already-walked chains in O(1).
         while p and p not in out:
@@ -462,7 +470,14 @@ def intake(root, cfg, packs, address=None, dest_dir=None, allow_unindexed=False,
         dest = os.path.join(library, fn)
 
         if prev and prev.get("sha256") == meta.get("sha256"):
-            out.append(("ALREADY HAVE", fn, "same address, identical bytes - nothing to do"))
+            # R76 (goog37flash + orgemini37flash): without the cleanup the duplicate sat in
+            # the inbox forever and re-announced ALREADY HAVE on every subsequent intake.
+            for stale in (src, src + ".meta.json"):
+                try:
+                    os.remove(stale)
+                except OSError:
+                    pass
+            out.append(("ALREADY HAVE", fn, "same address, identical bytes - removed from inbox"))
             continue
 
         if prev and os.path.exists(prev.get("path", "")):
@@ -480,7 +495,11 @@ def intake(root, cfg, packs, address=None, dest_dir=None, allow_unindexed=False,
                 _revision_report(addr, prev, meta, d, cfg, text, packs))
             reg[kid] = {"path": dest, "sha256": meta.get("sha256"), "address": addr,
                         "revision": n, "url": meta.get("url", ""), "trust": meta.get("trust"),
-                        "fetched_at": meta.get("fetched_at"), "supersedes": prev.get("path")}
+                        "fetched_at": meta.get("fetched_at"), "supersedes": prev.get("path"),
+                        # R76: the FULL chain, because this entry is about to overwrite the
+                        # only record of the previous editions (probe P8).
+                        "superseded_paths": [prev.get("path")]
+                        + (prev.get("superseded_paths") or [])}
             out.append(("🔴 REVISION", os.path.basename(dest),
                         "%d sentence(s) gone, %d new, %d moved, %.1f%% unchanged - the previous "
                         "edition is KEPT, and %s says what it means for the bank"
@@ -585,7 +604,12 @@ def _bank_impact(cfg, new_text, packs):
         if prepared in hay:
             return True
         parts = ellipsis_parts(prepared, 25)
-        if len(parts) < 2:
+        # 🔴 R76 (agy37flash): a TAIL-ellipsis quotation yields ONE part, and `< 2` returned
+        # False - so every tail-ellipsis banked quote was reported lost on every revision,
+        # the exact false alarm the docstring above says this function exists to prevent.
+        if len(parts) == 1:
+            return parts[0] in hay
+        if not parts:
             return False
         cur = -1
         for part in parts:                     # every fragment, in order, without overlap

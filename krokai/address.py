@@ -37,13 +37,21 @@ from __future__ import annotations
 import os
 
 from .normalize import normalise, alnum, dehyph
+from .verdicts import CLEAN
+from .verify import leading_cut, truncated_condition
 
 __all__ = ["KeyMap", "address_check", "repair_anchor_miss", "fold", "ADDRESS_CLEAN"]
 
 # Verdicts for which a mismatched address is worth upgrading into its own finding. If the text
 # already failed on its own, the address note is appended rather than promoted - two complaints
 # about one quotation read as two defects.
-ADDRESS_CLEAN = ("VERIFIED", "PUNCTUATION", "TYPESETTING", "ASSEMBLED", "SCATTERED")
+#
+# 🔴 R76: DERIVED from `verdicts.CLEAN`, no longer a third hand-typed list. The old tuple had
+# drifted in both directions (spark12cont): it held SCATTERED - so the FOUND_ELSEWHERE promotion
+# below would say «found verbatim» about a quotation that is verbatim NOWHERE as one passage -
+# and it lacked WRONG_SPEAKER, so a verbatim quotation with a wrong attribution AND a wrong
+# address kept its advisory verdict instead of the loud FOUND_ELSEWHERE.
+ADDRESS_CLEAN = tuple(CLEAN)
 
 
 class KeyMap(object):
@@ -95,21 +103,31 @@ def address_check(near_cites, found_path, keymap, packs):
 def repair_anchor_miss(quote, addr, corpus, min_len=60):
     """Is the quotation actually present in one of the files the address points at?
 
-    Returns the path if so. This is the measured case where a statute's declaration clause was
-    compared against an unrelated regulation and flagged for a changed operative word, while the
-    file holding the real provision sat on the same disk.
+    Returns ``(path, tier)`` where tier is ``"exact"``, ``"dehyph"`` or ``"alnum"`` - the
+    strongest containment that held - or ``(None, None)``. This is the measured case where a
+    statute's declaration clause was compared against an unrelated regulation and flagged for a
+    changed operative word, while the file holding the real provision sat on the same disk.
+
+    🔴 R76: the tier is returned because the three containments are NOT one fact. «Exact
+    substring of the cited file» supports VERIFIED; an alphanumeric-only containment supports
+    at most PUNCTUATION - and the old single-boolean form let ``fold`` print VERIFIED over an
+    alnum coincidence (probe CRIT2, named independently by 12 of 17 panel channels).
     """
     n = normalise(quote)
     if len(n) < min_len:
-        return None
+        return None, None
     for path in (addr.get("expected_files") or [])[:10]:
         try:
             t = corpus.text_of(path)
         except (KeyError, ValueError):
             continue
-        if n in t or alnum(n) in alnum(t) or dehyph(n) in dehyph(t):
-            return path
-    return None
+        if n in t:
+            return path, "exact"
+        if dehyph(n) in dehyph(t):
+            return path, "dehyph"
+        if alnum(n) in alnum(t):
+            return path, "alnum"
+    return None, None
 
 
 def fold(quote, verdict, path, detail, near_cites, corpus, keymap, packs):
@@ -155,14 +173,48 @@ def fold(quote, verdict, path, detail, near_cites, corpus, keymap, packs):
     if addr["status"] != "MISMATCH":
         return verdict, path, detail, addr
 
-    repaired = repair_anchor_miss(quote, addr, corpus)
+    # 🔴 R76 — THE REPAIR MAY NO LONGER BLESS BLINDLY. The old form returned VERIFIED for ANY
+    # incoming verdict the moment the text was (even loosely) contained in the cited file. A
+    # quotation that stops before its proviso is a SUBSTRING of the full provision, and the same
+    # provision is reprinted across files with the same proviso - so the repair was discarding
+    # TRUNCATED_CONDITION on the strength of the very containment that truncation guarantees.
+    # Probe CRIT2: check=TRUNCATED_CONDITION -> fold=VERIFIED at the cited file. Named
+    # independently by 12 of 17 panel channels; kimik3 and ordeepseek added that the repaired
+    # path also bypassed the superseded-edition wrapper, which runs inside `check()` on the
+    # PRE-fold path only. Now: the completeness questions are re-asked AT the cited file, the
+    # edition question is re-asked at the repaired path, a DANGEROUS verdict upgrades only on
+    # EXACT containment, and the containment tier caps the verdict it can produce.
+    repaired, tier = repair_anchor_miss(quote, addr, corpus)
     if repaired:
-        if verdict != "VERIFIED":
-            detail = ("correct at the cited address «%s»; the global anchor pointed at «%s» - the "
-                      "previous verdict %s was an anchor miss"
-                      % (os.path.basename(repaired), os.path.basename(path), verdict))
-        return ("VERIFIED", repaired, detail,
-                {"status": "MATCHED", "matched": "after binding", "keys": addr["keys"]})
+        n = normalise(quote)
+        matched = {"status": "MATCHED", "matched": "after binding", "keys": addr["keys"]}
+        if tier == "exact":
+            tp, _lim, ttail = truncated_condition(n, corpus, restrict_to={repaired})
+            if tp:
+                return ("TRUNCATED_CONDITION", repaired,
+                        "at the cited address the source continues: «%s…»" % ttail, matched)
+            lp, bad, cut = leading_cut(n, corpus, restrict_to={repaired})
+            if lp:
+                return ("TRUNCATED_OPENING", repaired,
+                        "at the cited address, immediately before it: «…%s» (governing "
+                        "words: %s)" % (cut, bad), matched)
+        if getattr(corpus, "is_superseded", None) and corpus.is_superseded(repaired):
+            return ("SUPERSEDED_EDITION", repaired,
+                    "the cited address resolves to «%s», which the law register marks as "
+                    "SUPERSEDED - see the revision report" % os.path.basename(repaired), matched)
+        if tier != "exact" and verdict not in ADDRESS_CLEAN:
+            detail = (detail + " · " if detail else "") + (
+                "the words also appear (%s containment only) in the cited «%s» - a loose match "
+                "may not clear a %s verdict; read the cited file yourself"
+                % (tier, os.path.basename(repaired), verdict))
+            return verdict, path, detail, addr
+        candidate = {"exact": "VERIFIED", "dehyph": "TYPESETTING", "alnum": "PUNCTUATION"}[tier]
+        if verdict != candidate:
+            detail = ("%s at the cited address «%s» (%s containment); the global anchor pointed "
+                      "at «%s» - the previous verdict %s was an anchor miss"
+                      % ("correct" if candidate == "VERIFIED" else "present",
+                         os.path.basename(repaired), tier, os.path.basename(path), verdict))
+        return candidate, repaired, detail, matched
 
     if verdict in ADDRESS_CLEAN:
         detail = ("found verbatim in «%s», but the address printed beside it (%s) points at %s - "

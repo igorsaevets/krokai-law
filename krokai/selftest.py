@@ -2656,6 +2656,177 @@ def suite_rename(root):
        str(SENTINELS))
 
 
+def suite_r76(tmp):
+    """R76 panel round: every behavior change pinned by the probe that proved the defect.
+
+    19 channels reviewed v0.9.3; the accepted findings were reproduced by execution BEFORE the
+    fixes (probe_adjudicate.py, R76) and each pin below is one probe. The controls matter as
+    much as the pins: the repair must still repair, and a genuine punctuation drift must still
+    be green - a fix that turns everything loud disables the tool as surely as a false green.
+    """
+    import json as _json
+    from krokai.corpus import Corpus
+    from krokai.verify import check, word_diff, FOOTNOTE_RE
+    from krokai import address as addr_mod
+    from krokai.citations import load_packs
+    from krokai.verdicts import CLEAN, DANGEROUS, MARK, SIX_CAUSES
+    from krokai.run import _CLEANISH
+    from krokai.extract import citation_window
+
+    def corp(name, files):
+        d = os.path.join(tmp, "r76", name)
+        os.makedirs(d, exist_ok=True)
+        for fn, text in files.items():
+            io.open(os.path.join(d, fn), "w", encoding="utf-8").write(text)
+        return Corpus([d], quiet=True)
+
+    packs = load_packs(["us-federal"])
+    full = ("No alien shall be granted adjustment of status under this part unless the alien "
+            "establishes clear eligibility for the benefit sought at the time of filing.")
+    quote = "No alien shall be granted adjustment of status under this part"
+
+    # --- CRIT-2: the anchor-miss repair may not launder a dangerous verdict -----------------
+    c = corp("crit2", {"1-preamble.md": "Preliminary discussion. " + full + " End.",
+                       "8USC-1255.md": "SEC. 1255. " + full + " (b) Record."})
+    keymap = addr_mod.KeyMap(c, packs)
+    v0, w0, d0 = check(quote, c)
+    v1, w1, _d1, a1 = addr_mod.fold(quote, v0, w0, d0, ["8 U.S.C. § 1255"], c, keymap, packs)
+    ok("r76: truncation survives the anchor-miss repair (12 channels, probe CRIT2)",
+       v0 == "TRUNCATED_CONDITION" and v1 == "TRUNCATED_CONDITION", "%s -> %s" % (v0, v1))
+    ok("r76: and the repaired path points at the CITED file, address MATCHED",
+       w1 and os.path.basename(w1) == "8USC-1255.md" and (a1 or {}).get("status") == "MATCHED",
+       "%s %s" % (w1, a1))
+
+    # --- control: the honest anchor-miss still repairs to VERIFIED --------------------------
+    whole = ("The period of authorized admission ends sixty days after the program end date "
+             "stated on the form for every classification in this paragraph.")
+    c2 = corp("repair_ok", {"1-preamble.md": "Quoting the rule: " + whole,
+                            "8USC-1184.md": "SEC. 1184. " + whole})
+    k2 = addr_mod.KeyMap(c2, packs)
+    v0, w0, d0 = check(whole, c2)
+    v1, w1, _d1, a1 = addr_mod.fold(whole, v0, w0, d0, ["8 U.S.C. § 1184"], c2, k2, packs)
+    ok("r76 control: a clean quotation still repairs to VERIFIED at the cited file",
+       v1 == "VERIFIED" and w1 and os.path.basename(w1) == "8USC-1184.md",
+       "%s -> %s @ %s" % (v0, v1, w1))
+
+    # --- P3/P4/P7: the alphanumeric branch asks the exact branch's questions ----------------
+    c3 = corp("p3", {"src.md": ("General rule. The director shall approve the application, and "
+                                "shall notify the applicant of the decision unless the applicant "
+                                "has abandoned the claim entirely.")})
+    v, _w, _d = check("The director shall approve the application; and shall notify the "
+                      "applicant of the decision", c3)
+    ok("r76: internal punctuation drift + stop-before-limiter is LOUD (probe P3)",
+       v == "TRUNCATED_CONDITION", v)
+
+    c4 = corp("p4", {"src.md": ("In this subsection the term applies when not able persons "
+                                "request assistance from the designated officer during regular "
+                                "business hours in the district office.")})
+    v, _w, _d = check("the term applies when no table persons request assistance from the "
+                      "designated officer", c4)
+    ok("r76: a word-boundary collision under alnum is OPERATOR, not green (probe P4)",
+       v == "OPERATOR", v)
+
+    c7 = corp("p7", {"src.md": ("Except as otherwise provided, no alien may be admitted to the "
+                                "United States; the burden of proof rests upon the applicant at "
+                                "every stage of the proceeding without exception.")})
+    v, _w, _d = check("alien may be admitted to the United States, the burden of proof rests "
+                      "upon the applicant", c7)
+    ok("r76: a cut leading negation + punctuation drift is LOUD (probe P7)",
+       v == "TRUNCATED_OPENING", v)
+
+    # --- controls: genuine punctuation drift and an intra-word style variant stay green -----
+    c5 = corp("punct_ok", {"src.md": ("The applicant bears the burden of proof; the standard is "
+                                      "a preponderance of the evidence in every proceeding under "
+                                      "this part of the chapter.")})
+    v, _w, _d = check("The applicant bears the burden of proof, the standard is a preponderance "
+                      "of the evidence in every proceeding under this part of the chapter.", c5)
+    ok("r76 control: a genuine punctuation drift is still PUNCTUATION", v == "PUNCTUATION", v)
+    c6 = corp("hyphen_ok", {"src.md": ("The non-immigrant classification described in this "
+                                       "paragraph requires a petition filed by the employer "
+                                       "before the beneficiary may apply for the visa.")})
+    v, _w, _d = check("The nonimmigrant classification described in this paragraph requires a "
+                      "petition filed by the employer before the beneficiary may apply for the "
+                      "visa.", c6)
+    ok("r76 control: an intra-word hyphen variant is not promoted to a loud verdict",
+       v in CLEAN, v)
+
+    # --- P5: a 10-24 character tail fragment is anchored, not waved through -----------------
+    c8 = corp("p5", {"src.md": ("The application shall be adjudicated within ninety days of the "
+                                "date of filing and the Secretary may waive the requirement, "
+                                "unless the applicant has previously been granted a waiver under "
+                                "this subsection.")})
+    v, _w, d = check("The application shall be adjudicated within ninety days of the date of "
+                     "filing … waive the requirement …", c8)
+    ok("r76: a short (10-24) anchored tail hiding a limiter is ELLIPSIS_HIDES (spark11, probe P5)",
+       v == "ELLIPSIS_HIDES" and "unless" in (d or ""), "%s | %s" % (v, (d or "")[:80]))
+
+    # --- P6: a bare omitted digit is not a footnote --------------------------------------
+    _ch, hits, _u = word_diff("the petition must be filed within days after the qualifying event",
+                              "the petition must be filed within 90 days after the qualifying event")
+    ok("r76: an omitted bare number reaches the digit rule (grokbuild, probe P6)",
+       "90" in hits, str(hits))
+    ok("r76 control: a welded «14 See Matter of …» footnote is still recognised",
+       bool(FOOTNOTE_RE.match("14 See Matter of Blas, 15 I&N Dec. at 628")), "")
+
+    # --- P10: sentences from two files are SPLICED, from one file SCATTERED -----------------
+    s1 = ("The petitioner bears the burden of establishing eligibility for the visa "
+          "classification sought.")
+    s2 = ("Any appeal must be filed within thirty days of the decision denying the application "
+          "for benefits.")
+    c10 = corp("p10", {"a.md": s1, "b.md": s2})
+    v, _w, _d = check(s1 + " " + s2, c10)
+    ok("r76: every-sentence-verbatim across TWO files is SPLICED (codex, probe P10)",
+       v == "SPLICED", v)
+    c11 = corp("p10same", {"a.md": s1 + " Unrelated filler sentence stands here. " + s2})
+    v, _w, _d = check(s1 + " " + s2, c11)
+    ok("r76 control: the same shape inside ONE file is still SCATTERED", v == "SCATTERED", v)
+
+    # --- P8: the superseded chain survives a third edition ----------------------------------
+    from krokai.fetch import superseded_paths
+    root8 = os.path.join(tmp, "r76", "reg")
+    os.makedirs(os.path.join(root8, ".krokai"), exist_ok=True)
+    io.open(os.path.join(root8, ".krokai", "law_registry.json"), "w", encoding="utf-8").write(
+        _json.dumps({"usc|8|1255": {"path": "law/r3.xml", "supersedes": "law/r2.xml",
+                                    "superseded_paths": ["law/r2.xml", "law/r1.xml"]}}))
+    got = superseded_paths(root8)
+    ok("r76: all three editions' predecessors are superseded, not just the last (probe P8)",
+       got == {"law/r2.xml", "law/r1.xml"}, str(sorted(got)))
+
+    # --- N42: a tail-ellipsis banked quote present in the new edition is not «lost» ---------
+    from krokai.fetch import _bank_impact  # noqa: F401  (import proves the surface exists)
+    from krokai.normalize import ellipsis_parts as _ep, normalise as _norm, prepare_quote as _pq
+    ok("r76: ellipsis_parts yields one part for a tail ellipsis (the shape N42 guards)",
+       len(_ep(_norm(_pq("The applicant shall file the petition …")), 25)) == 1, "")
+
+    # --- one list, one home ------------------------------------------------------------------
+    ok("r76: run._CLEANISH is DERIVED from verdicts.CLEAN", _CLEANISH == tuple(CLEAN),
+       str(_CLEANISH))
+    ok("r76: address.ADDRESS_CLEAN is DERIVED from verdicts.CLEAN",
+       addr_mod.ADDRESS_CLEAN == tuple(CLEAN), str(addr_mod.ADDRESS_CLEAN))
+    ok("r76: every DANGEROUS verdict renders a NON-BLANK mark (F9)",
+       all(MARK.get(s, "").strip() for s in DANGEROUS),
+       str({s: MARK.get(s) for s in DANGEROUS if not MARK.get(s, "").strip()}))
+    ok("r76: the six causes of a false NOT_FOUND exist and number six (F11)",
+       len(SIX_CAUSES) == 6, str(len(SIX_CAUSES)))
+
+    # --- F1: a wrapped blockquote quotation still finds its citation ring --------------------
+    body = ("The rule is stated plainly, see 8 U.S.C. § 1255(k) for the text:\n\n"
+            "> No alien shall be granted adjustment of status\n"
+            "> under this part in any case\n\n"
+            "and the discussion continues.")
+    near, far = citation_window(
+        body, "No alien shall be granted adjustment of status under this part in any case",
+        packs)
+    ok("r76: a line-wrapped blockquote quotation locates its NEAR citation (F1)",
+       any("1255" in x for x in near), "near=%s far=%s" % (near, far))
+
+    # --- N13: no CLI door builds a bare Corpus any more --------------------------------------
+    import krokai.cli as _cli
+    src = io.open(_cli.__file__.replace(".pyc", ".py"), encoding="utf-8").read()
+    ok("r76: cli builds every corpus through run.corpus_for (sentinel + superseded armed)",
+       "Corpus(" not in src and src.count("corpus_for(") >= 3, str(src.count("corpus_for(")))
+
+
 # ------------------------------------------------------------------------------------------------
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -2671,6 +2842,7 @@ def main():
         suite_verify(corpus)
         suite_r50_no_green_without_guard(corpus)
         suite_r51_tail_elision(corpus)
+        suite_r76(tmp)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)

@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-"""The checker. One quotation in, one of fifteen verdicts out.
+"""The checker. One quotation in, one verdict out — the vocabulary is ``verdicts.ORDER``, and the
+count is deliberately not written here: two modules carried two different stale counts for a
+release while the list held a third (R76).
 
 Reading order for this file: ``check()`` at the bottom is the decision tree; everything above it is
 one test each. Every test carries the incident that produced it, because a rule whose reason is
@@ -49,10 +51,15 @@ LIMITER_RE = re.compile(
     r"absent|save|to the extent)\b", re.I)
 
 # Same idea for what an ellipsis swallows. Not every elision matters; these do.
+# 🔴 R76: this list drifted BELOW `LIMITER_RE` — «although/though/nor/absent/save/to the
+# extent/does not/do not/is not/are not» narrowed a tail but not a gap (grokbuild), and the
+# article variants were half-covered: «if the» matched while «if an applicant» did not
+# (lunapro). The condition words now take any of the three articles.
 NARROWER_RE = re.compile(
     r"\b(but|however|unless|except|provided|notwithstanding|only|other than|subject to|"
     r"certain|specific|solely|for purposes of|does not include|do not include|shall not|"
-    r"may not|if the|where the|when the)\b", re.I)
+    r"may not|although|though|nor|absent|save|to the extent|does not|do not|is not|are not|"
+    r"(?:if|where|when)\s+(?:the|an?)\b)", re.I)
 
 # 🔴 Words that REVERSE what follows them. A strict subset of OPERATORS, and the subsetting is the
 # fix: "and"/"or"/"any" reverse nothing, and treating them as if they did buried the words that do
@@ -72,6 +79,10 @@ RESPONSE_RE = re.compile(r"(Response:|DHS responds|The (Service|Department) (agr
                          r"We agree|We disagree|responds as follows)")
 
 _STRIP = ".,;:()[]\"'`«»‘’“”"
+
+# Projection used by the alphanumeric-branch boundary check: a token minus everything that is
+# not a letter or digit. Distinct from `_STRIP`, which trims token EDGES only.
+_ALNUM_ONLY = re.compile(r"[^0-9a-z]+")
 
 # 🔴 Cite-token guard. `_STRIP` includes `(` and `)`, so `(b)(16)(i)` reaches `word_diff` as
 # `b)(16)(i` — every character is still correct, but the digit rule below would promote it to
@@ -93,7 +104,13 @@ _CITE_TOKEN_RE = re.compile(
 # An extractor drops a footnote INTO the sentence it annotates. Measured on an agency memorandum:
 # "...the applicant may [14 See Matter of Blas, 15 I&N Dec. at 628 (...)] need to offset...".
 # That is damage to the corpus copy, not a change in the quotation, and it must not read as one.
-FOOTNOTE_RE = re.compile(r"^\d{1,3}(\s+(see|id\.?|ibid|supra|cf\.?|infra|accord))?\b", re.I)
+#
+# 🔴 R76 (grokbuild, confirmed by probe): the citation group used to be OPTIONAL, so a BARE
+# 1-3 digit insertion matched too — and «within [90] days» with the 90 omitted from the
+# quotation was silently excused as a welded footnote, never reaching the digit→OPERATOR rule.
+# The group is now mandatory: a bare welded footnote number will surface as OPERATOR, which is
+# a loud false alarm about corpus damage — and a loud false alarm beats a silent false green.
+FOOTNOTE_RE = re.compile(r"^\d{1,3}\s+(see|id\.?|ibid|supra|cf\.?|infra|accord)\b", re.I)
 
 
 # ------------------------------------------------------------------------------------------------
@@ -158,21 +175,20 @@ def word_diff(quote, src):
     return changed, sorted(hits), False
 
 
-def _punctuation_detail(quote_n, path, corpus):
-    """Say WHAT the punctuation difference is.
+def _alnum_span(quote_n, path, corpus):
+    """Map an alphanumeric-index hit back to the RAW source span that produced it.
 
-    A bare "punctuation differs" is technically true and practically useless - the reader still has
-    to diff it by hand, so they do not, and the finding is skipped. Measured on the first real run:
-    a quotation spanning two bullets of a list in an agency manual, where the source has a `*` list
-    marker between them that the drafter silently swallowed. Quoting across list items without
-    marking the elision is a real (small) defect, and naming the character is what makes it fixable
-    in five seconds.
+    Returns ``(start, end, src)`` — offsets into ``src = corpus.text_of(path)`` — or ``None``.
+    Extracted from ``_punctuation_detail`` in R76 because the located span is what lets the
+    PUNCTUATION branch ask the questions the exact branch asks: what follows the span (a
+    limiter?), what precedes it (a negation?), and whether the words inside it really are the
+    same words (``word_diff``), rather than merely the same letters.
     """
     src = corpus.text_of(path)
     a = alnum(quote_n)
     i = alnum(src).find(a)
     if i < 0:
-        return ""
+        return None
     # Walk the source, counting alphanumerics, to find the span that produced the match.
     seen, start, end = 0, None, None
     for k, ch in enumerate(src):
@@ -184,7 +200,24 @@ def _punctuation_detail(quote_n, path, corpus):
                 end = k + 1
                 break
     if start is None or end is None:
+        return None
+    return start, end, src
+
+
+def _punctuation_detail(quote_n, path, corpus):
+    """Say WHAT the punctuation difference is.
+
+    A bare "punctuation differs" is technically true and practically useless - the reader still has
+    to diff it by hand, so they do not, and the finding is skipped. Measured on the first real run:
+    a quotation spanning two bullets of a list in an agency manual, where the source has a `*` list
+    marker between them that the drafter silently swallowed. Quoting across list items without
+    marking the elision is a real (small) defect, and naming the character is what makes it fixable
+    in five seconds.
+    """
+    span = _alnum_span(quote_n, path, corpus)
+    if span is None:
         return ""
+    start, end, src = span
     src_span = src[start:end]
     qp = [c for c in quote_n if not c.isalnum() and not c.isspace()]
     sp = [c for c in src_span if not c.isalnum() and not c.isspace()]
@@ -346,8 +379,6 @@ def tail_elision_hides(quote_n, quote_raw, corpus):
     if not parts:
         return None, None, None
     last = parts[-1]
-    if len(last) < 25:          # too short to locate a unique place - see the docstring
-        return None, None, None
     # 🔴 AOS R71 (v2.8.5): anchor the search to files where EARLIER fragments were found.
     # Without this, a 25-character last fragment like "the Secretary may" matches in an unrelated
     # statute, the locator finds a limiter in the wrong place, and the verdict is a false
@@ -358,51 +389,42 @@ def tail_elision_hides(quote_n, quote_raw, corpus):
         if len(p) >= 10:
             for hit_path, _ in corpus.find_all_pos(p, cap=5):
                 anchor_files.add(hit_path)
+    if len(last) < 25:
+        # 🔴 R76 (spark11, confirmed by probe P5): a last fragment of 10-24 characters is KEPT
+        # by `ellipsis_parts` (floor 10) yet used to be DECLINED here (floor 25) - so a hidden
+        # «, unless …» after a 21-character tail sailed through to ASSEMBLED, green. The R56
+        # six-shape enumeration never tried that window. The 25-floor exists because a short
+        # fragment matches everywhere; the ANCHOR removes that ambiguity, so a short tail is
+        # checked when anchors exist and declined only when there is nothing to anchor to -
+        # in which case the whole quotation is one short fragment and comes back NOT_FOUND.
+        if not anchor_files:
+            return None, None, None
+        return truncated_condition(last, corpus, restrict_to=anchor_files)
     return truncated_condition(last, corpus,
                                restrict_to=anchor_files or None)
 
 
 def tail_short_enough_to_decline(quote_n, quote_raw):
-    """True when ``tail_elision_hides`` above declines on the 25-character floor.
+    """True when the last fragment of a tail-ellipsis quotation is under the 25-character floor.
 
-    🔴🔴 R56 — THE r55 PANEL SAID THIS SILENCE WAS A DEFECT, AND THE MEASUREMENT SAYS THE BRANCH
-    CANNOT BE REACHED WITH A CLEAN VERDICT. Both halves are worth keeping.
+    🔴🔴 SUPERSEDED IN R76 — THE R56 CLAIM «THE DECLINE CANNOT BE REACHED WITH A CLEAN VERDICT»
+    WAS WRONG, AND THE ERROR WAS IN THE ENUMERATION, NOT THE REASONING. R56 ran six shapes and
+    every one came back loud, so the floor was called belt-over-braces and no disclosure
+    shipped. The six shapes never tried a last fragment of 10-24 characters: long enough for
+    ``ellipsis_parts`` (floor 10) to KEEP it, short enough for the old tail check (floor 25) to
+    DECLINE it. spark11 named that window in R76 and probe P5 confirmed it by execution — a
+    21-character tail hiding «, unless …» came back ASSEMBLED, green, unexamined. R56's own
+    hedge («a claim about six synthetic shapes, not about filings») was the honest sentence in
+    the paragraph.
 
-    Finding 4 of the r55 brief showed reviewers three lines of source: the floor, the bare
-    ``return None, None, None``, and the sibling forty lines down that counts short fragments
-    out loud. Every channel that answered called it a real defect - a tool whose output decides
-    whether a filing's quotations are safe must not report «could not check» as «checked, clean».
-    The reasoning is right. A disclosure was written on the strength of it.
-
-    Then the shapes were enumerated and run (``r56_finding4_reachability.py``, six shapes over a
-    corpus containing all of them):
-
-        single fragment, long, tail hides a limiter    ELLIPSIS_HIDES   loud
-        single fragment, long, tail hides nothing      ELLIPSIS_HIDES   loud
-        single fragment, SHORT (<25)                   NOT_FOUND        loud
-        multi fragment, last fragment SHORT (<25)      OPERATOR         loud
-        multi fragment, last fragment long             ELLIPSIS_HIDES   loud
-        no trailing ellipsis                           VERIFIED         nothing skipped
-
-    **Zero shapes reach a CLEAN verdict with an unexamined tail.** The reason is upstream and it
-    is the interesting part: ``ellipsis_parts`` ALREADY drops fragments under the floor, so by
-    the time ``tail_elision_hides`` reads ``parts[-1]`` the value is short only when the whole
-    quotation is one short fragment - and a quotation that short cannot be located at all, so it
-    comes back NOT_FOUND, which is loud. The floor at line ~343 is therefore belt over braces.
-
-    agy37flash called this exactly, in its own «what would change my conclusion»: *"If verify.py
-    has an upstream pre-filter that guarantees parts[-1] is always >= 25 characters, the branch
-    would be dead code rather than an active defect."* It is. That single sentence was worth more
-    than the four verdicts that agreed with each other, and it is why a reviewer is asked what
-    would change its mind.
-
-    So no disclosure ships: a guard that cannot fire is decoration with a green tick, which is a
-    defect this project has named repeatedly. What ships is this predicate plus the assertion in
-    ``suite_r51_tail_elision`` that pins the finding - if a future change to ``ellipsis_parts``
-    lets a short tail through to a clean verdict, that assertion goes red and Finding 4 becomes
-    live. **Not disproved - unreachable on every shape tried.** The population that would settle
-    it is the 384 unread tail-ellipsis quotations from real material (backlog #261); until those
-    are read, «this cannot happen» is a claim about six synthetic shapes, not about filings.
+    The R76 repair changes what this predicate means: ``tail_elision_hides`` now ANCHORS a
+    short last fragment to the files where the earlier fragments were found and asks
+    ``truncated_condition`` there — the anchor removes the matches-everywhere ambiguity that
+    justified the floor. The check declines only when there is nothing to anchor to, i.e. the
+    whole quotation is one short fragment, which cannot be located and comes back NOT_FOUND
+    (loud). This predicate still answers only «is the tail under the floor», which is now a
+    precondition of the decline, not the decline itself; ``suite_r51_tail_elision`` pins the
+    new behavior — a sub-25 anchored tail hiding a limiter must come back ELLIPSIS_HIDES.
     """
     if not (_TAIL_ELLIPSIS_RE.search(quote_n or "")
             or _TAIL_ELLIPSIS_RE.search(quote_raw or "")):
@@ -411,7 +433,23 @@ def tail_short_enough_to_decline(quote_n, quote_raw):
     return bool(parts) and len(parts[-1]) < 25
 
 
-def leading_cut(quote_n, corpus):
+def _negation_in_head(quote_n, head):
+    """The core of ``leading_cut``, on an already-located head. Returns ``(bad, cut)`` or
+    ``(None, None)``. Split out in R76 so the alphanumeric branch can ask the same question
+    about the span it located - the detector logic exists once."""
+    if not head:
+        return None, None
+    if quote_n[:1].isupper() and head.rstrip().endswith((".", "!", "?", ":")):
+        return None, None                      # our quotation starts a sentence: nothing precedes
+    cut = re.split(r"(?<=[.!?])\s+", head)[-1]
+    toks = [w.strip(_STRIP).lower() for w in cut.split()][-6:]
+    bad = sorted({w for w in toks if w in NEGATION})
+    if bad:
+        return ", ".join(bad), " ".join(cut.split())[-140:]
+    return None, None
+
+
+def leading_cut(quote_n, corpus, restrict_to=None):
     """The mirror image. An exact substring can invert its own meaning by starting one word too
     late: the negation stands in FRONT of it, not behind.
 
@@ -419,18 +457,16 @@ def leading_cut(quote_n, corpus):
     **254 hits** - noise, not findings; only a NEGATION reverses what follows it. And it has to be
     NEAR: six tokens, not fourteen, or a "not" at the head of a long clause claims a span it does
     not govern.
+
+    ``restrict_to``: only consider occurrences in these paths - used by ``address.fold`` (R76) to
+    ask the question at the CITED file before an anchor-miss repair may upgrade a verdict.
     """
     for path, off in corpus.find_all_pos(quote_n):
-        head = corpus.before(path, off, 220)
-        if not head:
+        if restrict_to is not None and path not in restrict_to:
             continue
-        if quote_n[:1].isupper() and head.rstrip().endswith((".", "!", "?", ":")):
-            continue                           # our quotation starts a sentence: nothing precedes
-        cut = re.split(r"(?<=[.!?])\s+", head)[-1]
-        toks = [w.strip(_STRIP).lower() for w in cut.split()][-6:]
-        bad = sorted({w for w in toks if w in NEGATION})
+        bad, cut = _negation_in_head(quote_n, corpus.before(path, off, 220))
         if bad:
-            return path, ", ".join(bad), " ".join(cut.split())[-140:]
+            return path, bad, cut
     return None, None, None
 
 
@@ -599,6 +635,44 @@ def _check_inner(quote, corpus):
             tp, _lim, ttail = truncation_anywhere(n, corpus)
             if tp:
                 return "TRUNCATED_CONDITION", tp, "the source continues: «%s…»" % ttail
+            # 🔴 R76 (probes P3/P4/P7): `truncation_anywhere` needs one of its four projections
+            # to be an EXACT substring, so an INTERNAL punctuation drift defeated it - and this
+            # branch also never asked about a leading negation or about word boundaries. Three
+            # measured launderings through one door: drift+truncation -> green; a cut leading
+            # «no» + drift -> green; «no table» quoted from «not able» -> green «spacing only».
+            # The located span lets the branch ask the exact branch's questions at the exact
+            # branch's cost. First occurrence only - the same limitation `_punctuation_detail`
+            # always had.
+            span = _alnum_span(n, hit, corpus)
+            if span:
+                start, end, src = span
+                nxt = src[end:end + 220].lstrip(" ,;:-")
+                m = LIMITER_RE.match(nxt)
+                if m:
+                    return ("TRUNCATED_CONDITION", hit,
+                            "the source continues: «%s…»" % " ".join(nxt.split()[:26]))
+                bad, cut = _negation_in_head(n, src[max(0, start - 220):start])
+                if bad:
+                    return ("TRUNCATED_OPENING", hit,
+                            "immediately before it in the source: «…%s» (governing words: %s)"
+                            % (cut, bad))
+                # Word-BOUNDARY check, not a word check: the span's letters equal the
+                # quotation's by construction, so the only real question is whether the
+                # SPACES moved. Intra-token punctuation («non-immigrant» vs «nonimmigrant»)
+                # is forgiven - both project to one token - or the common style variant
+                # would come back as a loud false alarm.
+                qtoks = [t for t in (_ALNUM_ONLY.sub("", w.lower()) for w in n.split()) if t]
+                stoks = [t for t in (_ALNUM_ONLY.sub("", w.lower())
+                                     for w in src[start:end].split()) if t]
+                if qtoks != stoks:
+                    changed, hitwords, unaligned = word_diff(n, src[start:end])
+                    if not unaligned:
+                        if hitwords:
+                            return "OPERATOR", hit, ", ".join(hitwords)
+                        if changed:
+                            return ("ALTERED", hit,
+                                    "same letters, different word boundaries: %s"
+                                    % ", ".join(sorted(set(changed))[:8]))
             return "PUNCTUATION", hit, _punctuation_detail(n, hit, corpus)
 
     # --- every sentence verbatim, but not adjacent -------------------------------------------------
@@ -607,6 +681,14 @@ def _check_inner(quote, corpus):
     if len(sents) >= 2:
         where = [corpus.find(s) or corpus.find_alnum(alnum(s)) for s in sents]
         if all(where):
+            # 🔴 R76 (codex + goog37flash, confirmed by probe P10): SCATTERED's meaning says
+            # «not adjacent in the source», singular - but nothing required one source. Two
+            # sentences from two DIFFERENT files read as an intra-document rearrangement when
+            # they are a cross-document splice, which is SPLICED's own definition.
+            if len(set(where)) > 1:
+                return ("SPLICED", where[0],
+                        "each sentence is verbatim in a DIFFERENT document: %s"
+                        % ", ".join(sorted({os.path.basename(w) for w in where})))
             return "SCATTERED", where[0], ""
 
     # --- the opening is present and the whole is not => the TAIL was changed -----------------------

@@ -19,6 +19,10 @@ answers/
 .krokai/
 *.backup-*
 
+# Pre-edit backup snapshots on the maintainer's machine. The Cyrillic name predates the
+# Latin-only naming advice in the templates and stays: renaming it would strand old snapshots.
+архив/
+
 # Python
 __pycache__/
 *.py[cod]

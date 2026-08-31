@@ -178,17 +178,24 @@ def prove(text, party=None, subject=None):
     return all(ok for _t, ok in reasons) and bool(reasons), reasons
 
 
-def orphans(source_dirs, index_path, exts=(".pdf", ".xml", ".htm", ".html", ".txt", ".md")):
+def orphans(source_dirs, index_path, exts=None, skip_dirs=()):
     """Files present on disk but absent from the index, and index rows whose file is gone.
 
     Both directions matter. An unindexed file gets downloaded again; an indexed file that no longer
     exists makes the index a promise the library cannot keep, and a promise nothing re-checks is
     exactly how a stale library survives - the same shape as an allowlist entry nobody revisits.
+
+    R76: the default `exts` is now `corpus.DEFAULT_EXT` - the hand-typed tuple here lacked
+    `.docx`/`.doc`, so an indexed-and-verified .docx source could never be reported (kimik3,
+    orglm53, orgemini37flash - the exact cross-tuple drift class this file's own docstring
+    warns about). `skip_dirs` exists so `krokai close` stops reporting archived material.
     """
-    from .corpus import walk
+    from .corpus import walk, DEFAULT_EXT
+    if exts is None:
+        exts = DEFAULT_EXT
     listed = index_entries(index_path)
     on_disk = {}
-    for p in walk(source_dirs, exts):
+    for p in walk(source_dirs, exts, skip_dirs):
         on_disk[os.path.normcase(os.path.basename(p))] = p
     listed_names = {os.path.normcase(os.path.basename(x)) for x in listed}
     unindexed = sorted(v for k, v in on_disk.items()

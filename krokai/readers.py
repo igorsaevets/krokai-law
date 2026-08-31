@@ -75,8 +75,15 @@ def engines_available():
 
 
 def _cache_path(path, cache_dir):
+    # 🔴 R76 (F3; grokbuild, kimik3, spark12cont converged): EXTRACTOR_VERSION was in the
+    # SIDECAR key and not in this one - so a reader improvement shipped, the sidecar noticed
+    # its stamp was stale, rebuilt - and `build()` read the poisoned cache below and re-wrote
+    # the OLD text under the NEW stamp. A downloaded statute's mtime never changes; without
+    # the version in this key a bad extraction was cached forever. Old-version cache files
+    # become unreferenced and are left to the cache dir's own lifetime.
     st = os.stat(path)
-    key = "%s|%d|%d" % (os.path.abspath(path).lower(), st.st_size, int(st.st_mtime))
+    key = "%s|%d|%d|v%s" % (os.path.abspath(path).lower(), st.st_size, int(st.st_mtime),
+                            EXTRACTOR_VERSION)
     return os.path.join(cache_dir, hashlib.sha1(key.encode("utf-8")).hexdigest() + ".txt")
 
 
@@ -286,6 +293,7 @@ def read_pdf(path, cache_dir=None):
     # of control characters (ord < 32). When detected, the repair module renders the page as an
     # image, runs OCR, and overlays a clean text layer. The repaired copy is cached so the next
     # read is fast.
+    repair_failed = False
     if text and is_broken_type3(path):
         try:
             from .repair import fix_broken_pdf
@@ -302,8 +310,18 @@ def read_pdf(path, cache_dir=None):
                     os.unlink(tmp)
                 except OSError:
                     pass
-        except (RuntimeError, Exception):
-            pass
+        except Exception as exc:
+            # 🔴 R76 (F4; codex, orglm53, qwen38max, spark11 converged): this failure used to
+            # be `pass` - silent - and the substitution-cipher text then passed the length
+            # floor and was CACHED, so every later read served garbage without retrying, and
+            # every quotation from the file read NOT_FOUND (the fabrication signal) for a
+            # cause that was the corpus's. The failure is now printed and the cache write is
+            # skipped so the next read retries the repair.
+            repair_failed = True
+            print("  !! Type 3 repair FAILED for %s (%s: %s) - broken text kept for this run, "
+                  "NOT cached; quotations from this file will misread until the PDF is repaired "
+                  "(`krokai fix-pdf`)"
+                  % (os.path.basename(path), type(exc).__name__, exc))
 
     # 🔴 A FILLED FORM IS NOT A BLANK ONE, AND THE TEXT LAYER CANNOT TELL THEM APART.
     #
@@ -321,7 +339,7 @@ def read_pdf(path, cache_dir=None):
     if fields:
         text = (text or "") + "\n\n" + fields
 
-    if cache_dir and len(text.strip()) >= MIN_TEXT_LAYER:
+    if cache_dir and not repair_failed and len(text.strip()) >= MIN_TEXT_LAYER:
         os.makedirs(cache_dir, exist_ok=True)
         try:
             io.open(_cache_path(path, cache_dir), "w", encoding="utf-8").write(text)

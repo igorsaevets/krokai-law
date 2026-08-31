@@ -68,3 +68,12 @@ decision — does this matter need the quotation — stays with a person.
 Files with no text layer are listed by `krokai sidecar`. 🔴 **Never read a scan with a language
 model.** It produces plausible text, the plausible text becomes a quotation, and the quotation is
 then treated as the primary source. Hand the list to a person with an OCR engine.
+
+### File and folder names — Latin only
+
+**Name every NEW file and folder you create in this matter with `A-Za-z0-9._-` only** — no
+Cyrillic, no spaces if avoidable, no other scripts. Non-ASCII names break scripts around the
+matter in quiet ways: console code pages mangle them, hooks reading stdin in the wrong codec die
+on them, shells quote them differently, and a path that one tool wrote another cannot open.
+Existing non-Latin names stay as they are — renaming breaks every reference to them; the rule is
+for what you create from now on.

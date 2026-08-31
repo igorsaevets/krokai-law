@@ -32,7 +32,7 @@ from .citations import load_packs
 from .corpus import Corpus, walk
 from .extract import extract_quotes, citation_window
 from .readers import read_any
-from .verdicts import ORDER, DANGEROUS, UNCHECKABLE, MEANING, label, meaning
+from .verdicts import ORDER, DANGEROUS, CLEAN, UNCHECKABLE, MEANING, MARK, label, meaning
 from .verify import check
 
 __all__ = ["scan_matter", "write_report", "SENTINEL", "SENTINELS"]
@@ -51,6 +51,25 @@ TARGET_EXT = (".md", ".txt", ".docx")
 TIER_D = ("D", "tool output and reviewers' answers")
 
 
+def corpus_for(cfg, quiet=True):
+    """THE one way to build a matter's corpus, with both protections armed.
+
+    🔴 R76 (kimik3, grokbuild, lunapro converged - rated CRITICAL by two of them): sentinel
+    exclusion and superseded-edition tracking are constructor PARAMETERS, and only
+    `scan_matter` remembered to pass them. `krokai quote` - the documented door for «check
+    this before you paste it» - plus `mutate --report` and `review --audit` all built a bare
+    Corpus: sidecars inside `law/` were indexed as primary sources and SUPERSEDED_EDITION was
+    unreachable, so the same text got different verdicts depending on which command asked.
+    The law register comment survives here: without `superseded=`, both editions are indexed
+    and a quotation of superseded law comes back VERIFIED - measured 2026-08-05, and it
+    silently voided the NOT_FOUND doctrine for every revised provision.
+    """
+    from .fetch import superseded_paths
+    return Corpus(cfg.source_dirs, skip_dirs=set(cfg["skip_dirs"]),
+                  cache_dir=cfg.cache, quiet=quiet, sentinel=SENTINELS,
+                  superseded=superseded_paths(cfg.root))
+
+
 def _is_tool_output(path):
     try:
         with io.open(path, encoding="utf-8", errors="replace") as fh:
@@ -67,13 +86,7 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
     if not quiet:
         printer("citation packs: %s" % ", ".join(packs.ids))
 
-    # The law register tells the corpus which files a newer edition has replaced. Without it,
-    # both editions are indexed and a quotation of superseded law comes back VERIFIED - measured
-    # 2026-08-05, and it silently voided the NOT_FOUND doctrine for every revised provision.
-    from .fetch import superseded_paths
-    corpus = Corpus(cfg.source_dirs, skip_dirs=set(cfg["skip_dirs"]),
-                    cache_dir=cfg.cache, quiet=quiet, sentinel=SENTINELS,
-                    superseded=superseded_paths(cfg.root))
+    corpus = corpus_for(cfg, quiet=quiet)
     if not corpus.paths:
         printer("\n🔴 The corpus is EMPTY. Every quotation will come back NOT FOUND, which looks "
                 "like catastrophe and is really a path problem.")
@@ -129,7 +142,13 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
             if not far_legal:
                 kind = "evidentiary - no legal citation anywhere near it; a corpus of statutes was "\
                        "never going to contain this"
-            elif any(c in corpus.joined for c in far_legal):
+            # 🔴 R76 (orgemini37flash): this used to test `c in corpus.joined` - the citation
+            # STRING as the drafter formatted it, searched in the source BODY text. Downloads
+            # rarely contain their own Bluebook form («8 U.S.C. § 1255(k)» vs a uslm XML), so
+            # the 🔴 branch almost never fired and confirmed fabrications drifted into the 🟡
+            # «probably a gap» comfort. The honest question is the keymap's: does any cited
+            # key RESOLVE to a file on this disk?
+            elif any(keymap.resolve(k) for k in packs.keys(far_legal)):
                 kind = "🔴 legal, and the source IS on this disk"
             else:
                 kind = "🟡 legal, but the cited authority is not in the corpus at all - probably a "\
@@ -157,7 +176,11 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
 
 
 # Verdicts that read as "this quotation is fine" for the purposes of the pairing below.
-_CLEANISH = ("VERIFIED", "PUNCTUATION", "TYPESETTING", "ASSEMBLED", "SCATTERED")
+# 🔴 R76: DERIVED from `verdicts.CLEAN` - the hand-typed third copy had drifted to include
+# SCATTERED, which is DANGEROUS, so a scattered copy of a provision sat on the CLEAN side of
+# the mixed-provisions pairing and understated that both copies need attention (qwen38max,
+# agy37flash, goog37flash). Three lists of one concept was the defect; now there is one.
+_CLEANISH = tuple(CLEAN)
 
 
 def mixed_provisions(rows, packs):
@@ -203,13 +226,17 @@ def _tier_of(row):
 
 def print_summary(res, lang="en", printer=print):
     grid = res["grid"]
-    printer("\n%-22s %7s %7s %7s %7s" % ("verdict", "A filed", "B guides", "C research", "D tool"))
+    printer("\n%-25s %7s %7s %7s %7s" % ("verdict", "A filed", "B guides", "C research", "D tool"))
     for s in ORDER:
         n = sum(grid[t][s] for t in "ABCD")
         if not n:
             continue
-        printer("%-22s %7d %7d %7d %7d"
-                % (label(s, lang), grid["A"][s], grid["B"][s], grid["C"][s], grid["D"][s]))
+        # 🔴 R76: MARK was a table only the self-test read - «tested decoration» (F9). It now
+        # prefixes every summary row, so a DANGEROUS verdict is visibly marked in the one
+        # place every run prints.
+        printer("%s %-22s %7d %7d %7d %7d"
+                % (MARK.get(s, "  "), label(s, lang),
+                   grid["A"][s], grid["B"][s], grid["C"][s], grid["D"][s]))
     ab_bad = sum(grid[t][s] for t in "AB" for s in DANGEROUS)
     printer("\n🔴 needs a human in tiers A+B: %d" % ab_bad)
 

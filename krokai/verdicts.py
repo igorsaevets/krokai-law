@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-"""The verdict vocabulary: sixteen outcomes, not two.
+"""The verdict vocabulary: the outcomes in ``ORDER``, not two. The count is deliberately not
+written in prose - this line and verify.py's said «sixteen» and «fifteen» while ORDER held
+eighteen (R76, F10): a number in prose is a claim with no error signal.
 
 WHY NOT "PASS / FAIL"
 ---------------------
@@ -7,7 +9,7 @@ Because the interesting failures are not "the quotation is missing". They are th
 **strings match and the meaning does not** - and a two-valued checker answers those with a
 cheerful green.
 
-Three of the fifteen exist solely because a pass/fail tool said VERIFIED about a defect that would
+Three of them exist solely because a pass/fail tool said VERIFIED about a defect that would
 have gone into a filing:
 
 * ``TRUNCATED_CONDITION`` - the quotation is an exact substring, and the source **continues** with
@@ -37,7 +39,26 @@ reader - see ``judge.py``.
 from __future__ import annotations
 
 __all__ = ["ORDER", "DANGEROUS", "CLEAN", "UNCHECKABLE", "LABEL", "MEANING", "MARK",
-           "label", "meaning"]
+           "SIX_CAUSES", "label", "meaning"]
+
+# The six causes of a false NOT_FOUND, in the order worth checking before concluding
+# fabrication. 🔴 Written down in R76 (F11): three places in this package said «read the six
+# causes of a false NOT_FOUND» and the list existed nowhere in the tree - a pointer with no
+# target reads as documentation and teaches nothing.
+SIX_CAUSES = (
+    "the source was never downloaded - the address beside the quotation names a file you do "
+    "not have (when the address layer can prove this, the verdict is NO_SOURCE_ON_DISK)",
+    "the source on disk is a different EDITION - revised, renumbered or superseded since the "
+    "quotation was taken; see the revision report",
+    "the corpus COPY is damaged - no text layer, a Type 3 substitution cipher, soft hyphens, "
+    "or a scrape that silently dropped part of the page",
+    "a placeholder was saved instead of the chapter - a bot wall or an error page passed the "
+    "download and holds no law at all",
+    "the quotation is not of LAW - press releases, FAQ pages and news are not in a corpus of "
+    "statutes by construction (the `evidentiary` kind of miss)",
+    "the quotation was rewritten in OUR file - normalisation cannot bridge reworded text, a "
+    "silent splice, or a paraphrase presented as a quotation",
+)
 
 # Read-this-first order. Not alphabetical, not by frequency: by what it costs to be wrong.
 ORDER = [
@@ -124,7 +145,9 @@ MARK = {
     "SUPERSEDED_EDITION": "!!",
     "ELLIPSIS_HIDES": "! ", "FRAGMENTS": "! ", "NOT_FOUND": "! ", "NO_SOURCE_ON_DISK": "? ",
     "PARTIAL": "! ", "ALTERED": "! ",
-    "SCATTERED": "  ", "WRONG_SPEAKER": "~ ", "PUNCTUATION": "  ", "TYPESETTING": "~ ",
+    # 🔴 R76 (F9): SCATTERED is DANGEROUS and rendered a BLANK mark - visually identical to
+    # PUNCTUATION/ASSEMBLED. The self-test now pins «every DANGEROUS verdict marks non-blank».
+    "SCATTERED": "! ", "WRONG_SPEAKER": "~ ", "PUNCTUATION": "  ", "TYPESETTING": "~ ",
     "ASSEMBLED": "  ", "VERIFIED": "OK",
 }
 

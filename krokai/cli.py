@@ -228,7 +228,7 @@ def cmd_check(a):
 def cmd_quote(a):
     """One quotation, one answer. The command you run before pasting something into a document."""
     from .config import load
-    from .corpus import Corpus
+    from .run import corpus_for
     from .verify import check, neighbours
     from .verdicts import label, meaning
 
@@ -239,8 +239,10 @@ def cmd_quote(a):
     if not text:
         print("give a quotation as an argument, or --file")
         return 2
-    corpus = Corpus(cfg.source_dirs, skip_dirs=set(cfg["skip_dirs"]),
-                    cache_dir=cfg.cache, quiet=a.quiet)
+    # R76: this door used to build the corpus bare - no sentinel, no superseded set - so it
+    # verified sidecars and superseded law green while `krokai check` flagged them (see
+    # run.corpus_for, which is now the only constructor the CLI may use).
+    corpus = corpus_for(cfg, quiet=a.quiet)
     verdict, where, detail = check(text, corpus)
     lang = cfg["language"]
     print("\n%s" % label(verdict, lang).upper())
@@ -374,7 +376,6 @@ def cmd_intake(a):
 # -------------------------------------------------------------------------------- mutate
 def cmd_mutate(a):
     from .config import load
-    from .corpus import Corpus
     from .run import scan_matter
     from .mutations import run as run_mut
 
@@ -382,8 +383,8 @@ def cmd_mutate(a):
     if a.report:
         data = json.load(io.open(os.path.join(a.report, "result.json"), encoding="utf-8"))
         base = [(r["quote"], r["where"]) for r in data["rows"] if r["verdict"] == "VERIFIED"]
-        corpus = Corpus(cfg.source_dirs, skip_dirs=set(cfg["skip_dirs"]),
-                        cache_dir=cfg.cache, quiet=True)
+        from .run import corpus_for
+        corpus = corpus_for(cfg)
     else:
         res = scan_matter(cfg, quiet=True)
         if res is None:
@@ -474,10 +475,9 @@ def cmd_review(a):
     out = os.path.abspath(a.out or os.path.join(cfg.root, "reviews", "round"))
 
     def _audit(folder):
-        from .corpus import Corpus
+        from .run import corpus_for
         from .citations import load_packs
-        corpus = Corpus(cfg.source_dirs, skip_dirs=set(cfg["skip_dirs"]),
-                        cache_dir=cfg.cache, quiet=True)
+        corpus = corpus_for(cfg)
         return audit_answers(folder, corpus, load_packs(cfg["citation_packs"]),
                              cfg["min_quote_length"])
 
@@ -647,7 +647,8 @@ def cmd_close(a):
         print("      or tick it and write one line saying why the matter does not need it.")
         ok = False
 
-    unindexed, missing = orphans(cfg.source_dirs, cfg.abs(cfg["library_index"]))
+    unindexed, missing = orphans(cfg.source_dirs, cfg.abs(cfg["library_index"]),
+                                 skip_dirs=set(cfg["skip_dirs"]))
     print("\n[2] library index: %d unindexed file(s), %d dead row(s)  %s"
           % (len(unindexed), len(missing), "OK" if not (unindexed or missing) else "🔴"))
     if unindexed or missing:
@@ -655,7 +656,9 @@ def cmd_close(a):
 
     from .sidecar import SUFFIX
     from .corpus import walk
-    pdfs = list(walk(cfg.source_dirs, (".pdf",)))
+    # R76 (orglm53): skip_dirs was not passed, so `krokai close` reported phantom missing
+    # sidecars for archived material and gated the round on folders the corpus itself skips.
+    pdfs = list(walk(cfg.source_dirs, (".pdf",), set(cfg["skip_dirs"])))
     without = [p for p in pdfs if not os.path.exists(p[:-4] + SUFFIX)]
     print("\n[3] PDF sidecars: %d of %d PDFs have none  %s"
           % (len(without), len(pdfs), "OK" if not without else "🔴 grep is blind to these"))

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-from .normalize import (normalise, strip_markdown, is_mostly_cyrillic)
+from .normalize import (normalise, strip_markdown, is_mostly_cyrillic, alnum)
 
 __all__ = ["extract_quotes", "blocks", "DEFAULT_MIN_LEN"]
 
@@ -142,21 +142,56 @@ def citation_window(body, quote, packs, near=140, far=400):
       address.
 
     Returns `(near_cites, far_cites)`.
+
+    🔴 R76 (F1, execution-proven; kimik3/lunapro/agy37flash converged): the raw `body.find`
+    fails for any quotation that `blocks()` re-joined across line breaks or that
+    `strip_markdown` cleaned - i.e. most wrapped blockquotes - and the miss was SILENT:
+    empty rings, the address layer off, and a NOT_FOUND misclassified «evidentiary». The
+    fallback below maps the probe into the raw body through the alphanumeric projection,
+    the same walk `_punctuation_detail` uses. First occurrence only, as before.
     """
     probe = quote[:60]
     idx = body.find(probe)
+    qlen = len(quote)
     if idx < 0:
-        return [], []
+        idx, qlen = _alnum_locate(body, quote)
+        if idx < 0:
+            return [], []
     lo = max(0, idx - far)
-    window = body[lo: idx + len(quote) + far]
+    window = body[lo: idx + qlen + far]
 
     near_c, far_c = [], []
     for text, rel in packs.find_positions(window):
         if text not in far_c:
             far_c.append(text)
         pos = lo + rel
-        inside = idx <= pos < idx + len(quote)
-        if not inside and (idx - near <= pos < idx + len(quote) + near):
+        inside = idx <= pos < idx + qlen
+        if not inside and (idx - near <= pos < idx + qlen + near):
             if text not in near_c:
                 near_c.append(text)
     return near_c, far_c
+
+
+def _alnum_locate(body, quote):
+    """Locate `quote` in `body` through the alphanumeric projection.
+
+    Returns ``(raw_start, raw_length)`` of the matching span, or ``(-1, 0)``. Letters and
+    digits survive every difference `blocks()`/`strip_markdown` introduce (line wraps, `> `
+    markers, bold, curly quotes), so this finds what the raw `find` cannot - at the cost of a
+    single O(len(body)) walk, paid only on the raw miss.
+    """
+    aq = alnum(quote)
+    if not aq:
+        return -1, 0
+    positions = []
+    chars = []
+    for k, ch in enumerate(body):
+        if ch.isalnum():
+            positions.append(k)
+            chars.append(ch.lower())
+    i = "".join(chars).find(aq)
+    if i < 0:
+        return -1, 0
+    start = positions[i]
+    end = positions[i + len(aq) - 1] + 1
+    return start, end - start

@@ -107,8 +107,9 @@ def scan_broken_pdfs(directory, skip_dirs=None):
             "Install it:  pip install pymupdf   (or pip install \"krokai[pdf]\")")
     skip = set(skip_dirs or [])
     found = []
-    for root, dirs, files in os.walk(directory):
-        dirs[:] = [d for d in dirs if d not in skip]
+    from .corpus import walk_error
+    for root, dirs, files in os.walk(directory, onerror=walk_error):
+        dirs[:] = sorted(d for d in dirs if d not in skip)
         for fn in files:
             if not fn.lower().endswith(".pdf"):
                 continue

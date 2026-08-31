@@ -3,7 +3,7 @@
   "name": "United States federal law (CFR, U.S. Code, Federal Register, federal courts)",
   "_doc": "The base pack. Every other US pack is meant to be loaded ALONGSIDE this one, not instead of it, because almost every specialist citation eventually resolves to a title of the Code or the CFR.",
 
-  "primary_hint": "C\\.?\\s?F\\.?\\s?R|U\\.?\\s?S\\.?\\s?C|Fed\\.\\s?Reg|\\b\\d{2,3}\\s*FR\\s*\\d|F\\.\\s?(?:2d|3d|4th|Supp)|\\b\\d{1,3}\\s+U\\.\\s?S\\.\\s+\\d|Pub\\.?\\s?L",
+  "primary_hint": "C\\.?\\s?F\\.?\\s?R|U\\.?\\s?S\\.?\\s?C|Fed\\.\\s?Reg|\\b\\d{2,3}\\s*FR\\s*\\d|F\\.\\s?(?:2d|3d|4th|Supp)|\\b\\d{1,3}\\s+U\\.\\s?S\\.\\s+\\d|Pub\\.?\\s?L|\\bSections?\\s+\\d|§§?\\s*\\d",
 
   "_official_domains": "Where these bodies of law officially live. `krokai review` merges these into its grounding so the lookalike detector knows the NAMES worth impersonating: measured in a sister project, `uscis.com` - the exact agency name in a foreign zone - walked past a detector that only knew the `gov`/`mil` labels. Registrable domains only, no subdomains: the first label is what the detector learns, and deriving `travel` from `travel.state.gov` would put a warning on `travel.com`.",
   "official_domains": ["govinfo.gov", "ecfr.gov", "federalregister.gov", "uscode.house.gov",
@@ -78,6 +78,11 @@
     {
       "_what": "Reporter citations. Recognised so they show up next to a quotation as its neighbours, but NOT used as an address: a volume-and-page pair alone cannot tell you which downloaded PDF it is.",
       "regex": "\\b\\d{1,3}\\s+(?:F\\.\\s?(?:2d|3d|4th)|F\\.\\s?Supp\\.?\\s?(?:2d|3d)?|U\\.\\s?S\\.)\\s+\\d+"
+    },
+    {
+      "_what": "Bare section references — «Section 245.2(a)», «§ 1255(k)», «§§ 1182». Ported from the sister project in R76 (#323), where 103 such references were invisible: the near/far rings stayed empty and a NOT_FOUND beside one was misclassified «evidentiary». Recognised as a NEIGHBOUR only, like the reporter shape above — a bare section number cannot name its title, so it is not an address. The digit must follow the marker immediately (the sister project's guard), and `(?<!\\.\\s)` keeps this from double-matching the tail of «U.S.C. §»/«C.F.R. §»/«Reg. §» forms, whose own shapes already fire.",
+      "sample": "relief is unavailable under Section 245.2(a) here",
+      "regex": "(?<!\\.\\s)(?:\\bSections?\\s+|§§?\\s*)(\\d{1,4}[A-Za-z]?(?:\\.\\d{1,4})?)(?:\\([^()\\s]{1,8}\\))*"
     },
     {
       "_what": "Pub. L. No. 107-56",

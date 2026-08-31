@@ -10,6 +10,71 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.10.0] - 2026-08-31
+
+19-channel independent audit round (R76). Every fix below was reproduced by execution BEFORE it
+was fixed and is pinned by a regression test in `suite_r76`.
+
+### Fixed — false-green paths (the tool's own worst failure class)
+- **The anchor-miss repair no longer launders dangerous verdicts.** `address.fold()` used to
+  overwrite ANY verdict — including TRUNCATED_CONDITION — with VERIFIED the moment the text was
+  even loosely contained in the cited file; a truncated quotation is a substring of the full
+  provision by construction, so the repair blessed exactly what it should have flagged. Named
+  independently by 12 of 17 reviewing channels. Now: the truncation and leading-negation
+  questions are re-asked AT the cited file, the superseded-edition question is re-asked at the
+  repaired path, a dangerous verdict upgrades only on EXACT containment, and the containment
+  tier caps the outcome (exact→VERIFIED, dehyphenated→TYPESETTING, alphanumeric→PUNCTUATION).
+- **The alphanumeric branch now asks the exact branch's questions at the located span.** An
+  internal punctuation drift plus a stop-before-limiter came back PUNCTUATION (green); a cut
+  leading «no» plus a drift came back PUNCTUATION; «no table» quoted from «not able» came back
+  PUNCTUATION «spacing only». All three now come back loud (TRUNCATED_CONDITION /
+  TRUNCATED_OPENING / OPERATOR). Genuine punctuation drift and intra-word hyphen variants
+  («non-immigrant»/«nonimmigrant») stay green — pinned by controls.
+- **A 10–24 character tail fragment is anchored, not waved through.** `ellipsis_parts` keeps
+  fragments ≥10; the tail check declined under 25 — so a hidden «, unless …» after a
+  21-character tail sailed to ASSEMBLED, green. The window the R56 enumeration never tried.
+  A short tail is now checked in the files where the earlier fragments anchored.
+- **A bare omitted digit is no longer excused as a welded footnote.** `FOOTNOTE_RE`'s citation
+  group was optional, so dropping «90» from «within 90 days» never reached the digit→OPERATOR
+  rule. The group is now mandatory; a real welded footnote number will surface loud.
+- **Sentences verbatim in two DIFFERENT files are SPLICED, not SCATTERED.**
+- **The superseded chain survives a third edition.** The registry keeps one entry per provision,
+  so from the third edition on, the first edition silently left the superseded set and verified
+  green. New intake entries carry the whole chain in `superseded_paths`.
+- **Every CLI door now builds the corpus through `run.corpus_for`.** `krokai quote`,
+  `review --audit` and `mutate --report` built a bare corpus — no sentinel, no superseded set —
+  so sidecars indexed as law and SUPERSEDED_EDITION was unreachable from those commands.
+- **The reader cache key includes `EXTRACTOR_VERSION`**, and a failed Type 3 repair is printed
+  and never cached — broken extractions used to be served forever with no signal.
+
+### Fixed — silent losses and misdiagnoses
+- `citation_window` locates line-wrapped and markdown-formatted quotations through an
+  alphanumeric-projection fallback; the miss used to be silent and turned the address layer off.
+- The 🔴/🟡 NOT_FOUND classifier resolves the cited key through the keymap instead of searching
+  the citation string in the corpus body — confirmed fabrications drifted into «probably a gap».
+- `dump-forms` dedups by full path, not basename (a second `i-485.pdf` was silently skipped);
+  collision-safe dump names; checked-checkbox spellings («[X]» vs «Yes») no longer count as
+  cross-engine divergence; agreement is n/a over zero shared fields.
+- Every directory walker reports unreadable directories (`os.walk` `onerror`) and sorts
+  subdirectories for a deterministic corpus order.
+- `reviewer` answer audit: sort order derives from `verdicts.ORDER` (four verdicts used to rank
+  below VERIFIED); the harness's own round artifacts (ANALYTICS.md and friends) are no longer
+  graded as reviewers' answers.
+- `library.orphans` derives its extensions from `corpus.DEFAULT_EXT` (`.docx` was invisible) and
+  honours `skip_dirs`; `krokai close` passes them.
+- `intake` removes an ALREADY-HAVE duplicate from the inbox instead of re-announcing it forever;
+  a tail-ellipsis banked quotation present in a new edition is no longer reported lost.
+
+### Added
+- `verdicts.SIX_CAUSES` — the six causes of a false NOT_FOUND, previously pointed at by three
+  places and existing nowhere.
+- Bare section references («Section 245.2(a)», «§ 1255(k)») recognised as neighbour citations
+  in the base pack — previously invisible, so a NOT_FOUND beside one was misclassified
+  «evidentiary».
+- SCATTERED renders a non-blank mark, and the summary table prints each verdict's mark.
+- Matter template: name every new file and folder in Latin (`A-Za-z0-9._-`) — non-ASCII names
+  break the scripts around a matter in quiet ways.
+
 ## [0.9.3] - 2026-08-22
 
 ### Added

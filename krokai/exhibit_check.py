@@ -19,6 +19,8 @@ import io
 import os
 import re
 
+from .corpus import walk_error
+
 
 # ------------------------------------------------------------------------------- exhibit IDs
 
@@ -179,7 +181,8 @@ def scan_exhibit_dir(root, series=None):
     problems = []
     if not os.path.isdir(root):
         return files, problems
-    for dp, _, fns in os.walk(root):
+    for dp, dirs, fns in os.walk(root, onerror=walk_error):
+        dirs.sort()
         for fn in sorted(fns):
             full = os.path.join(dp, fn)
             ext = os.path.splitext(fn)[1].lower()
@@ -210,7 +213,8 @@ def scan_form_dir(root):
     problems = []
     if not os.path.isdir(root):
         return files, problems
-    for dp, _, fns in os.walk(root):
+    for dp, dirs, fns in os.walk(root, onerror=walk_error):
+        dirs.sort()
         for fn in sorted(fns):
             full = os.path.join(dp, fn)
             m = FORM_FILE_RE.match(fn)

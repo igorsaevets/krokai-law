@@ -23,6 +23,8 @@ import json
 import os
 import re
 
+from .corpus import walk_error
+
 # ------------------------------------------------------------------------------- constants
 
 HARD_EXCLUDE = [
@@ -153,6 +155,12 @@ def _extract_pypdf(path):
 
 # ------------------------------------------------------------------------------- cross-check
 
+# Spellings of «this box is ticked» across engines. fitz reports boolean True (rendered
+# "[X]" upstream); pypdf keeps the PDF's export value, which USCIS forms set to "Yes" and
+# other producers to "On"/"1"/"true".
+_CHECKED = {"[X]", "Yes", "On", "1", "true", "True"}
+
+
 def _cross_check(fitz_rows, pypdf_map):
     """Compare fitz vs pypdf on shared fields. Returns a diagnostic dict."""
     if pypdf_map is None:
@@ -175,6 +183,11 @@ def _cross_check(fitz_rows, pypdf_map):
         pv_n = (pv or "").strip()
         if fv_n == pv_n:
             continue
+        # 🔴 R76 (F14; agy36flash + agy37flash converged): the engines SPELL a checked
+        # checkbox differently, so every ticked box was a false divergence and the agreement
+        # number was noise. Checked-state equality is compared, not spelling.
+        if fv_n in _CHECKED and pv_n in _CHECKED:
+            continue
         value_divs.append({"name": n, "fitz": fv, "pypdf": pv})
     fitz_missing = sorted(n for n in py_clean if n not in fitz_map)
     shared = len(set(fitz_map) & set(py_clean))
@@ -185,7 +198,10 @@ def _cross_check(fitz_rows, pypdf_map):
         "shared": shared,
         "value_divergent": len(value_divs),
         "fitz_missing": len(fitz_missing),
-        "agreement_pct": round(100 * (1 - len(value_divs) / max(1, shared)), 1),
+        # R76: n/a when the engines share no fields - `max(1, 0)` used to print a plausible
+        # «100.0% agreement» over zero compared values (spark12cont, kimik3, lunapro).
+        "agreement_pct": (round(100 * (1 - len(value_divs) / float(shared)), 1)
+                          if shared else None),
         "value_divergences": value_divs,
         "fitz_missing_sample": fitz_missing[:20],
     }
@@ -211,14 +227,21 @@ def dump_forms(dirs, out=None, nonempty=False):
         if not os.path.isdir(d):
             manifest["errors"].append({"dir": d, "error": "MISSING"})
             continue
-        for root_dir, _subdirs, files in os.walk(d):
+        for root_dir, subdirs, files in os.walk(d, onerror=walk_error):
+            subdirs.sort()
             for fname in sorted(files):
                 if not fname.lower().endswith(".pdf"):
                     continue
-                if fname in seen:
-                    continue
-                seen.add(fname)
                 fpath = os.path.join(root_dir, fname)
+                # 🔴 R76 (F2, execution-proven; 7 panel channels converged): dedup used to key
+                # on the BASENAME across every walked directory, so `final/i-485.pdf` was
+                # silently skipped once `draft/i-485.pdf` had been seen - not even an error
+                # row - and the multi-copy diff below could never see two same-named copies,
+                # its normal case. The key is the file, not its name.
+                fkey = os.path.normcase(os.path.abspath(fpath))
+                if fkey in seen:
+                    continue
+                seen.add(fkey)
 
                 hit = next(((rx, why) for rx, why in HARD_EXCLUDE
                             if rx.search(fname)), None)
@@ -292,9 +315,15 @@ def dump_forms(dirs, out=None, nonempty=False):
                         "[p%2s] %s  <%s> = %s%s"
                         % (r["page"] or "?", r["name"], r["ftype"], v, marker))
 
+                form_out = None
                 if outdir:
                     stem = os.path.splitext(fname)[0]
                     form_out = os.path.join(outdir, stem + ".forms.txt")
+                    # R76: two same-named forms from different folders both dump now (F2),
+                    # so the second output name gets the content hash - never a silent
+                    # overwrite of the first copy's dump.
+                    if os.path.exists(form_out):
+                        form_out = os.path.join(outdir, "%s.%s.forms.txt" % (stem, digest))
                     with io.open(form_out, "w", encoding="utf-8") as f:
                         f.write("\n".join(form_lines))
 
@@ -306,6 +335,7 @@ def dump_forms(dirs, out=None, nonempty=False):
                 manifest["forms"].append({
                     "file": fname,
                     "path": fpath,
+                    "forms_txt": form_out,
                     "sha8": digest,
                     "pages": pages,
                     "engine": engine,
@@ -358,7 +388,10 @@ def _write_multi_copy_diff(form_entries, outdir, filename):
     """Field-by-field diff across multiple copies of the same form type."""
     maps = {}
     for f in form_entries:
-        form_file = os.path.join(outdir, os.path.splitext(f["file"])[0] + ".forms.txt")
+        # R76: the dump path is carried in the manifest - re-deriving it from the basename
+        # broke the moment collision suffixes existed (F2 fix).
+        form_file = f.get("forms_txt") or os.path.join(
+            outdir, os.path.splitext(f["file"])[0] + ".forms.txt")
         if not os.path.exists(form_file):
             continue
         m = {}
