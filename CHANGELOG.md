@@ -12,15 +12,98 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
 
 ## [0.10.1] - 2026-08-31
 
-The R76 panel's deferred backlog, closed item by item (R77). Every claim was re-verified against
-the code — six by probe — before its fix; each fix is pinned with a positive AND a negative
-control in `suite_r77` / `suite_r77_cli`. Three items were deferred again with reasons
-(per-site address folding needs primary-citation semantics; the `body_head` window and the
-minimum-length floors need a measured corpus first), and one panel claim was refuted on
-re-reading: the guard hook's "cross-drive relpath crash" cannot trigger — the config walk starts
-at the edited file's own folder, so the two paths share a mount in every constructible case.
-The hardening went in anyway, with a log line, because an exception path that bypasses the log
-makes "dead" look like "quiet".
+The R76 panel's deferred backlog, closed item by item — PLUS the R77 panel round (five external
+reviewers on the diff itself: grokbuild + spark12cont + agy31pro + agy37flash; codex-gpt-5.5
+FAILED the round with a drafting monologue and its solo re-run was deferred). Every claim was
+re-verified against the code — nine by probe — before its fix; each fix is pinned with a
+positive AND a negative control in `suite_r77` / `suite_r77_cli` / `suite_r77b`. Three items
+were deferred again with reasons (per-site address folding needs primary-citation semantics;
+the `body_head` window and the minimum-length floors need a measured corpus first), and one
+panel claim was refuted on re-reading: the guard hook's "cross-drive relpath crash" cannot
+trigger — the config walk starts at the edited file's own folder, so the two paths share a
+mount in every constructible case. The hardening went in anyway, with a log line, because an
+exception path that bypasses the log makes "dead" look like "quiet".
+
+### Fixed — panel round (R77 panel: F-A..F-G′)
+- **A digit-prefix substring no longer blesses a wrong-title file** (F-B, grokbuild CRITICAL,
+  probe-proven). `file_matches(("cfr","8","1"), "18CFR-part-1.xml", "")` used to return True —
+  the weak-branch substring test `"8cfr" in "18cfrpart1"` succeeded because rule 1 had no
+  digit-boundary. A digit anchor now gates the weak branch when the needle starts or ends with
+  a digit; the symmetric end-guard survives a future `_NUM_TAIL_RE` change.
+- **A new filename-level negative guard closes rule 2** (F-B extension, uncovered by executing
+  the F-B fix, probe-proven). Rule 2 (`"part{g2}"` + `any: ["cfr", "title{g1}"]`) matched the
+  same wrong-title file via `_has(part1)+_has(cfr)`; the head guard could not fire on the
+  empty-body probe. `reject_if_filename_names` mirrors the head-guard design and is added to
+  CFR/USC rules 2 and 3 in `us-federal.json`. Real download names like `part245-ecfr.xml` are
+  unaffected (the scan requires `\b\d{1,2}(cfr|usc)` — a title-declaring prefix, not a bare
+  digit sequence).
+- **One stray foreign cross-reference no longer rejects a true title-8 file**
+  (F-A, spark12cont CRITICAL + agy37flash CRITICAL + agy31pro HIGH, probe-proven). The
+  expensive symmetric direction: `reject_if_head_names` turned a genuine `USCODE-2024-section1255`
+  head citing `26 U.S.C. 7701` once into UNVERIFIABLE. Now: any own mention rescues (checked
+  against the whole list of matches), and a per-scan `min_count` (2 on the four citation-form
+  scans) requires the same foreign title to appear twice before rejecting. Heading-form scans
+  keep default 1 — an em-dash banner is a file naming itself.
+  **Priced-aloud residual:** a real title-26 file whose filename lacks its own title digits AND
+  whose head names 26 exactly once can now false-match an 8-key via the title-less usc rule 2.
+  Narrow corner; F-B's digit boundary kills the filename-titled cases, and rule 2's new
+  filename guard kills the `\d{1,2}(cfr|usc)`-prefix cases. The panel unanimously rated
+  false-REJECT of true law the worse direction; this is its price, priced aloud.
+- **`SENTINEL_HEAD` unifies the sentinel window across the package** (F-C, grokbuild MAJOR +
+  agy37flash MAJOR, probe-proven at offset 431). Three call sites read the tool-output header:
+  `run._is_tool_output`, `sidecar._current`, `exhibit_check._is_tool_output`. Two said 400
+  characters, one said 2000; a probe at offset 431 was invisible to two. A single constant
+  `run.SENTINEL_HEAD = 2000` is imported by all three, and a class-pin in `suite_r77b` greps
+  `\.read\((\d+)\)` in `krokai/*.py` + `hooks/*.py` and asserts no literal below 2000 remains
+  — the pin that stops a fourth 400 from appearing when someone forgets to import.
+- **Exhibit intake refuses .doc + corrupt .docx + unknown-binary soup** (F-D, agy37flash + 3
+  channels, probe-proven three shapes). `.doc` silently returned "" (references vanished);
+  a corrupt `.docx` was swallowed by `except Exception: return ""`; an unknown extension
+  was decoded `errors="replace"` and searched for exhibit IDs — probe-proven with a `.sqlite`
+  file where the soup hit an ID by luck. Now: `.doc` and corrupt `.docx` raise `MissingReader`
+  with conversion advice; `_read_text` uses an ALLOW-list; unknown binaries return "" without
+  opening. The reconcile side also learned to report an empty `.docx` (valid zip, empty body)
+  as unread — before, only `.pdf` had an empty-text row.
+- **`krokai check-exhibits` exits 1 over unread petitions** (F-E, grokbuild MAJOR,
+  probe-proven). The round's exit-code theme (kimik3/lunapro's #339 was the same shape): a
+  mixed folder reported "PETITION FILES NOT READ" AND exited 0, invisible to every hook and CI
+  job. Now: unread non-empty → return 1. With F-D this also means a matter holding `.doc`
+  petitions now exits 1 until they are converted — deliberate. No `--allow-unread` escape flag
+  (R44 registry lesson: a documented escape becomes the default).
+- **Mid-name exhibit IDs report as duplicates** (F-F, grokbuild MINOR, probe-proven). Position
+  parity with the admission logic at exhibit_check.py:234: `_part_after_id` mirrors
+  `id_re.search(fn[:50])` and searches for a part suffix AFTER the located ID (never across
+  the whole basename). Two copies of `Letter B-03 old.pdf`/`Letter B-03 new.pdf` were
+  previously excluded because the whole-name scan matched the exhibit's own `-03` — the R51
+  position-keying lesson repeating.
+- **`neutral_cwd` uses `tempfile.gettempdir()` instead of `"."`** (F-G′, grokbuild MINOR,
+  probe-proven). The old chain fell to `"."` when both TEMP and TMPDIR were unset, making the
+  scratch RELATIVE and INSIDE the matter — so the SystemExit guard never fired and the
+  CLAUDE.md-injection leak the function exists to prevent proceeded silently. `gettempdir()`
+  walks TMPDIR→TEMP→TMP→OS fallbacks and practically cannot come back unusable; SystemExit
+  still guards `makedirs`/`chdir` failure. The panel's "wrong exception class" claim was
+  REJECTED as documented (fail-closed by design; SystemExit is this codebase's idiom, see
+  `legal-toolkit/CLAUDE.md`).
+- **KeyMap failure prints move to stderr** (spark12cont MINOR). Address rule crash messages
+  used to pollute `krokai check`'s stdout, which parsers scanned line-by-line. Still loud —
+  the whole point of #356 — just on the honest stream. `suite_r77`'s pin captures stderr too.
+- **`form_dump` sentinel imports are lazy** (grokbuild/spark/agy37flash MINOR — a run-chain
+  eager cross-module import is a future-cycle magnet). Module-level `_STAMP_TXT`/`_STAMP_MD`
+  moved into a `_stamp(kind)` helper; the `SENTINEL` import happens on first call and never
+  reaches the module globals. Pinned in `suite_r77b`.
+- **`quote_guard` reuses the display relpath** (cleanup, not a fix; the panel's L196 unguarded
+  crash claim was REJECTED as unreachable). The message reuses `rel_disp` from the guarded
+  block above; L196 no longer computes relpath independently.
+
+### Notes carried but NOT code changes (documented, backlog)
+- The three source-text pins in `suite_r77` (L3048 fetch, L3092 upgrade, L3179 quote_guard)
+  grep source text instead of driving behavior. Deferred to backlog #361 — conversion needs a
+  hook-subprocess harness setup and is best done as its own change.
+- Two "EOF marker not found" stderr lines during selftest are pypdf noise on the F-E broken-PDF
+  fixture — cosmetic; backlog to wrap in `contextlib.redirect_stderr`.
+- `publish.yml` triggers PyPI publishing on tag `v*` via Trusted Publishing, and a PyPI version
+  number can never be reused (even after yank) — the ship checklist push-main-then-tag order
+  is now load-bearing, not stylistic.
 
 ### Fixed — exit codes a script can finally trust
 - **`krokai review` reflects the QUOTATION audit in its exit code** (kimik3, lunapro). Both the

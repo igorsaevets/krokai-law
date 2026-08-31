@@ -140,7 +140,14 @@ def main():
     # case today - this guard is for the UNC and future-caller edges, and it LOGS, because an
     # exception path that bypasses the log makes "dead" look like "quiet" (the module's own rule).
     try:
-        rel = os.path.relpath(os.path.abspath(path), cfg.root).replace("\\", "/").lower()
+        # 🔴 R77 minor (cleanup, not a fix): keep the display form and the lowercased match
+        # form together — the earlier code re-computed relpath at L196 for the message and
+        # would have raised ValueError there under the same UNC / cross-mount conditions this
+        # try already guards. The panel's «L196 unguarded crash» claim was REJECTED as
+        # unreachable in practice (the config walk anchors both paths to the same mount), but
+        # reusing the value is honest and free.
+        rel_disp = os.path.relpath(os.path.abspath(path), cfg.root).replace("\\", "/")
+        rel = rel_disp.lower()
     except ValueError:
         _log(cfg, "relpath failed (different mounts?): %s vs %s" % (path, cfg.root))
         return 0
@@ -193,7 +200,7 @@ def main():
 
     msg = [
         "🔴 QUOTE GUARD - a long quotation was added to a document that gets filed, and it is NOT",
-        "   in the quote bank.  File: %s" % os.path.relpath(path, cfg.root),
+        "   in the quote bank.  File: %s" % rel_disp,
         "",
     ]
     for _k, q in new[:3]:

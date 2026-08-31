@@ -25,18 +25,25 @@ import re
 
 from .corpus import walk_error
 from .readers import MissingReader
-from .run import SENTINELS
+# 🔴 R77 (F-C minor): sentinel imports moved inside `_is_tool_output` so module load does not
+# eagerly import `.run` - a fork-cycle magnet (R76 F5 lesson: an undocumented near-twin is a
+# fork ageing in silence, and eager cross-module imports are what make a future cycle silent).
 
 
 def _is_tool_output(path):
     """A file stamped as this toolkit's own output (sidecars, dumps, reports). Content, not name:
     the sentinel doctrine from `run.py`, applied to the scanners here so a `X.text.md` sidecar
-    sitting beside its PDF is not counted as an exhibit file or a petition (R77, #347 class)."""
+    sitting beside its PDF is not counted as an exhibit file or a petition (R77, #347 class).
+
+    🔴 Deliberate near-twin of `run._is_tool_output`: same window (SENTINEL_HEAD), different
+    admission gate. This one gates to .md/.txt so binaries are never opened; run.py's version
+    classifies ANY draft file. Unify the WINDOW only, never the functions - R76 F5."""
     if not path.lower().endswith((".md", ".txt")):
         return False
+    from .run import SENTINELS, SENTINEL_HEAD          # F-C minor: lazy sentinel imports
     try:
         with io.open(path, encoding="utf-8", errors="replace") as fh:
-            head = fh.read(2000)
+            head = fh.read(SENTINEL_HEAD)
         return any(s in head for s in SENTINELS)
     except OSError:
         return False
@@ -181,28 +188,51 @@ def _read_docx(path):
             if pieces:
                 paras.append("".join(pieces))
         return "\n".join(paras)
-    except Exception:
-        return ""
+    except Exception as exc:
+        # 🔴 R77 (#F-D, agy37flash MAJOR, probe-proven): a parse failure used to be swallowed to
+        # "" and the petition's references vanished silently. zipfile and ElementTree are stdlib,
+        # so any exception here is a parse problem (corrupt file, not-actually-a-.docx), not a
+        # missing engine. Raise MissingReader with conversion advice so the caller lands it in
+        # the loud "PETITION FILES NOT READ" section (F-D reconcile move below).
+        raise MissingReader("corrupt or not a .docx (%s) - re-save it from Word "
+                            "('Save As' .docx) and re-run" % type(exc).__name__)
+
+
+# 🔴 R77 (F-D): text formats we read from directly; anything else is either sent to a reader
+# (.docx/.pdf), refused loudly (.doc), or silently skipped by design (images, archives,
+# spreadsheets — not petition text, do not open as soup and search).
+_TEXT_EXTS = (".md", ".txt", ".markdown", ".htm", ".html")
 
 
 def _read_text(path):
     """Text of a petition document. Empty string only for formats this tool does not handle;
     a HANDLED format that cannot be read raises `MissingReader` so the caller reports it loudly
-    (R77, #334 - a silent "" here is how a PDF petition's references vanished)."""
+    (R77 #334 - a silent "" here is how a PDF petition's references vanished; R77 F-D - a .doc
+    silently returned "" and unknown binaries were decoded as soup and searched for IDs)."""
     low = path.lower()
     if low.endswith(".docx"):
-        return _read_docx(path)
+        return _read_docx(path)                # raises MissingReader on a corrupt/not-a-docx file
     if low.endswith(".pdf"):
         from .readers import read_pdf
         return read_pdf(path)                  # raises MissingReader when no engine is installed
-    if low.endswith((".jpg", ".jpeg", ".png", ".gif", ".tif", ".tiff",
-                     ".bmp", ".webp", ".zip", ".7z", ".rar", ".doc",
-                     ".xlsx", ".xls", ".pptx", ".ppt")):
-        return ""
-    try:
-        return io.open(path, encoding="utf-8", errors="replace").read()
-    except Exception:
-        return ""
+    if low.endswith(".doc"):
+        # 🔴 R77 (#F-D, grokbuild + probe-proven): a binary Word file has no stdlib reader; the
+        # old code silently returned "" and the references inside vanished from every count.
+        # Loud beats lucky. The advice is one step: save as .docx once. Optional python-docx or
+        # mammoth would not help — .doc needs antiword or a COM automation call, not those.
+        raise MissingReader("legacy .doc has no stdlib reader - open in Word and 'Save As' "
+                            ".docx once, then re-run.")
+    if low.endswith(_TEXT_EXTS):
+        try:
+            return io.open(path, encoding="utf-8", errors="replace").read()
+        except Exception:
+            return ""
+    # Everything else — images (.jpg/.png/.tif/…), archives (.zip/.7z/.rar), spreadsheets
+    # (.xls/.xlsx/.pptx/…), unknown binaries — is not petition text and stays silently
+    # skipped BY DESIGN. Do NOT open with errors="replace" and search: probe-proven with a
+    # .sqlite file, an unknown binary decoded that way hit an exhibit ID by luck and blessed
+    # a wrong file (R77 F-D, agy31pro finding on the soup-search shape).
+    return ""
 
 
 # ------------------------------------------------------------------------------- scanning
@@ -328,9 +358,16 @@ def reconcile(petition_paths, exhibit_dirs, form_dirs=None, series=None, out=Non
             unread.append((fn, str(exc).splitlines()[0]))
             return
         if not text:
-            if fp.lower().endswith(".pdf"):
+            low = fp.lower()
+            if low.endswith(".pdf"):
                 unread.append((fn, "the PDF has no usable text layer (a scan?) - OCR it, "
                                    "or supply the petition as .docx/.md"))
+            elif low.endswith(".docx"):
+                # 🔴 R77 (F-D move 3): mirror the .pdf branch. The old code only rowed the
+                # .pdf side of empty-text; a valid-but-empty .docx (empty document.xml) fell
+                # through as a silent zero, so its supposed refs simply were not counted.
+                unread.append((fn, "the .docx produced no text - empty document or extraction "
+                                   "failure; re-save it from Word and re-run"))
             return
         refs = ids_in_text(text, series)
         frefs = forms_in_text(text)
@@ -450,10 +487,18 @@ def reconcile(petition_paths, exhibit_dirs, form_dirs=None, series=None, out=Non
     # once fired. Position is the key, the R51 lesson: the same characters mean a part suffix
     # after the ID and the ID itself before it.
     dup_re = _build_file_re(series)
+    idr = _build_id_re(series)
 
     def _part_after_id(x):
         b = os.path.basename(x)
-        m = dup_re.match(b)
+        # 🔴 R77 (#F-F, grokbuild MINOR, probe-proven): the file was ADMITTED via
+        # `id_re.search(fn[:50])` at :234 (ID mid-name), but here `dup_re.match` fails on the
+        # same name and the WHOLE basename is scanned - so «B-03 old.pdf»'s own «-03» matched
+        # `PART_RE` and duplicates were silently excluded. Mirror the admission logic: locate
+        # the ID the same way, search AFTER its end. Whole-name only when no ID is found at
+        # all. Position is the invariant (R51: same characters mean a part suffix AFTER the ID
+        # and the ID itself BEFORE it).
+        m = dup_re.match(b) or idr.search(b[:50])
         return bool(PART_RE.search(b[m.end():] if m else b))
 
     duplicates = {k: v for k, v in on_disk.items()

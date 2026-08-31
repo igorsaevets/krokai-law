@@ -35,9 +35,18 @@ from .readers import read_any
 from .verdicts import ORDER, DANGEROUS, CLEAN, UNCHECKABLE, MEANING, MARK, label, meaning
 from .verify import check
 
-__all__ = ["scan_matter", "write_report", "SENTINEL", "SENTINELS"]
+__all__ = ["scan_matter", "write_report", "SENTINEL", "SENTINELS", "SENTINEL_HEAD"]
 
 SENTINEL = "KROKAI-TOOL-OUTPUT"
+
+# 🔴 R77 (#F-C, grokbuild + agy37flash MAJOR, probe-proven): the sentinel window is a PACKAGE-WIDE
+# constant, not a per-file literal. Three call sites - `run._is_tool_output`, `sidecar._current`
+# and `exhibit_check._is_tool_output` - all read a fixed head window. Two of them said 400 while a
+# third said 2000; a header offset was probed at 431 and the two 400-readers were blind to it.
+# Named `SENTINEL_HEAD` and exported, with a suite pin that greps `\.read\(\d+\)` in krokai/*.py
+# and hooks/*.py and asserts no literal below 2000 remains. The pin is what stops a fourth 400
+# from appearing when someone forgets to import.
+SENTINEL_HEAD = 2000
 
 # The stamp the tool WRITES is one string; the stamps it RECOGNISES are several, and that asymmetry
 # is the whole reason a rename is survivable. A report written before the project was renamed still
@@ -71,9 +80,13 @@ def corpus_for(cfg, quiet=True):
 
 
 def _is_tool_output(path):
+    # 🔴 Deliberate near-twin of `exhibit_check._is_tool_output`: same window (SENTINEL_HEAD),
+    # different admission gate. This one classifies ANY draft file; the exhibit-check version
+    # gates to .md/.txt so a sidecar beside its PDF is skipped without opening binaries. Unify
+    # the WINDOW only, never the functions - a fork ageing in silence is the R76 lesson (F5).
     try:
         with io.open(path, encoding="utf-8", errors="replace") as fh:
-            head = fh.read(400)
+            head = fh.read(SENTINEL_HEAD)
         return any(s in head for s in SENTINELS)
     except OSError:
         return False

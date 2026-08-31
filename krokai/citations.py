@@ -240,10 +240,42 @@ def _rule_holds(rule, flat, sep, body, head, groups):
     # outright. Measured on agency policy manuals, where volume 7 *part A* chapter 8 and volume 7
     # *part B* chapter 8 are different chapters that share a number - and one of them was the whole
     # argument. Three independent reviewers named this on the same day.
+    # 🔴 R77 (#F-A, spark12cont CRIT + agy37flash CRIT + agy31pro HIGH, probe-proven): ONE stray
+    # foreign cross-reference used to reject a genuine title-8 file - the expensive symmetric
+    # failure (the correct law becomes UNVERIFIABLE). Two changes: (1) ANY own mention rescues,
+    # counted against the whole list of matches (so `expect` in `found` is decisive); (2) per-scan
+    # optional `min_count` — the citation-form scans require at least 2 occurrences of the SAME
+    # foreign title before rejecting (a head citing 26 once as a cross-ref is normal, a head
+    # naming 26 twice is a document that IS title 26). Heading-form scans keep default 1: an
+    # em-dash title banner is a file naming itself; one occurrence is decisive.
     for neg in rule.get("reject_if_head_names", []):
         rx = re.compile(_fmt(neg["scan"], groups), re.I)
-        found = set(m.group(1).lower() for m in rx.finditer(head))
-        if found and _fmt(neg["expect"], groups).lower() not in found:
+        found = [m.group(1).lower() for m in rx.finditer(head)]
+        if not found:
+            continue
+        if _fmt(neg["expect"], groups).lower() in found:
+            continue                              # any own mention rescues
+        need = int(neg.get("min_count", 1))
+        if any(found.count(v) >= need for v in set(found)):
+            return False
+    # 🔴 R77 (#F-B extension, uncovered by executing the F-B fix): the head guard reads the
+    # BODY head, so an empty-body call cannot see the file's own title declaration. But the
+    # flat FILENAME may name a wrong title explicitly (`18cfr…`, `28usc…`) — the same
+    # information, in a place the head guard never looked. Symmetric clause, same shape:
+    # `reject_if_filename_names` scans the flat filename. Discovered when the F-B fix in
+    # `_has` closed rule[0]'s substring bless (`8cfr` inside `18cfr…`) — and immediately
+    # uncovered rule[1] doing the same thing via `_has("cfr") + _has("part1")`, since
+    # `reject_if_head_names` had no head to read. Probe-proven: 18CFR-part-1.xml + body=""
+    # was True after the _has fix, is False with this clause.
+    for neg in rule.get("reject_if_filename_names", []):
+        rx = re.compile(_fmt(neg["scan"], groups), re.I)
+        found = [m.group(1).lower() for m in rx.finditer(flat)]
+        if not found:
+            continue
+        if _fmt(neg["expect"], groups).lower() in found:
+            continue
+        need = int(neg.get("min_count", 1))
+        if any(found.count(v) >= need for v in set(found)):
             return False
 
     low = hay.lower()
@@ -285,6 +317,16 @@ def _rule_holds(rule, flat, sep, body, head, groups):
                                             % re.escape(tail), sep):
                 return False
             return _num_token(nf, low)
+        # 🔴 R77 (#F-B, grokbuild CRIT, probe-proven): the weak substring branch used to bless
+        # `18CFR-part-1.xml` for a key of ("cfr","8","1") because "8cfr" sits inside "18cfr…".
+        # A digit-BOUNDARY guard when the needle starts (symmetrically: ends) with a digit
+        # closes the whole class. The symmetric ENDS-with-digit branch is defensive - today's
+        # `_NUM_TAIL_RE` routes such needles to `_num_token`, but the guard survives a future
+        # `_NUM_TAIL_RE` change (R51: tests must remain valid across shape changes).
+        pre = r"(?<![0-9])" if nf[:1].isdigit() else ""
+        post = r"(?![0-9])" if nf[-1:].isdigit() else ""
+        if pre or post:
+            return re.search(pre + re.escape(nf) + post, low) is not None
         return nf in low
 
     for needle in rule.get("all", []):

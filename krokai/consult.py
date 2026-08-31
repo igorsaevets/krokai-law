@@ -63,6 +63,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -977,8 +978,14 @@ def neutral_cwd(printer=print):
     Launching from a neutral directory fixed it: the same probe from a scratch folder answered
     "NOTHING IN CONTEXT". Every path this module builds is absolute by the time it is used.
     """
-    scratch = os.path.join(os.environ.get("TEMP") or os.environ.get("TMPDIR") or ".",
-                           "krokai-neutral-cwd")
+    # 🔴 R77 (#F-G′, grokbuild MINOR, probe-proven): the old chain fell to `"."` when both
+    # TEMP and TMPDIR were unset, making the scratch RELATIVE and INSIDE the matter — so the
+    # SystemExit guard below never fired and the CLAUDE.md-injection leak this function exists
+    # to prevent proceeded silently. `tempfile.gettempdir()` walks TMPDIR→TEMP→TMP→OS
+    # fallbacks and practically cannot come back unusable; the SystemExit still guards
+    # makedirs/chdir failure (fail-closed BY DESIGN — the panel's «wrong exception class»
+    # claim is REJECTED, see ADJUDICATION.md).
+    scratch = os.path.join(tempfile.gettempdir(), "krokai-neutral-cwd")
     try:
         os.makedirs(scratch, exist_ok=True)
         os.chdir(scratch)

@@ -2844,8 +2844,13 @@ def suite_r77(tmp):
     packs = load_packs(["us-federal"])
 
     # --- #333: a same-numbered section under ANOTHER title is not a home ---------------------
+    # R77 F-A: heads enriched to ×2 foreign self-naming (per-value min_count=2 threshold in
+    # the citation-form reject_if_head_names scans - a head citing another title ONCE is a
+    # normal cross-reference, not a decisive title declaration). The filename guard added in
+    # rule 2/3 (F-B extension) is the redundant defence for these same-file cases.
     key = ("usc", "8", "1255")
-    wrong = "26 U.S.C. § 1255 Gain from dispositions. See section 1255; also 1255 applies."
+    wrong = ("26 U.S.C. § 1255 Gain from dispositions. See section 1255; also 1255 applies. "
+             "This is a Title 26 U.S.C. section — 26 U.S.C. § 1255(a) references the tax code.")
     right = "8 U.S.C. § 1255 Adjustment of status. See section 1255; also 1255 applies."
     ok("r77: 26USC-1255 no longer satisfies 8 U.S.C. § 1255 (#333, lunapro)",
        not packs.file_matches(key, "26USC-1255-uscode.xml", wrong), "")
@@ -2853,8 +2858,10 @@ def suite_r77(tmp):
        packs.file_matches(key, "8USC-1255-uscode.xml", right)
        and packs.file_matches(key, "8usc-1255.xml", ""), "")
     ok("r77: a 26-CFR part under an 8 CFR key is rejected by its own head (#333 class)",
-       not packs.file_matches(("cfr", "8", "245"), "part-245-cfr.xml",
-                              "26 CFR part 245 rules. 245.1 text. 245.2 text. 245.3 text."), "")
+       not packs.file_matches(
+           ("cfr", "8", "245"), "part-245-cfr.xml",
+           "26 CFR part 245 rules. 245.1 text. 245.2 text. 245.3 text. "
+           "Also 26 CFR § 245.4 supplements the above."), "")
     ok("r77 control: an eCFR-style part file with the right title still matches",
        packs.file_matches(("cfr", "8", "245"), "part-245-ecfr.xml",
                           "8 CFR Part 245 - Adjustment. 245.1 a. 245.2 b. 245.3 c."), "")
@@ -2921,7 +2928,7 @@ def suite_r77(tmp):
 
     # --- #336: every stamped writer lands inside the widened corpus scan window --------------
     from krokai.sidecar import HEADER
-    from krokai.form_dump import _STAMP_TXT, _STAMP_MD
+    from krokai.form_dump import _stamp                    # R77 minor: lazy sentinel imports
     wd = os.path.join(d77, "law36")
     os.makedirs(wd)
     long_src = "A" * 240 + ".pdf"
@@ -2929,9 +2936,9 @@ def suite_r77(tmp):
         HEADER.format(src=long_src, srcname=long_src, when="2026-08-31", extractor="3")
         + "Statutory body text here. " * 40)
     io.open(os.path.join(wd, "f.forms.txt"), "w", encoding="utf-8").write(
-        _STAMP_TXT + "[p 1] field <t> = value\n" * 40)
+        _stamp("txt") + "[p 1] field <t> = value\n" * 40)
     io.open(os.path.join(wd, "cc.md"), "w", encoding="utf-8").write(
-        _STAMP_MD + "# Cross-engine agreement\nrow after row\n" * 40)
+        _stamp("md") + "# Cross-engine agreement\nrow after row\n" * 40)
     io.open(os.path.join(wd, "real.txt"), "w", encoding="utf-8").write(
         "A real short provision of law stands here, indexed as always. " * 5)
     c36 = Corpus([wd], quiet=True, sentinel=SENTINELS)
@@ -3153,14 +3160,15 @@ def suite_r77(tmp):
             raise re.error("a broken pack rule")
 
     buf56 = io.StringIO()
-    stdout56 = sys.stdout
-    sys.stdout = buf56
+    stdout56, stderr56 = sys.stdout, sys.stderr
+    sys.stdout = sys.stderr = buf56
     try:
         hits56 = addr_mod.KeyMap(c56, _BoomPacks()).resolve(("x", "1"))
     finally:
-        sys.stdout = stdout56
-    ok("r77: a pack rule that raises is PRINTED, not swallowed into «not in corpus» (#356 / "
-       "F15, qwen38max+orglm53)",
+        sys.stdout, sys.stderr = stdout56, stderr56
+    ok("r77: a pack rule that raises is PRINTED (to stderr), not swallowed into «not in "
+       "corpus» (#356 / F15, qwen38max+orglm53; R77 minor: was stdout, moved to stderr so "
+       "report parsers stay clean)",
        hits56 == [] and "address rule failed" in buf56.getvalue(), buf56.getvalue()[:100])
 
     # --- #357: the guard keeps the LONGER quotation ------------------------------------------
@@ -3245,6 +3253,229 @@ def suite_r77_cli(tmp):
        "strict=%s strict-address=%s" % (r0.returncode, r5.returncode))
 
 
+def suite_r77b(tmp):
+    """R77 PANEL round (F-A..F-G′ + minors): pins for the fixes decided in
+    `reviews/r77-krokai/ADJUDICATION.md`. Every fix has a BUG probe (translated from the
+    pre-fix `reviews/r77-krokai/probes_prefix.py` into a positive assertion) and at least one
+    CONTROL — the honest case must keep working, or the fix has disabled the tool.
+
+    The F-B extension `reject_if_filename_names` was UNCOVERED by executing the F-B fix in
+    `_has`: closing rule 1's substring bless immediately revealed rule 2 blessing the same
+    file via `_has(part1)+_has(cfr)`, with `reject_if_head_names` unable to fire on the
+    empty-body probe. Pinned symmetrically here."""
+    import argparse as _ap
+    import contextlib as _ctx
+    import re as _re
+    import shutil as _sh
+    import tempfile as _tf
+    import zipfile as _zip
+    from krokai.citations import load_packs
+    from krokai.cli import cmd_check_exhibits
+    from krokai.exhibit_check import _read_docx, _read_text, reconcile
+    from krokai.readers import MissingReader
+    from krokai.run import SENTINEL_HEAD, SENTINELS, _is_tool_output as run_is_tool_output
+    from krokai import consult, form_dump
+
+    d = os.path.join(tmp, "r77b")
+    os.makedirs(d, exist_ok=True)
+    packs = load_packs(["us-federal"])
+
+    # --- F-B: digit-prefix substring blesses a wrong-title file (rule[0]) + F-B extension
+    # (rule[1]/[2] filename guard uncovered by the F-B fix)
+    ok("r77b F-B cfr bug: 18CFR-part-1.xml does NOT satisfy ('cfr','8','1'), empty body",
+       not packs.file_matches(("cfr", "8", "1"), "18CFR-part-1.xml", ""), "")
+    ok("r77b F-B usc bug: 28USC-1254.xml does NOT satisfy ('usc','8','1254'), empty body",
+       not packs.file_matches(("usc", "8", "1254"), "28USC-1254.xml", ""), "")
+    ok("r77b F-B pos cfr: 8CFR-part-1.xml still matches ('cfr','8','1')",
+       packs.file_matches(("cfr", "8", "1"), "8CFR-part-1.xml", ""), "")
+    ok("r77b F-B pos usc: 8USC-1254.xml still matches ('usc','8','1254')",
+       packs.file_matches(("usc", "8", "1254"), "8USC-1254.xml", ""), "")
+    ok("r77b F-B neg control: 26CFR-part-5.xml refuses ('cfr','8','1')",
+       not packs.file_matches(("cfr", "8", "1"), "26CFR-part-5.xml", ""), "")
+    ok("r77b F-B real-name control: part245-ecfr.xml still matches ('cfr','8','245') "
+       "— the filename guard must NOT over-reject real download names",
+       packs.file_matches(("cfr", "8", "245"), "part245-ecfr.xml", ""), "")
+
+    # --- F-A: reject_if_head_names — per-value min_count rescues true files
+    fn = "USCODE-2024-section1255.txt"
+    one_foreign = ("Cross-reference only: 26 U.S.C. 7701 defines the term person "
+                   "for the purposes of this chapter.")
+    ok("r77b F-A bug: title-8 file with ONE foreign cross-ref is NOT rejected",
+       packs.file_matches(("usc", "8", "1255"), fn, one_foreign), "")
+    two_foreign = ("As under 26 U.S.C. 7701 and again 26 U.S.C. 61, the internal "
+                   "revenue meaning controls here.")
+    ok("r77b F-A reject-holds: foreign ×2 with no own mention IS refused",
+       not packs.file_matches(("usc", "8", "1255"), fn, two_foreign), "")
+    rescued = ("Adjustment under 8 U.S.C. 1255 interacts with 26 U.S.C. 7701, "
+               "26 U.S.C. 61 and 26 U.S.C. 32.")
+    ok("r77b F-A rescue: own ×1 among foreign ×3 → matched (any own mention rescues)",
+       packs.file_matches(("usc", "8", "1255"), fn, rescued), "")
+
+    # --- F-C: sentinel window unified to SENTINEL_HEAD (=2000)
+    ok("r77b F-C: SENTINEL_HEAD is exported at 2000",
+       SENTINEL_HEAD == 2000, "SENTINEL_HEAD=%r" % SENTINEL_HEAD)
+    sc = os.path.join(d, "deep-sentinel.md")
+    io.open(sc, "w", encoding="utf-8").write("A" * 430 + "\n" + SENTINELS[0] + "\n")
+    ok("r77b F-C bug: sentinel at offset 431 IS detected (was invisible in the 400 window)",
+       run_is_tool_output(sc), "")
+    # F-C CLASS-PIN: no `read(<N-below-2000>)` literal remains in krokai/*.py + hooks/*.py.
+    # This stops a fourth 400 from appearing silently when someone forgets to import.
+    pkg_root = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.dirname(pkg_root)
+    scan_dirs = [pkg_root, os.path.join(repo_root, "hooks")]
+    small_reads = []
+    for base in scan_dirs:
+        if not os.path.isdir(base):
+            continue
+        for root, _dirs, files in os.walk(base):
+            for f in files:
+                if not f.endswith(".py"):
+                    continue
+                p = os.path.join(root, f)
+                src = io.open(p, encoding="utf-8", errors="replace").read()
+                for m in _re.finditer(r"\.read\(\s*(\d+)\s*\)", src):
+                    n = int(m.group(1))
+                    if n < 2000:
+                        small_reads.append((os.path.relpath(p, repo_root),
+                                            m.group(0), n))
+    ok("r77b F-C class-pin: no `.read(<N-below-2000>)` literal remains in krokai/*.py or "
+       "hooks/*.py (the fourth 400 must not appear silently — F-C invariant)",
+       small_reads == [], str(small_reads[:6]))
+
+    # --- F-D: exhibit intake refuses .doc + corrupt .docx + soup binary
+    scratch = _tf.mkdtemp(prefix="r77b-fd-", dir=d)
+    doc = os.path.join(scratch, "x.doc")
+    io.open(doc, "wb").write(b"\xd0\xcf\x11\xe0" + b"\x00" * 64)
+    try:
+        _read_text(doc)
+        doc_raised = False
+    except MissingReader:
+        doc_raised = True
+    ok("r77b F-D bug: .doc raises MissingReader (loud, not silent '')", doc_raised, "")
+
+    soup = os.path.join(scratch, "x.sqlite")
+    io.open(soup, "wb").write(b"SQLite format 3\x00" + bytes(range(256)) * 8)
+    got_soup = ""
+    try:
+        got_soup = _read_text(soup)
+    except MissingReader:
+        pass
+    ok("r77b F-D bug: unknown binary (.sqlite) returns '' — not decoded as soup and searched",
+       got_soup == "", "got=%r len=%d" % (got_soup[:40], len(got_soup)))
+
+    badx = os.path.join(scratch, "bad.docx")
+    io.open(badx, "w", encoding="utf-8").write("this is not a zip archive")
+    try:
+        _read_docx(badx)
+        badx_raised = False
+    except MissingReader:
+        badx_raised = True
+    ok("r77b F-D bug: corrupt .docx raises MissingReader (not swallowed to '')",
+       badx_raised, "")
+
+    md_ok = os.path.join(scratch, "fine.md")
+    io.open(md_ok, "w", encoding="utf-8").write("See Exhibit B-3.\n")
+    ok("r77b F-D control: .md still reads", "Exhibit B-3" in _read_text(md_ok), "")
+
+    # F-D move 3: an empty .docx (valid zip, empty document body) lands in unread
+    empty_docx = os.path.join(scratch, "empty.docx")
+    with _zip.ZipFile(empty_docx, "w") as z:
+        z.writestr(
+            "word/document.xml",
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            '<w:body/></w:document>')
+    pet_empty = os.path.join(scratch, "petition-empty-docx")
+    os.makedirs(pet_empty)
+    io.open(os.path.join(pet_empty, "readable.md"), "w", encoding="utf-8").write(
+        "See Exhibit B-3.")
+    _sh.move(empty_docx, os.path.join(pet_empty, "empty.docx"))
+    exd_empty = os.path.join(scratch, "exhibits-empty")
+    os.makedirs(exd_empty)
+    io.open(os.path.join(exd_empty, "B-03.pdf"), "w").write("x")
+    r_empty = reconcile([pet_empty], [exd_empty])
+    unread_names = [fn for fn, _why in (r_empty.get("unread") or [])]
+    ok("r77b F-D move 3: an empty .docx (valid zip, empty body) lands in unread — "
+       "symmetric with the .pdf empty-text branch",
+       "empty.docx" in unread_names, str(unread_names))
+
+    # --- F-E: check-exhibits exits 1 when unread is non-empty (mixed folder)
+    pet_e = os.path.join(scratch, "petition-mixed")
+    os.makedirs(pet_e)
+    io.open(os.path.join(pet_e, "note.md"), "w", encoding="utf-8").write("See Exhibit B-3.")
+    io.open(os.path.join(pet_e, "broken.pdf"), "wb").write(b"%PDF-1.4 garbage, no xref")
+    exd_e = os.path.join(scratch, "exhibits-fe")
+    os.makedirs(exd_e)
+    io.open(os.path.join(exd_e, "B-03.pdf"), "w").write("x")
+    ns = _ap.Namespace(petition=[pet_e], exhibits=[exd_e], forms=None,
+                       out=os.path.join(scratch, "rep-fe.md"))
+    with _ctx.redirect_stdout(io.StringIO()), _ctx.redirect_stderr(io.StringIO()):
+        rc_fe = cmd_check_exhibits(ns)
+    ok("r77b F-E bug: an unread petition flips the exit code to 1 (was 0 pre-fix)",
+       rc_fe == 1, "rc=%d" % rc_fe)
+
+    # --- F-F: mid-name IDs report as duplicates (position parity with :234)
+    pet_f = os.path.join(scratch, "petition-f")
+    os.makedirs(pet_f)
+    io.open(os.path.join(pet_f, "note.md"), "w", encoding="utf-8").write("See Exhibit B-3.")
+    exd_f = os.path.join(scratch, "ex-midname")
+    os.makedirs(exd_f)
+    io.open(os.path.join(exd_f, "Letter B-03 old.pdf"), "w").write("x")
+    io.open(os.path.join(exd_f, "Letter B-03 new.pdf"), "w").write("x")
+    r_f = reconcile([pet_f], [exd_f])
+    # canon('B','03') == 'B-3' — the R77 probe-author trap: assert on canon output.
+    ok("r77b F-F bug: two mid-name copies of B-03 are reported duplicate under canon key B-3 "
+       "(was silently excluded — PART_RE matched the ID's own -03 across the whole name)",
+       "B-3" in r_f["duplicates"], str(list(r_f["duplicates"])))
+
+    exd_f2 = os.path.join(scratch, "ex-canon")
+    os.makedirs(exd_f2)
+    io.open(os.path.join(exd_f2, "B-03.pdf"), "w").write("x")
+    io.open(os.path.join(exd_f2, "B-03 copy.pdf"), "w").write("x")
+    r_f2 = reconcile([pet_f], [exd_f2])
+    ok("r77b F-F control: canonical-name duplicates still fire (regression guard)",
+       "B-3" in r_f2["duplicates"], str(list(r_f2["duplicates"])))
+
+    exd_f3 = os.path.join(scratch, "ex-parts")
+    os.makedirs(exd_f3)
+    io.open(os.path.join(exd_f3, "B-03_1.pdf"), "w").write("x")
+    io.open(os.path.join(exd_f3, "B-03_2.pdf"), "w").write("x")
+    r_f3 = reconcile([pet_f], [exd_f3])
+    ok("r77b F-F neg control: _1/_2 part suffixes are NOT reported as duplicates",
+       "B-3" not in r_f3["duplicates"], str(list(r_f3["duplicates"])))
+
+    # --- F-G': neutral_cwd uses tempfile.gettempdir(), not the "." fallback
+    env0 = {k: os.environ.get(k) for k in ("TEMP", "TMPDIR", "TMP")}
+    cwd0 = os.getcwd()
+    os.chdir(d)
+    try:
+        for k in ("TEMP", "TMPDIR", "TMP"):
+            os.environ.pop(k, None)
+        p = consult.neutral_cwd(printer=lambda *a, **k: None)
+        ok("r77b F-G' bug: with TEMP/TMPDIR/TMP unset, scratch is ABSOLUTE and outside cwd "
+           "(was RELATIVE inside the matter, and SystemExit could never fire)",
+           os.path.isabs(p) and not os.path.abspath(p).startswith(os.path.abspath(d)),
+           "p=%r cwd=%r" % (p, d))
+    finally:
+        os.chdir(cwd0)
+        for k, v in env0.items():
+            if v is not None:
+                os.environ[k] = v
+
+    # --- Minor: form_dump lazy sentinel imports; module load does not eagerly import SENTINEL
+    st_txt = form_dump._stamp("txt")
+    st_md = form_dump._stamp("md")
+    ok("r77b minor: form_dump._stamp('txt') carries the SENTINEL and 'form-dump' tag",
+       SENTINELS[0] in st_txt and "form-dump" in st_txt, st_txt[:60])
+    ok("r77b minor: form_dump._stamp('md') carries the SENTINEL and 'form-dump' tag",
+       SENTINELS[0] in st_md and "form-dump" in st_md, st_md[:60])
+    import krokai.form_dump as _fd_mod
+    ok("r77b minor: form_dump does NOT eagerly import SENTINEL at module load (lazy import "
+       "invariant — guards against a future run→form_dump cycle appearing silently)",
+       "SENTINEL" not in vars(_fd_mod), "form_dump top names: %s" %
+       [k for k in vars(_fd_mod) if not k.startswith("_")][:15])
+
+
 # ------------------------------------------------------------------------------------------------
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -3263,6 +3494,7 @@ def main():
         suite_r76(tmp)
         suite_r77(tmp)
         suite_r77_cli(tmp)
+        suite_r77b(tmp)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)

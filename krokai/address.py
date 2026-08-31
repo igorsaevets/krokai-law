@@ -35,6 +35,7 @@ without the floor the repair would bless a coincidence.
 from __future__ import annotations
 
 import os
+import sys                                # R77 minor: address rule failures print to stderr.
 
 from .normalize import normalise, alnum, dehyph
 from .verdicts import CLEAN
@@ -82,13 +83,18 @@ class KeyMap(object):
                     # bounded, never fatal: one broken rule must not kill the whole check.
                     fails += 1
                     if fails <= 3:
+                        # 🔴 R77 (spark12cont MINOR): these prints used to pollute stdout, which
+                        # `krokai check`'s report parsers scanned line-by-line. Moved to stderr
+                        # so the exception message is still LOUD (never swallowed - the whole
+                        # point of #356) without contaminating the parsed report. Selftest
+                        # (`suite_r77` #356) captures stderr for its pin.
                         print("  !! address rule failed on %s for %s: %s"
                               % (os.path.basename(path), "/".join(str(x) for x in key),
-                                 type(exc).__name__))
+                                 type(exc).__name__), file=sys.stderr)
                     continue
             if fails > 3:
                 print("  !! ...and %d more rule failures for %s"
-                      % (fails - 3, "/".join(str(x) for x in key)))
+                      % (fails - 3, "/".join(str(x) for x in key)), file=sys.stderr)
             self._cache[key] = hits
         return self._cache[key]
 

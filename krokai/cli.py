@@ -834,6 +834,15 @@ def cmd_check_exhibits(a):
         return 2
     if result["cited_no_file"] or result.get("form_cited_no_file"):
         return 1
+    if result.get("unread"):
+        # 🔴 R77 (#F-E, grokbuild MAJOR, probe-proven): a mixed folder with one readable .md and
+        # a broken PDF reported the unread petition loudly AND exited 0 - CI and hooks read the
+        # exit code, so a legit broken-input state passed silently. Now: unread petitions flip
+        # the exit code (1), joining the round's exit-code theme (#339, #340). No --allow-unread
+        # escape flag (R44 registry lesson: a documented escape becomes the default). With F-D
+        # this also means a matter holding .doc petitions now exits 1 until they are converted
+        # to .docx — deliberate; conversion is one Word Save-As away.
+        return 1
     return 0
 
 

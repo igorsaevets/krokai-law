@@ -38,6 +38,7 @@ import time
 from .corpus import walk
 from .normalize import strip_invisibles
 from .readers import read_pdf, MIN_TEXT_LAYER, EXTRACTOR_VERSION
+from .run import SENTINEL_HEAD          # R77 F-C: the sentinel/extractor head window (2000).
 
 __all__ = ["build", "SUFFIX"]
 
@@ -104,7 +105,11 @@ def _current(dst, src):
     if os.path.getmtime(dst) < os.path.getmtime(src):
         return False
     try:
-        head = io.open(dst, encoding="utf-8", errors="replace").read(400)
+        # 🔴 R77 (#F-C, grokbuild MAJOR, probe-proven counterpart at run.py): the extractor tag
+        # can sit past 400 bytes in a real header — probe hit at offset 431 — leading to a
+        # needless rebuild when it should have declared the sidecar current. Unified with
+        # `run.SENTINEL_HEAD` (=2000) and pinned in the suite so no 400-literal reappears.
+        head = io.open(dst, encoding="utf-8", errors="replace").read(SENTINEL_HEAD)
     except OSError:
         return False
     return ("extractor: %s" % EXTRACTOR_VERSION) in head
