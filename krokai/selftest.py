@@ -3197,7 +3197,7 @@ def suite_r77_cli(tmp):
     keydir = os.path.join(tmp, "r77keys")
     os.makedirs(keydir, exist_ok=True)
     io.open(os.path.join(keydir, "keys.env"), "w", encoding="utf-8").write(
-        "TESTKEY_R77=hunter2-value-r77\n")
+        "TESTKEY_R77=name-check-fixture\n")
     env["KROKAI_KEY_DIR"] = keydir
 
     def run(*args):
@@ -3233,7 +3233,7 @@ def suite_r77_cli(tmp):
     ok("r77cli: the review path loads keys.env and prints the NAME only (#337, orgemini37flash)",
        "TESTKEY_R77" in (r.stdout or ""), (r.stdout or "")[:200])
     ok("r77cli control: the key VALUE never reaches the transcript",
-       "hunter2-value-r77" not in (r.stdout or "") + (r.stderr or ""), "")
+       "name-check-fixture" not in (r.stdout or "") + (r.stderr or ""), "")
 
     # --- #340: --strict-address gives the address doctrine a mechanism -----------------------
     io.open(os.path.join(matter, "case", "draft.md"), "w", encoding="utf-8").write(
