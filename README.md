@@ -132,6 +132,26 @@ Manual, policy memoranda) it prints the browser-only fallback rather than invent
 the quotation names a supported publisher. `SITE-ACCESS.md` in the matter root records which
 publishers this environment can reach, updated the first time a fetch fails.
 
+**11. Builds the legal appendix from the bank, with fresh verification.** The one section
+of a filing that lists the rules the argument rests on. Traditionally hand-compiled — which
+means it is hand-compiled from the bank the drafter *remembers*, not the bank the corpus can
+still verify. `krokai appendix` re-runs `check` on every banked entry at build time, groups
+what verifies under CFR / U.S. Code / INA / Public Law / Federal Register / Policy Manual,
+and lists everything that did not verify in a loud `EXCLUDED` section that names the fresh
+verdict. Silent exclusion is how a dropped proviso reaches a filing — this section refuses
+to be silent. Measured on 8 CFR 245 between two editions: 32 sentences gone; every affected
+banked quotation would have come back `NOT_FOUND`. The appendix built yesterday would not
+notice; this one does, because there is no cache.
+
+**12. Proves the precedent you downloaded is the one you asked for.** An assistant asked to
+save the `Matter of Smith` decision saved a different Smith with a different disposition —
+same reporter volume, wrong file. The URL, the anchor text and the file name all read fine;
+only reading the extracted text catches it. `krokai fetch-precedent <URL> --party X
+--subject Y --court Z` downloads the decision AND requires the party, subject and court to
+appear in the first 200 KB of extracted text before the file is kept. Any missing token means
+the download is deleted from the inbox immediately. No `--force` — the wrong-file failure
+has no benign shape.
+
 ---
 
 ## Why a second opinion, and why it is not a separate download

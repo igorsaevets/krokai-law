@@ -44,6 +44,12 @@ library --bank             corpus <-> bank inventory: what is downloaded and not
 library --suggest-fetches  for every banked entry with no file on disk, print the
                            ready-to-run download command (or the browser-only caveat
                            for USCIS PM / policy memoranda)
+appendix                   build the legal appendix ("Нормативная база") from banked
+                           entries with a FRESH check() at build time; excluded
+                           entries are listed loudly, never silently dropped
+fetch-precedent <URL> ...  download a court decision AND require --party X --subject Y
+                           --court Z to appear in the head of the extracted text
+                           before the file is kept
 close                      mechanical end-of-round checks
 gate <file>                outbound check for secrets and personal identifiers,
                            BEFORE pasting anything into another AI
@@ -70,6 +76,19 @@ rule the bank marks against us), the bank entries for us that the draft never us
 addresses the draft cites without the verbatim wording the bank already has, and the bank
 entries themselves that are missing an application boundary. The categories are not opinions;
 each was paid for by a measured filing in the sister project.
+
+**The appendix is built from the current corpus, not from memory.** `krokai appendix` re-runs
+`check` on every banked entry at build time. Never assemble the appendix by hand: an entry
+banked six months ago was verified against the corpus of six months ago, and between then and
+today a regulation may have been revised or a source re-extracted. Every rebuild reflects
+today's disk. The excluded section is loud on purpose — read it before the appendix is
+filed; a silently dropped entry is how a filing loses ground it meant to stand on.
+
+**Never trust a precedent's file name — verify the contents.** `krokai fetch-precedent`
+downloads the decision AND requires `--party`, `--subject` and `--court` to appear in the head
+of the extracted text before the file is kept. A `Matter of Smith` URL can serve `another
+Smith` with a different disposition; only reading the text catches it. There is no `--force`
+flag on that command, on purpose.
 
 **When a fetch fails, write it down in `SITE-ACCESS.md`.** The matter root carries a
 `SITE-ACCESS.md` created by `krokai init`; it records which publishers this environment can

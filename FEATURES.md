@@ -652,6 +652,122 @@ point at the same publishing endpoints.
 
 ---
 
+## appendix — the legal appendix from the bank, with fresh verification (0.15.0)
+
+`krokai/appendix.py` — `krokai appendix [<bank>...] [--side pro|con|any]`.
+
+The one section of a filing that lists the rules the argument rests on. Traditionally hand-
+compiled at the end — which means it is hand-compiled from the bank the drafter *remembers*,
+not the bank the corpus can still verify. This module builds that section MECHANICALLY from
+banked entries whose FRESH verdict is clean against the current corpus.
+
+### Fresh verification at build time — no cache, no shortcut
+
+Every rebuild re-runs `check` on every entry. Between the round an entry was banked and the day
+the appendix is built:
+
+* a regulation may have been revised (measured on 8 CFR 245 between two editions: 32 sentences
+  gone, "alien" replaced by "noncitizen" throughout — every affected banked entry would come back
+  `NOT_FOUND` overnight, correctly quoted and unverifiable);
+* a source file may have been re-fetched, re-extracted, moved or removed;
+* an entry banked before `krokai bank add` existed may never have been machine-verified at all.
+
+The appendix is what the filing carries. It has to be verified against WHAT IS ON DISK NOW.
+
+### Included vs excluded — exclusion is NAMED, never silent
+
+An entry whose fresh verdict is in `verdicts.CLEAN` lands in the appendix, grouped by kind
+(CFR / U.S. Code / INA / Public Law / Federal Register / USCIS Policy Manual / other). Every
+other entry lands in a loud `EXCLUDED` section that names the fresh verdict and points at the
+six causes of a false `NOT_FOUND`. Silent exclusion is how a dropped proviso reaches a
+filing — the excluded section exists to be READ before the appendix is filed.
+
+### Side defaults to `pro` — the appendix is for us
+
+`--side pro` (the default) is the appendix that goes in the filing. `--side con` is for internal
+review documents the drafter labels as such. There is no `--side both` on purpose — an appendix
+mixing pro and con pasted into the filing would arm the adjudicator with the strongest cons.
+`any` is deliberately named `any` (a weaker word, less inviting) and requires the caller to type
+it.
+
+### Exit codes
+
+- `0` — appendix built, nothing excluded.
+- `1` (with `--strict`) — entries were excluded by fresh verification.
+- `3` — no bank has any entry on the requested side.
+
+### Deliberately out of scope
+
+- Package passport (`package_check` in AOS): deferred to when multi-round deliveries exist.
+- Delivery diff (`pkg_diff`): same reason.
+- PDF generation: the appendix is markdown; a hand tool or the filing builder renders it.
+
+---
+
+## fetch-precedent — prove the download is the one you meant (0.15.0)
+
+`krokai/precedent.py` — `krokai fetch-precedent <URL> --party X --subject Y --court Z`.
+
+An assistant asked to save the `Matter of Smith` decision saved a *different* Smith with a
+different disposition — same reporter volume, wrong file. Every step of the pipeline said
+VERIFIED. The URL was correct, the anchor text plausible, the file name reasonable, the byte
+hash stable across days. Only READING the extracted text catches it.
+
+### The check, in one paragraph
+
+`fetch-precedent` wraps `fetch_url` and, before the file is kept, extracts the text with
+`read_any` and requires three tokens to be present in the head of the extracted text:
+
+- `--party`   — the applicant or petitioner's name, ideally as a distinctive fragment
+             (`Smith, 12 I&N Dec. 205` is safer than `Smith`; a bare surname collides between
+             cases);
+- `--subject` — the legal issue the opinion decides (e.g. `adjustment of status`, `removal
+             proceedings`, `hardship waiver`);
+- `--court`   — the deciding body (`BIA`, `AAO`, `Board of Immigration Appeals`,
+             `Ninth Circuit`, `Supreme Court`).
+
+If any of the three is missing, the download is **deleted from the inbox immediately** and the
+command exits non-zero with the list of missing criteria. There is no `--force` flag: a file
+that lands in the precedents folder becomes a primary source, and forcing a wrong one in is the
+failure this module exists to catch.
+
+### Case-insensitive, whitespace-collapsed, first 200 KB
+
+- CI so `BIA` and `bia` and `Bia` all match. Legal PDFs vary.
+- Whitespace collapsed so a line break inside the party name does not defeat the match.
+- Only the first 200 KB of extracted text are searched. A precedent's caption, court and issue
+  live in the head of the document; matches past 200 KB have a much higher rate of coincidence
+  (a footnote citing another case, a later case citing this one). Measured in the sister
+  project: two false positives out of the six precedents in the R32 delivery both matched on
+  footnote citations 30 pages in.
+
+### Exit codes
+
+- `0` — verified and saved to `<matter>/precedents/`.
+- `2` — empty criterion (a caller from Python passed an empty string; the CLI already refuses).
+- `3` — download refused (host classifier, HTTP, empty body).
+- `4` — extraction failed (no text layer, missing engine, corrupt file).
+- `5` — criteria not found in the head window.
+
+### What lands on disk when it works
+
+The verified precedent is moved from the inbox into `<matter>/precedents/` (override with
+`--into`) and its `.meta.json` gains a `verified_criteria` block:
+
+```json
+{
+  "party": "Smith, 12 I&N Dec. 205",
+  "subject": "adjustment of status",
+  "court": "Board of Immigration Appeals",
+  "verified_at": "2026-09-01T14:22:03",
+  "search_head_bytes": 200000
+}
+```
+
+A later reader can see what the file was checked against without opening a log.
+
+---
+
 ## coverage
 
 `krokai/coverage.py` — bank ↔ draft: mines, unapplied entries, paraphrases, missing pieces.

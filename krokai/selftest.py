@@ -4432,6 +4432,313 @@ def suite_r79_phase3(tmp):
        getattr(parsed, "probe_sites", False) is True)
 
 
+def suite_r79_phase4(tmp):
+    """R79 (Ф4): the petition layer.
+
+    `krokai appendix <bank>` builds the legal appendix from banked entries with a FRESH
+    ``check()`` at build time; every entry whose fresh verdict is not clean lands in an
+    EXCLUDED section that names the verdict. `krokai fetch-precedent <URL> --party X
+    --subject Y --court Z` downloads a decision AND requires those three tokens to appear
+    in the head of the extracted text before the file is kept - measured in the sister
+    project, an assistant asked to save `Matter of Smith` saved "another Smith" with a
+    different disposition; nothing in the URL or the file name distinguished them.
+
+    Nothing here touches the network. The fetch_precedent surface is covered mechanically
+    (``verify_criteria`` on synthetic text) - the network path is what ``doctor
+    --probe-sites`` handles for real.
+    """
+    import contextlib
+    from krokai.cli import main as cli_main
+    from krokai import precedent, appendix
+    from krokai.config import TEMPLATE, CONFIG_NAME
+
+    def run(argv):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cli_main(argv)
+        return rc, buf.getvalue()
+
+    # ------------------------------------------------------------------------- verify_criteria
+    # The mechanical head of `fetch_precedent`. Its shape is the specification of the check:
+    # case-insensitive, whitespace-collapsed, head window only. Every one of these axes was a
+    # measured failure mode of hand-rolled precedent verification.
+    body = ("Matter of Smith, 12 I&N Dec. 205\n"
+            "Board of Immigration Appeals, September 1966\n\n"
+            "This case concerns adjustment of status of the applicant.")
+
+    ok_flag, missing = precedent.verify_criteria(
+        body, party="Smith, 12 I&N Dec. 205",
+        subject="adjustment of status", court="Board of Immigration Appeals")
+    ok("r79.4 verify_criteria: all three tokens present -> ok, no missing",
+       ok_flag is True and missing == [])
+
+    ok_flag, missing = precedent.verify_criteria(
+        body, party="Jones, 99 I&N Dec. 1",
+        subject="adjustment of status", court="Board of Immigration Appeals")
+    ok("r79.4 verify_criteria: wrong party -> not ok, party in missing",
+       ok_flag is False and any(label == "party" for label, _v in missing))
+
+    ok_flag, missing = precedent.verify_criteria(
+        body, party="Smith, 12 I&N Dec. 205",
+        subject="removal proceedings",  # not the subject the opinion actually decides
+        court="Board of Immigration Appeals")
+    ok("r79.4 verify_criteria: wrong subject -> not ok, subject in missing",
+       ok_flag is False and any(label == "subject" for label, _v in missing))
+
+    ok_flag, missing = precedent.verify_criteria(
+        body, party="Smith, 12 I&N Dec. 205",
+        subject="adjustment of status", court="Supreme Court")
+    ok("r79.4 verify_criteria: wrong court -> not ok, court in missing",
+       ok_flag is False and any(label == "court" for label, _v in missing))
+
+    # Case-insensitive: the caption is often uppercased.
+    ok_flag, _m = precedent.verify_criteria(
+        body.upper(), party="smith, 12 i&n dec. 205",
+        subject="adjustment of status", court="board of immigration appeals")
+    ok("r79.4 verify_criteria is case-insensitive on both sides",
+       ok_flag is True)
+
+    # Whitespace-collapsed: a line break inside the party name must not defeat the match.
+    wrapped = "Matter of\nSmith,\n12 I&N Dec. 205\n\n"
+    ok_flag, _m = precedent.verify_criteria(
+        wrapped + body, party="Smith, 12 I&N Dec. 205",
+        subject="adjustment of status", court="Board of Immigration Appeals")
+    ok("r79.4 verify_criteria collapses whitespace: wrapped caption still matches",
+       ok_flag is True)
+
+    # Empty criterion is refused - a caller who slipped an empty string past the CLI would
+    # otherwise match everywhere and get a bogus green.
+    ok_flag, missing = precedent.verify_criteria(
+        body, party="", subject="adjustment of status",
+        court="Board of Immigration Appeals")
+    ok("r79.4 verify_criteria: empty party -> not ok (empty string is not a match)",
+       ok_flag is False)
+
+    # Head window is enforced. A token appearing PAST the head window must NOT satisfy the
+    # criterion - a footnote 40 pages in citing another case with the same name is exactly the
+    # false-positive shape this window exists to defeat.
+    tail = "\n\n" + ("XXX filler line. " * 20000) + "\n\nAAO decision"
+    ok_flag, missing = precedent.verify_criteria(
+        "Some other body text with none of the tokens." + tail,
+        party="AAO decision", subject="AAO decision", court="AAO decision")
+    ok("r79.4 verify_criteria: match past 200 KB does NOT satisfy - head window is enforced",
+       ok_flag is False)
+
+    ok("r79.4 SEARCH_HEAD_BYTES is the documented 200 KB (200_000)",
+       precedent.SEARCH_HEAD_BYTES == 200_000)
+
+    # ------------------------------------------------------------------------- appendix module
+    # `group_of_key` maps every coverage key kind to an appendix group; unknown kinds land in
+    # `other` rather than getting dropped. Every kind in `GROUP_ORDER` must map to itself.
+    for kind, _label in appendix.GROUP_ORDER:
+        if kind == "other":
+            continue
+        ok("r79.4 group_of_key: %s maps to %s" % (kind, kind),
+           appendix.group_of_key((kind, "8", "214")) == kind)
+    ok("r79.4 group_of_key: unknown kind -> other (never dropped)",
+       appendix.group_of_key(("fam", "9", "302")) == "other")
+    ok("r79.4 group_of_key: None/empty -> other",
+       appendix.group_of_key(None) == "other" and appendix.group_of_key(()) == "other")
+
+    ok("r79.4 SIDE_LABEL covers pro and con",
+       "pro" in appendix.SIDE_LABEL and "con" in appendix.SIDE_LABEL)
+
+    # ------------------------------------------------------------------------- build_appendix e2e
+    # Build a small matter with a bank of three entries:
+    # §P-1 - address on disk, quotation exact -> INCLUDED
+    # §P-2 - address on disk, quotation fabricated -> EXCLUDED
+    # §C-1 - "against us" side, must NOT appear when side=pro (default)
+    matter = os.path.join(tmp, "r79p4-matter")
+    law = os.path.join(matter, "law")
+    case = os.path.join(matter, "case")
+    for d in (law, case):
+        os.makedirs(d, exist_ok=True)
+    import json as _json
+    _json.dump(TEMPLATE, io.open(os.path.join(matter, CONFIG_NAME), "w", encoding="utf-8"))
+
+    # A small primary source with two quotable sentences.
+    io.open(os.path.join(law, "8usc-1255.xml"), "w", encoding="utf-8").write(
+        "No application may be denied solely because the applicant made a late filing of the "
+        "underlying nonimmigrant status extension. The Secretary retains discretion to consider "
+        "each application on its individual merits.")
+    io.open(os.path.join(law, "8CFR-214-2.xml"), "w", encoding="utf-8").write(
+        "The district director may consider reinstating a student who makes a request for "
+        "reinstatement, but do not include instances where a pattern of repeated violations "
+        "has occurred.")
+
+    bank_text = """# Quote bank
+
+## For us
+
+### §P-1 Late filing safe harbour
+> No application may be denied solely because the applicant made a late filing of the underlying nonimmigrant status extension.
+
+| | |
+|---|---|
+| **Address** | 8 U.S.C. § 1255(k) |
+| **On disk** | `8usc-1255.xml` |
+| **Verified** | igor, 2026-09-01 |
+| **Used in** | brief |
+| **What this does NOT prove** | Not for over-180 unlawful presence. |
+
+### §P-2 Something we made up
+> This sentence appears in no primary source at all and cannot verify.
+
+| | |
+|---|---|
+| **Address** | 8 U.S.C. § 9999(z) |
+| **On disk** | `nowhere.xml` |
+| **Verified** | igor, 2026-09-01 |
+| **Used in** | test |
+| **What this does NOT prove** | Test entry, not real. |
+
+## Against us
+
+### §C-1 A mine
+> The district director may consider reinstating a student who makes a request for reinstatement, but do not include instances where a pattern of repeated violations has occurred.
+
+| | |
+|---|---|
+| **Address** | 8 CFR 214.2(f)(16) |
+| **On disk** | `8CFR-214-2.xml` |
+| **Verified** | igor, 2026-09-01 |
+| **Used in** | none |
+| **What this does NOT prove** | Only about F-1. |
+"""
+    io.open(os.path.join(case, "QUOTE-BANK.md"), "w", encoding="utf-8", newline="\n").write(
+        bank_text)
+
+    # ------------------------------------------------------------------------- default side=pro
+    from krokai.config import load
+    from krokai.run import corpus_for
+    from krokai.citations import load_packs
+    cfg = load(matter)
+    corpus = corpus_for(cfg, quiet=True)
+    packs = load_packs(cfg["citation_packs"])
+    md, stats = appendix.build_appendix(
+        [cfg.abs(cfg["bank"])], corpus, packs, cfg=cfg, side="pro")
+    ok("r79.4 build_appendix returns text + stats",
+       md is not None and isinstance(stats, dict))
+    ok("r79.4 build_appendix: §P-1 (verified) is INCLUDED under For us",
+       stats["included"] >= 1 and "§P-1" in md and "Late filing safe harbour" in md)
+    ok("r79.4 build_appendix: §P-2 (unverifiable) is EXCLUDED, not silently dropped",
+       stats["excluded"] >= 1 and "§P-2" in md and "EXCLUDED" in md)
+    ok("r79.4 build_appendix: excluded section names the verdict",
+       "NOT" in md and "Excluded from build" in md)
+    ok("r79.4 build_appendix: side=pro EXCLUDES §C-1 (against us)",
+       "§C-1" not in md)
+    ok("r79.4 build_appendix: header names fresh verification at build time",
+       "re-verified against the corpus at build time" in md
+       and "RE-RUNS `check`" in md)
+    ok("r79.4 build_appendix stats carry by_verdict counts",
+       isinstance(stats.get("by_verdict"), dict) and len(stats["by_verdict"]) >= 1)
+    ok("r79.4 build_appendix stats carry built_at timestamp",
+       "built_at" in stats and len(stats["built_at"]) >= 10)
+
+    # ------------------------------------------------------------------------- grouping
+    # §P-1 has address `8 U.S.C. § 1255(k)`, which folds to USC and INA - the entry lands in
+    # ONE group (fine key chosen), and the group heading appears in the output.
+    ok("r79.4 build_appendix: §P-1 rendered under a group heading (USC or INA)",
+       "## United States Code" in md or "## Immigration and Nationality Act" in md)
+
+    # ------------------------------------------------------------------------- side=con
+    md_con, stats_con = appendix.build_appendix(
+        [cfg.abs(cfg["bank"])], corpus, packs, cfg=cfg, side="con")
+    ok("r79.4 build_appendix side=con: §C-1 appears, §P-1 does not",
+       "§C-1" in md_con and "§P-1" not in md_con)
+
+    # ------------------------------------------------------------------------- missing bank file
+    md_bad, stats_bad = appendix.build_appendix(
+        [os.path.join(tmp, "does-not-exist.md")], corpus, packs, cfg=cfg, side="pro")
+    ok("r79.4 build_appendix: missing bank file -> (None, error dict), loud",
+       md_bad is None and stats_bad.get("error") == "bank file missing")
+
+    # ------------------------------------------------------------------------- CLI appendix e2e
+    rc, out = run(["appendix", "--dir", matter, "--side", "pro"])
+    ok("r79.4 CLI appendix: prints the appendix to stdout, exit code sane",
+       rc in (0, 1) and "Legal appendix" in out and "§P-1" in out)
+    ok("r79.4 CLI appendix: names the fresh-build discipline in the header",
+       "re-verified against the corpus at build time" in out)
+
+    # --strict flips the code non-zero when anything was excluded (§P-2 is unverifiable).
+    rc, out = run(["appendix", "--dir", matter, "--side", "pro", "--strict"])
+    ok("r79.4 CLI appendix --strict: exit 1 when entries were excluded",
+       rc == 1)
+
+    # --out writes to a file.
+    outp = os.path.join(matter, "appendix.md")
+    rc, out = run(["appendix", "--dir", matter, "--side", "pro", "--out", outp])
+    ok("r79.4 CLI appendix --out writes the file",
+       rc in (0, 1) and os.path.isfile(outp))
+    written = io.open(outp, encoding="utf-8").read()
+    ok("r79.4 CLI appendix --out file contains the appendix header + §P-1",
+       "Legal appendix" in written and "§P-1" in written)
+
+    # --json prints stats.
+    rc, out = run(["appendix", "--dir", matter, "--side", "pro", "--json"])
+    ok("r79.4 CLI appendix --json includes stats JSON in output",
+       '"included"' in out and '"excluded"' in out)
+
+    # ------------------------------------------------------------------------- CLI argparse
+    from krokai.cli import build_parser
+    ap = build_parser()
+
+    parsed = ap.parse_args(["appendix", "--side", "pro"])
+    ok("r79.4 CLI: appendix parses without banks (defaults to matter bank)",
+       parsed.side == "pro" and parsed.banks == [])
+
+    parsed = ap.parse_args(["appendix", "a.md", "b.md", "--side", "any"])
+    ok("r79.4 CLI: appendix accepts multiple bank files and --side any",
+       parsed.side == "any" and parsed.banks == ["a.md", "b.md"])
+
+    parsed = ap.parse_args([
+        "fetch-precedent", "https://example.gov/opinion.pdf",
+        "--party", "Smith, 12 I&N Dec. 205",
+        "--subject", "adjustment of status",
+        "--court", "Board of Immigration Appeals"])
+    ok("r79.4 CLI: fetch-precedent parses required flags",
+       parsed.url == "https://example.gov/opinion.pdf"
+       and parsed.party.startswith("Smith")
+       and parsed.subject == "adjustment of status"
+       and parsed.court == "Board of Immigration Appeals")
+
+    # --party missing must fail argparse (required)
+    err_buf = io.StringIO()
+    with contextlib.redirect_stderr(err_buf):
+        try:
+            ap.parse_args(["fetch-precedent", "https://example.gov/o.pdf",
+                           "--subject", "s", "--court", "c"])
+            missing_ok = False
+        except SystemExit:
+            missing_ok = True
+    ok("r79.4 CLI: fetch-precedent refuses missing --party",
+       missing_ok is True)
+
+    # ------------------------------------------------------------------------- no side=both
+    # A caller must not be able to spell 'both' - the appendix that mixes pro and con would
+    # arm the adjudicator with the strongest cons if pasted into the filing. `any` is
+    # deliberately named 'any' (weaker word, less inviting) and no shortcut spells the union.
+    err_buf = io.StringIO()
+    with contextlib.redirect_stderr(err_buf):
+        try:
+            ap.parse_args(["appendix", "--side", "both"])
+            bad_side_ok = False
+        except SystemExit:
+            bad_side_ok = True
+    ok("r79.4 CLI: appendix refuses --side both (only pro/con/any)",
+       bad_side_ok is True)
+
+    # ------------------------------------------------------------------------- no build for empty
+    # An empty bank must not silently build an empty appendix; that would read as "nothing
+    # to worry about" when nothing has been analysed. Loud error, non-zero code.
+    empty_bank = os.path.join(tmp, "r79p4-empty-bank.md")
+    io.open(empty_bank, "w", encoding="utf-8").write("# Quote bank\n\n## For us\n\n## Against us\n")
+    md_e, stats_e = appendix.build_appendix(
+        [empty_bank], corpus, packs, cfg=cfg, side="pro")
+    ok("r79.4 build_appendix: empty bank -> (None, error dict), never a fake-clean file",
+       md_e is None and stats_e.get("error") == "no entries")
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if root not in sys.path:
@@ -4454,6 +4761,7 @@ def main():
         suite_r79(tmp)
         suite_r79_phase2(tmp)
         suite_r79_phase3(tmp)
+        suite_r79_phase4(tmp)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)

@@ -450,6 +450,92 @@ def cmd_coverage(a):
     return 0
 
 
+# ------------------------------------------------------------------------------- appendix
+def cmd_appendix(a):
+    """Build the legal appendix ("Нормативная база") from banked entries.
+
+    Every entry runs a FRESH `check()` against the current corpus at build time. Included
+    entries land under their group heading (CFR / USC / INA / ...); everything else lands in
+    an EXCLUDED section that names the fresh verdict. Silence is what turns a dropped
+    proviso into a filing defect - the excluded section is what the drafter reads before
+    filing.
+    """
+    from .config import load
+    from .run import corpus_for
+    from .citations import load_packs
+    from .appendix import build_appendix
+
+    cfg = load(a.dir)
+    corpus = corpus_for(cfg, quiet=True)
+    packs = load_packs(cfg["citation_packs"])
+
+    # Default bank list: the matter's own bank. Explicit files win. Both paths accept a
+    # list, so `krokai appendix a.md b.md` combines them - useful when a matter carries
+    # side-specific files.
+    banks = a.banks or [cfg.abs(cfg["bank"])]
+    banks = [os.path.abspath(p) for p in banks]
+
+    md, stats = build_appendix(banks, corpus, packs, cfg=cfg, side=a.side)
+    if md is None:
+        # `build_appendix` already printed the specific error.
+        return 3
+
+    if a.out:
+        out_path = os.path.abspath(a.out)
+        os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+        io.open(out_path, "w", encoding="utf-8", newline="\n").write(md)
+        print("appendix -> %s (%d chars, %d included, %d excluded)"
+              % (out_path, len(md), stats["included"], stats["excluded"]))
+    else:
+        sys.stdout.write(md)
+        print("")
+        print("=== summary ===")
+        print("included: %d · excluded: %d · side: %s"
+              % (stats["included"], stats["excluded"], stats["side"]))
+
+    if a.json:
+        print("")
+        print(json.dumps(stats, ensure_ascii=False, indent=2))
+
+    # 🔴 Exit codes: 0 clean (nothing excluded), 1 excluded entries present (yellow - the
+    # appendix built, some entries did not qualify), 3 no bank at all. A hook needs to gate
+    # differently on "some entries dropped" vs "no bank" - a fresh matter has neither by
+    # construction and both would otherwise read as 0.
+    if a.strict and stats["excluded"]:
+        return 1
+    return 0
+
+
+# --------------------------------------------------------------------- fetch-precedent
+def cmd_fetch_precedent(a):
+    """Download a precedent AND prove it names the party, subject and court you asked for.
+
+    An assistant asked to save `Matter of Smith` may save another Smith from the same
+    reporter volume - measured, in a real matter (AOS R79 study §5). The URL, the anchor
+    text, the file name and the byte hash all read "fine". Only READING THE DOWNLOADED TEXT
+    catches it, and this command requires three tokens to appear in the head of the file
+    before it agrees to keep the download.
+    """
+    from .config import load
+    from .citations import load_packs
+    from .precedent import fetch_precedent
+
+    cfg = load(a.dir)
+    packs = load_packs(cfg["citation_packs"])
+    ok, dest, meta_or_reason = fetch_precedent(
+        a.url, party=a.party, subject=a.subject, court=a.court,
+        root=cfg.root, cfg=cfg, packs=packs, dest_dir=a.into,
+        allow_unknown=a.allow_unknown_source, timeout=a.timeout)
+    if ok:
+        return 0
+    # Distinct codes for the three failure stages: 2 = refuse/empty criterion,
+    # 3 = download refused (host, HTTP), 4 = extraction failed, 5 = criteria not found.
+    # A wrong-file precedent is a different alarm than a network refusal; a hook needs
+    # both to be distinguishable.
+    stage = (meta_or_reason or {}).get("stage")
+    return {"refuse": 2, "fetch": 3, "read": 4, "verify": 5}.get(stage, 1)
+
+
 # ------------------------------------------------------------------------------- sidecar
 def cmd_sidecar(a):
     from .config import load
@@ -1343,6 +1429,40 @@ def build_parser():
     q.add_argument("--why", required=True, help="why the matter does not need this quotation")
     q.add_argument("--apply", action="store_true", help="write; without it: a dry-run")
     q.set_defaults(fn=cmd_bank_dismiss)
+
+    p = common(sub.add_parser(
+        "appendix",
+        help="build the legal appendix from banked entries with FRESH verification"))
+    p.add_argument("banks", nargs="*", metavar="BANK",
+                   help="bank file(s); default: the matter's own bank")
+    p.add_argument("--side", choices=("pro", "con", "any"), default="pro",
+                   help="which side to include (default: pro - the appendix that goes in the "
+                        "filing). Use 'con' only for internal review documents you label as "
+                        "such; 'any' is deliberately not the default")
+    p.add_argument("--out", "-o", help="write the appendix to this file (default: stdout)")
+    p.add_argument("--json", action="store_true",
+                   help="also print the build stats as JSON (for a hook or CI)")
+    p.add_argument("--strict", action="store_true",
+                   help="exit non-zero (1) when any entry was excluded by fresh verification")
+    p.set_defaults(fn=cmd_appendix)
+
+    p = common(sub.add_parser(
+        "fetch-precedent",
+        help="download a court decision AND prove it names the party, subject and court"))
+    p.add_argument("url", help="URL of the decision (PDF, HTML - anything read_any can read)")
+    p.add_argument("--party", required=True, metavar="TEXT",
+                   help="the applicant/petitioner name or a distinctive fragment; a bare "
+                        "surname collides between cases - prefer 'Smith, 12 I&N Dec. 205'")
+    p.add_argument("--subject", required=True, metavar="TEXT",
+                   help="the legal issue the opinion decides (e.g. 'adjustment of status')")
+    p.add_argument("--court", required=True, metavar="TEXT",
+                   help="the deciding body ('BIA', 'AAO', 'Ninth Circuit', 'Supreme Court')")
+    p.add_argument("--into", metavar="DIR",
+                   help="destination folder for successful writes (default: <matter>/precedents)")
+    p.add_argument("--allow-unknown-source", action="store_true",
+                   help="the host is not on any list this tool knows; you have looked at it")
+    p.add_argument("--timeout", type=int, default=45)
+    p.set_defaults(fn=cmd_fetch_precedent)
 
     p = common(sub.add_parser("sidecar", help="extract PDF text next to each PDF so grep sees it"))
     p.add_argument("--force", action="store_true")

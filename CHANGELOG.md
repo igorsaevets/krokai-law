@@ -10,6 +10,60 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.15.0] - 2026-09-01
+
+The petition layer. Two commands that turn the bank into a filing and turn a downloaded precedent
+into proof that the download is the one you meant. Every step measured against a failure mode
+paid for in the sister project - an appendix hand-compiled from stale memory instead of the
+current corpus, and a `Matter of Smith` opinion that was actually a different Smith with a
+different disposition. String equality on the file name said VERIFIED both times.
+
+### Added
+- **`krokai appendix [<bank>...] [--side pro|con|any]`** builds the legal appendix ("Нормативная
+  база") from banked entries with a FRESH `check()` at build time. Every entry re-verified against
+  the current corpus, right now - no cache, no "was VERIFIED yesterday" shortcut. Included entries
+  are grouped by kind (CFR / USC / INA / Public Law / Federal Register / USCIS Policy Manual /
+  other); every excluded entry lands in a loud EXCLUDED section that names the fresh verdict and
+  points at the six causes of a false `NOT_FOUND`. Silence is what turns a dropped proviso into a
+  filing defect, so exclusion is named, never silent. Default `--side pro` (the appendix that goes
+  in the filing); `--side con` is for internal review documents the drafter labels as such; there
+  is no `--side both` on purpose. Exit codes: 0 clean, 1 with `--strict` when anything was
+  excluded, 3 when no bank has any entry. `--out FILE`, `--json` for the stats, `--strict` for CI.
+- **`krokai fetch-precedent <URL> --party X --subject Y --court Z`** downloads a court decision
+  AND requires the party, subject and court tokens to appear in the first 200 KB of extracted text
+  before the file is kept. Any missing token means the download is deleted from the inbox
+  immediately - a wrong file sitting in the inbox becomes an `intake` candidate at the next round.
+  Case-insensitive and whitespace-collapsed, so a wrapped caption still matches. Successful writes
+  land in `<matter>/precedents/` (override with `--into`) and stamp
+  `verified_criteria: {party, subject, court, verified_at, search_head_bytes}` into the
+  `.meta.json` so a later reader can see what the file was checked against. Distinct exit codes
+  per failure stage: 2 = empty criterion, 3 = download refused, 4 = extraction failed,
+  5 = criteria not found. No `--force` flag by design.
+
+### Why this matters (measured, not asserted)
+- **The appendix a filing carries had to be built from what is on disk NOW.** The sister project
+  measured 8 CFR 245 replace "alien" with "noncitizen" between the round the bank was written and
+  the round the filing was due - 32 sentences gone, and every affected quotation would have come
+  back `NOT_FOUND` correctly quoted and unverifiable. A hand-compiled appendix does not notice a
+  revision; this one does, because every rebuild re-runs `check`.
+- **`Matter of Smith` opened as "another Smith".** The URL was correct, the file name reasonable,
+  the byte hash stable across days. Only reading the extracted text catches it - and reading it
+  MUST happen before the file lands in the precedents folder, or the next `intake` accepts a wrong
+  primary source. That is what this command's refusal is for. There is no `--force` because the
+  wrong-file failure has no benign shape.
+
+### Fixed
+- (nothing regressed from 0.14.0; the release is additive.)
+
+### Notes
+- Design record: `legal-toolkit/r79-aos-functionality-study.md` §5-6 (AOS `appendix_gen` and
+  `fetch_precedent` as models), §8 G-F, §9 (plan), §12 C-6 (Ф4 delta - `package_check`,
+  `pkg_diff` and `delivery_diff` deliberately deferred to when multi-round deliveries exist).
+- New module count: two (`krokai/appendix.py`, `krokai/precedent.py`). Selftest suite gains
+  `suite_r79_phase4` (43 pins) covering `verify_criteria` axes (case, whitespace, head window),
+  `build_appendix` end-to-end (included / excluded / grouped / side filter / missing bank),
+  and the CLI argparse contract for both commands.
+
 ## [0.14.0] - 2026-09-01
 
 The push half of "found a hole → know what to do". Naming a `NOT_FOUND` or a missing bank source
