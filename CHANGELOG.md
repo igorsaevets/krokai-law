@@ -10,6 +10,58 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.14.0] - 2026-09-01
+
+The push half of "found a hole → know what to do". Naming a `NOT_FOUND` or a missing bank source
+is half of the answer; the other half is *how to fetch that specific source*. Until now the
+assistant reading the ladder under `NOT_FOUND` was on its own for the URL - and an assistant
+that has to hunt for a URL either invents one or gives up. Measured in the sister project: two
+rounds in a row lost because the assistant "did not know where to download from". This release
+hands over the exact command, for every citation kind whose publisher has a stable
+request-level URL, and says browser-only for the ones that do not - the honest split rather
+than an invented URL for a 403 site.
+
+### Added
+- **`krokai library --suggest-fetches`** - for every banked entry whose source is not on disk,
+  print the ready-to-run `krokai fetch <URL>` command. Implies `--bank`. Address kinds with a
+  stable URL (`usc`, `fr`, `publaw`, `cfr`) print the command; kinds behind an anti-bot layer
+  (USCIS PM, policy memoranda, FAM) print a yellow caveat naming the specific site behaviour
+  and the browser-plus-`intake` fallback. No invented URLs.
+- **`krokai quote` prints the fetch command under `NOT_FOUND`.** The first cause on the ladder
+  is "the source was never downloaded" - and the tool has the information to name the exact
+  command. Only fires when a recognised citation sits next to the quotation and its kind has a
+  stable URL; silence is correct otherwise. Capped at three commands per quotation so it does
+  not become a wall.
+- **`krokai doctor --probe-sites`** - opt-in, off by default. The ONLY doctor knob that touches
+  the network. One request each to the four known-good URLs (govinfo/uscode, govinfo/fr,
+  govinfo/plaw, eCFR versioner API) and the bonus lookup of `latest_issue_date` for title 8 -
+  the value the `cfr` suggester's `{DATE}` placeholder needs. Prints status codes and redirects;
+  never changes the doctor's exit code because a live probe that flips a status line teaches
+  the reader to skip the probe.
+- **`SITE-ACCESS.md` in the matter root, created by `krokai init`.** A per-matter record of
+  which official publishers are reachable and which are behind an anti-bot layer, with the
+  known-good URL forms measured against reality on 2026-09-01. Meant to be updated: the first
+  time you hit a wall, add a row so the next round does not spend time on it. Never
+  overwritten by re-running init (a matter with notes here has paid for them).
+- **`krokai/suggest.py`** - the new module. `suggest_for_key(key)` returns a `FetchSuggestion`
+  with the URL, the command, a one-sentence note and a machine-readable `caveat`
+  (`requires_date` / `browser_only` / None). Six kinds handled: `usc`, `ina` (routes through
+  its USC twin), `fr`, `publaw`, `cfr` (URL carries `{DATE}` placeholder plus a note), `pm`
+  (browser-only), `pmnum` (browser-only). Kinds not in the table return None so a caller can
+  fall through silently - the alternative would be to invent a URL, and this module exists to
+  prevent exactly that.
+
+### Notes
+- **Every URL template was measured, not guessed.** `_uscode`, `_fr` and `_publaw` all returned
+  a document to plain `requests` on 2026-09-01; `_cfr` requires the eCFR versioner API's date
+  because the browser interface redirects to `unblock.federalregister.gov` (measured); `_pm`
+  and `_pmnum` return 403 (measured). Kinds without a stable request-level URL are named as
+  browser-only rather than papered over with a plausible URL.
+- **`library.RECIPES` and `suggest.template_for(...)` are kept in sync on purpose.** The
+  library page is the human-facing recipe list; the suggest table is the machine-facing one.
+  A divergence would be a defect the self-test names, and one place values were copied out of
+  the other is exactly the two-homes-for-one-subject rot the toolkit measures elsewhere.
+
 ## [0.13.0] - 2026-09-01
 
 The coverage layer. `krokai check` and its address fold answer *"are these words really in the

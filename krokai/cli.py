@@ -187,6 +187,20 @@ def cmd_init(a):
             io.open(p, "w", encoding="utf-8", newline="\n").write(header)
             made.append(rel)
 
+    # Site-access map (R79-F3). A per-matter record of which publishers this environment can
+    # reach, in the matter root (not law/, which is primary sources only) so a human sees it
+    # from the shell. Never overwritten: a matter that ran through walls already has notes here
+    # and this init is not authorised to lose them.
+    sa_path = os.path.join(root, "SITE-ACCESS.md")
+    if not os.path.exists(sa_path):
+        try:
+            tpl = io.open(data_file("templates/SITE-ACCESS.md"), encoding="utf-8").read()
+        except OSError:
+            tpl = ""                                       # ship-time contract; degrade gracefully
+        if tpl:
+            io.open(sa_path, "w", encoding="utf-8", newline="\n").write(tpl)
+            made.append("SITE-ACCESS.md")
+
     if not getattr(a, "no_claude_md", False):
         target, action = write_claude_block(root)
         made.append("%s (assistant block %s)" % (os.path.basename(target), action))
@@ -303,6 +317,33 @@ def cmd_quote(a):
         for i, cause in enumerate(SIX_CAUSES, 1):
             print(textwrap.fill(cause, width=96, initial_indent="     %d. " % i,
                                 subsequent_indent="        "))
+
+        # 🔴 R79-F3 (G-E): the FIRST cause is "the source was never downloaded" - and the
+        # toolkit has the information to name the exact command. Only fire when a citation is
+        # actually next to the quotation AND its address kind has a stable URL (usc, fr,
+        # publaw, cfr). Kinds without a stable request-level URL (USCIS PM, FAM) are skipped
+        # here so the block does not become noise; those still print through the caveat when
+        # `library --suggest-fetches` runs. Silence is correct when nothing new can be added.
+        from .citations import load_packs
+        from .suggest import suggest_for_key
+        try:
+            packs = load_packs(cfg["citation_packs"])
+            cite_keys = packs.keys(packs.find(text))
+        except Exception:                                                # noqa: BLE001
+            cite_keys = set()
+        printed = 0
+        for key in sorted(cite_keys):
+            s = suggest_for_key(key)
+            if not s or not s.command:
+                continue
+            if printed == 0:
+                print("\n     💡 If cause 1 fits, the ready-to-run command is:")
+            print("        %s" % s.command)
+            if s.caveat == "requires_date":
+                print("        (replace {DATE} first — see SITE-ACCESS.md)")
+            printed += 1
+            if printed >= 3:                              # a busy quotation stops printing walls
+                break
     return 0 if verdict == "VERIFIED" else 1
 
 
@@ -443,7 +484,10 @@ def cmd_library(a):
         print("\nAn unindexed source gets downloaded again next round, and its absence turns an "
               "honest quotation into a NOT_FOUND that reads like a fabrication.")
 
-    if getattr(a, "bank", False):
+    # --suggest-fetches implies --bank (a suggestion is FOR a missing entry, and the list of
+    # missing entries is what --bank produces). The extra print at the end is the whole point.
+    want_suggest = getattr(a, "suggest_fetches", False)
+    if getattr(a, "bank", False) or want_suggest:
         # Corpus <-> bank inventory (G-D). The other side of the same "what is not connected"
         # question: index counts what is on disk, bank counts what the matter has actually
         # decided about. A file downloaded and never analysed is a rule the matter has yet to
@@ -476,6 +520,43 @@ def cmd_library(a):
                  "y" if len(inv["missing_for_bank"]) == 1 else "ies"))
         for m in inv["missing_for_bank"][:20]:
             print("     %s  (%s)" % (m["id"], m["address"]))
+
+        if want_suggest:
+            # 🔴 R79-F3 (G-E): for every missing entry, print the ready-to-run download command
+            # when the address kind has one, or the browser-only caveat when it does not. The
+            # split is honest by construction - a suggest that hands out an invented URL for a
+            # 403 site would be the fabrication shape this toolkit exists to catch, one level
+            # up. Address strings are re-parsed through the packs (coarse keys - the fetch
+            # question is "which file could hold this rule", not "which paragraph").
+            from .suggest import suggest_for_key
+            print("\nsuggested downloads for the %d missing entr%s:"
+                  % (len(inv["missing_for_bank"]),
+                     "y" if len(inv["missing_for_bank"]) == 1 else "ies"))
+            if not inv["missing_for_bank"]:
+                print("  (nothing to suggest - every banked address has a file on disk)")
+            for m in inv["missing_for_bank"]:
+                addr = m["address"]
+                keys = packs.keys([addr]) if addr else set()
+                shown = 0
+                for key in sorted(keys):
+                    s = suggest_for_key(key)
+                    if not s:
+                        continue
+                    if s.command:
+                        print("  %s  %s" % (m["id"], addr))
+                        print("      %s" % s.command)
+                        if s.caveat == "requires_date":
+                            print("      note: replace {DATE} first — see SITE-ACCESS.md, "
+                                  "or `krokai doctor --probe-sites` prints today's date")
+                    else:
+                        print("  %s  %s" % (m["id"], addr))
+                        print("      🟡 %s" % s.note)
+                    shown += 1
+                    break                                  # one suggestion per entry is enough
+                if not shown and addr:
+                    print("  %s  %s" % (m["id"], addr))
+                    print("      (no suggester for this address kind - open the publisher's "
+                          "site in a browser and save the source)")
     return 0
 
 
@@ -986,10 +1067,70 @@ def cmd_doctor(a):
 
     print()
     ok = self_test(printer=lambda s: print("   " + s))
+
+    # --probe-sites (R79-F3): the ONLY doctor knob that touches the network, opt-in and off by
+    # default. One request each to the four known-good publishers, so the same table the
+    # SITE-ACCESS.md template lists is measured against reality here. `requests` failures print
+    # the exception verbatim - a doctor is meant to be loud about what it saw.
+    if getattr(a, "probe_sites", False):
+        _probe_sites()
+
     # 🔴 The status line and the exit code must agree. Measured elsewhere: a doctor printed READY
     # and exited 1, which teaches people to ignore both.
     print("\nSTATUS: %s" % ("READY" if ok and cfg_path else "INCOMPLETE"))
     return 0 if (ok and cfg_path) else 1
+
+
+def _probe_sites():
+    """Live probe of the four publisher URLs the suggest layer prints commands for. Never
+    fails the doctor - a probe that flips the exit code teaches you to skip the probe. It
+    prints the status line and the reader decides.
+    """
+    print("\nlive publisher probes (opt-in; hits the network once per row):")
+    try:
+        import requests
+    except ImportError:
+        print("   `requests` not installed - skipping. `pip install requests`.")
+        return
+    ua = ("krokai-law (+https://github.com/igorsaevets/krokai-law) "
+          "doctor --probe-sites")
+    probes = [
+        ("govinfo/uscode",
+         "https://www.govinfo.gov/link/uscode/8/1101?link-type=html"),
+        ("govinfo/fr",
+         "https://www.govinfo.gov/link/fr/91/45324?link-type=html"),
+        ("govinfo/plaw",
+         "https://www.govinfo.gov/link/plaw/107/public/56?link-type=html"),
+        ("ecfr/api",
+         "https://www.ecfr.gov/api/versioner/v1/titles.json"),
+    ]
+    for label, url in probes:
+        try:
+            r = requests.get(url, timeout=15, allow_redirects=True,
+                             headers={"User-Agent": ua})
+            note = "%d, %d bytes" % (r.status_code, len(r.content or b""))
+            if r.url and r.url != url:
+                note += ", -> %s" % r.url[:80]
+            print("   %-16s %s   %s" % (label, "OK " if r.status_code == 200 else "!! ", note))
+        except Exception as exc:                                          # noqa: BLE001
+            print("   %-16s !!    %s: %s" % (label, type(exc).__name__, str(exc)[:120]))
+
+    # Then extract the latest_issue_date for title 8 as a bonus - this is what the CFR
+    # suggester's {DATE} needs, and printing it in the doctor is what makes the placeholder
+    # actionable without a second manual step.
+    try:
+        import json as _json
+        r = requests.get("https://www.ecfr.gov/api/versioner/v1/titles.json", timeout=15,
+                         headers={"User-Agent": ua})
+        if r.status_code == 200:
+            data = _json.loads(r.content.decode("utf-8", "replace"))
+            for row in (data.get("titles") or []):
+                if str(row.get("number")) == "8":
+                    d = row.get("latest_issue_date") or "?"
+                    print("   eCFR title 8   latest_issue_date = %s   (use this for {DATE})" % d)
+                    break
+    except Exception:                                                     # noqa: BLE001
+        pass
 
 
 def cmd_packs(a):
@@ -1213,6 +1354,9 @@ def build_parser():
     p.add_argument("--bank", action="store_true",
                    help="also print the corpus <-> bank inventory: what is downloaded and "
                         "not analysed, and what is banked but has no file")
+    p.add_argument("--suggest-fetches", dest="suggest_fetches", action="store_true",
+                   help="for every banked entry with no file on disk, print the ready-to-run "
+                        "download command. Implies --bank")
     p.set_defaults(fn=cmd_library)
 
     p = common(sub.add_parser(
@@ -1294,6 +1438,10 @@ def build_parser():
     p.set_defaults(fn=cmd_close)
 
     p = common(sub.add_parser("doctor", help="what is installed, what is configured, what is missing"))
+    p.add_argument("--probe-sites", dest="probe_sites", action="store_true",
+                   help="hit the four known-good publisher URLs (govinfo x3 + eCFR API) once "
+                        "each and print status codes - the ONLY doctor knob that touches the "
+                        "network, opt-in and off by default")
     p.set_defaults(fn=cmd_doctor)
 
     p = sub.add_parser("keys", help="where API keys go, whether they are set, and how to set one")

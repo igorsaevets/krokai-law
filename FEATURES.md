@@ -617,6 +617,39 @@ the world.
 a fresh matter has holes both ways by construction; gating the round on it would teach people to
 bank noise to make the count go down.
 
+### `library --suggest-fetches` — the push half of "found a hole"
+
+For every banked entry whose source is not on disk, print the ready-to-run
+`krokai fetch <URL>`. Implies `--bank`. Naming the hole is half of the answer; the other half is
+*how to fetch that specific source*, and an assistant that has to hunt for the URL either
+invents one or gives up (measured: two rounds lost in a row because the assistant "did not know
+where to download from").
+
+**Every URL template was measured against the live host on 2026-09-01**, not guessed. Six
+citation kinds are handled:
+
+- **`usc`** — `https://www.govinfo.gov/link/uscode/{title}/{section}?link-type=html`. govinfo's
+  own link service; verified.
+- **`fr`** — `https://www.govinfo.gov/link/fr/{volume}/{page}?link-type=html`. Same service.
+- **`publaw`** — `https://www.govinfo.gov/link/plaw/{congress}/public/{num}?link-type=html`.
+- **`cfr`** — `https://www.ecfr.gov/api/versioner/v1/full/{DATE}/title-{n}.xml?part={part}`.
+  Carries a `{DATE}` placeholder because the browser-facing eCFR site refuses automated fetches
+  and the versioner API needs a date; get today's from
+  `https://www.ecfr.gov/api/versioner/v1/titles.json` or run `krokai doctor --probe-sites`
+  which prints it.
+- **`ina`** — routes through the USC twin (the coverage extractor emits both at parse time).
+- **`pm` / `pmnum`** — **browser-only**. USCIS Policy Manual and policy memoranda return 403
+  Forbidden to plain `requests`. The caveat names the specific site behaviour and the
+  browser-plus-`intake` fallback, rather than inventing a URL that would fail the same way.
+
+Kinds not in the table (FAM, case names, reporter cites) return no suggestion — silence is
+correct when nothing new can be added; the alternative would be to invent a URL, and this
+module exists to prevent exactly that.
+
+The URLs are kept in **one home**: `krokai/suggest.py`. `library.RECIPES` is the human-facing
+recipe list, `suggest.template_for(...)` is the machine-facing one; a self-test pins that both
+point at the same publishing endpoints.
+
 ---
 
 ## coverage

@@ -41,10 +41,16 @@ the round — and three things are checked, not one:
 {KROKAI} check                        everything, before anything is filed
 {KROKAI} bank add                     bank a quotation - SLICED from the source, never typed
 {KROKAI} coverage <draft>             bank <-> draft: mines, unapplied, paraphrases
+{KROKAI} library --suggest-fetches    for every missing source, the ready-to-run fetch command
 {KROKAI} close                        end of session
 {KROKAI} gate <file>                  before pasting anything into another AI
 {KROKAI} agents                       the full working discipline, on demand
 ```
+
+**When a fetch fails, write it down in `SITE-ACCESS.md`.** That file (in the matter root)
+records which publishers this environment can reach and which are behind an anti-bot layer.
+The first time you hit a `403` or a redirect to `unblock.federalregister.gov`, add a row —
+next round the assistant will know from reading, not from trying.
 
 ### 🔴 `NOT_FOUND` is not `INVENTED` — six causes, in this order
 

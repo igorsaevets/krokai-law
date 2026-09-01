@@ -121,6 +121,17 @@ missing pieces** (an entry with no application boundary will be cited wider than
 Companion: `krokai library --bank` cross-references the corpus with the bank — files
 downloaded and never analysed on one side, bank entries whose source is missing on the other.
 
+**10. Hands you the download command for every missing source.** Naming a `NOT_FOUND` is half
+of the answer; the other half is *how to fetch that specific source*, and an assistant that
+has to hunt for the URL either invents one or gives up. `krokai library --suggest-fetches`
+prints a ready-to-run `krokai fetch <URL>` for every banked entry whose source is not on disk
+— for citation kinds whose publisher has a stable request-level URL (U.S. Code, Federal
+Register, Public Law, eCFR API). For the ones that are behind an anti-bot layer (USCIS Policy
+Manual, policy memoranda) it prints the browser-only fallback rather than inventing a URL.
+`krokai quote` prints the same command under the `NOT_FOUND` ladder when the citation next to
+the quotation names a supported publisher. `SITE-ACCESS.md` in the matter root records which
+publishers this environment can reach, updated the first time a fetch fails.
+
 ---
 
 ## Why a second opinion, and why it is not a separate download

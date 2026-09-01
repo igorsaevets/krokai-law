@@ -4215,6 +4215,223 @@ Every quotation below has been opened in the primary source by a person.
        "missing: %r" % inv2["missing_for_bank"])
 
 
+def suite_r79_phase3(tmp):
+    """R79 (Ф3): suggest-fetches + SITE-ACCESS map + doctor --probe-sites.
+
+    Every URL template here was measured against the live host on 2026-09-01 while the module
+    was being built. The suite does NOT touch the network - `doctor --probe-sites` does, on
+    demand, but the pins here confirm the SHAPE of what would be sent, not the outcome. A
+    network probe in the suite is a suite that stops running when Comcast has a bad day.
+    """
+    import contextlib
+    import json as _json
+    from krokai.cli import main as cli_main
+    from krokai.config import TEMPLATE, CONFIG_NAME
+    from krokai.bank import BANK_HEADER
+    from krokai import suggest
+
+    def run(argv):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cli_main(argv)
+        return rc, buf.getvalue()
+
+    # ------------------------------------------------------------------ suggest_for_key builders
+    # Each verified-live-2026-09-01 template lands as a FetchSuggestion with the exact URL and a
+    # command that starts with the exact `krokai fetch` string the assistant is expected to run.
+    s = suggest.suggest_for_key(("usc", "8", "1101"))
+    ok("r79.3 usc suggests govinfo link-service URL",
+       s is not None and s.url == "https://www.govinfo.gov/link/uscode/8/1101?link-type=html")
+    ok("r79.3 usc suggestion carries a ready-to-run krokai fetch command",
+       s is not None and s.command.startswith('krokai fetch "https://www.govinfo.gov/link/'))
+    ok("r79.3 usc suggestion has no caveat (works with plain requests)",
+       s is not None and s.caveat is None)
+
+    s = suggest.suggest_for_key(("fr", "91", "45324"))
+    ok("r79.3 fr suggests govinfo link-service URL",
+       s is not None and s.url == "https://www.govinfo.gov/link/fr/91/45324?link-type=html")
+
+    s = suggest.suggest_for_key(("publaw", "107", "56"))
+    ok("r79.3 publaw suggests govinfo link-service URL",
+       s is not None and s.url
+       == "https://www.govinfo.gov/link/plaw/107/public/56?link-type=html")
+
+    # cfr keeps a {DATE} placeholder because the browser eCFR is behind an anti-bot wall and the
+    # API needs today's date. The caveat is REQUIRES_DATE, not `browser_only`.
+    s = suggest.suggest_for_key(("cfr", "8", "214"))
+    ok("r79.3 cfr suggests the eCFR versioner API with a {DATE} placeholder",
+       s is not None and "{DATE}" in (s.url or "")
+       and "title-8.xml?part=214" in (s.url or ""))
+    ok("r79.3 cfr suggestion caveat is requires_date",
+       s is not None and s.caveat == "requires_date")
+
+    # pm / pmnum are browser-only: no URL, no command, an explicit caveat naming the site
+    # behaviour. The note carries the browser fallback so the caller has something to do.
+    s = suggest.suggest_for_key(("pm", "7", "b", "8"))
+    ok("r79.3 pm returns no command (USCIS PM is anti-bot; browser only)",
+       s is not None and s.url is None and s.command is None
+       and s.caveat == "browser_only")
+    ok("r79.3 pm note names the browser URL AND the intake fallback",
+       s is not None and "policy-manual" in s.note and "krokai intake" in s.note)
+
+    s = suggest.suggest_for_key(("pmnum", "602-0199"))
+    ok("r79.3 pmnum is browser-only with a browser URL in the note",
+       s is not None and s.caveat == "browser_only"
+       and "policy-memoranda" in s.note)
+
+    # INA is the mapped kind - the coverage extractor emits a USC twin at parse time, so
+    # calling INA on its own returns a pointer note rather than an invented URL.
+    s = suggest.suggest_for_key(("ina", "245"))
+    ok("r79.3 ina points at its USC twin (route through USC)",
+       s is not None and s.url is None
+       and "USC" in s.note and "1255" in s.note)
+
+    # Unknown kind returns None cleanly rather than raising - callers can iterate a mixed set
+    # of coarse keys without a try/except around each one.
+    ok("r79.3 unknown kind returns None (silent fall-through, not an exception)",
+       suggest.suggest_for_key(("fam", "9", "302")) is None)
+    ok("r79.3 empty/None key returns None",
+       suggest.suggest_for_key(()) is None and suggest.suggest_for_key(None) is None)
+
+    # ---------------------------------------------------------------- verify_kinds mechanical
+    # The suggest builders must still produce the SHAPE their template_for entry documents. A
+    # mismatch means someone edited one home without editing the other - the exact
+    # two-homes-for-one-subject rot the toolkit measures elsewhere.
+    for kind, ok_flag, why in suggest.verify_kinds():
+        ok("r79.3 verify_kinds: %s shape matches template_for" % kind, ok_flag, why)
+
+    # ---------------------------------------------------------------- SUPPORTED_KINDS coverage
+    # Every kind advertised in SUPPORTED_KINDS must resolve to something on a canonical probe.
+    # Kinds that come back None here would be dead advertising.
+    for k in suggest.SUPPORTED_KINDS:
+        probe_key = {
+            "usc": ("usc", "8", "1101"),
+            "ina": ("ina", "245"),
+            "fr": ("fr", "91", "45324"),
+            "publaw": ("publaw", "107", "56"),
+            "cfr": ("cfr", "8", "214"),
+            "pm": ("pm", "7", "b", "8"),
+            "pmnum": ("pmnum", "602-0199"),
+        }[k]
+        ok("r79.3 SUPPORTED_KINDS: %s resolves to a FetchSuggestion" % k,
+           suggest.suggest_for_key(probe_key) is not None)
+
+    # ---------------------------------------------------------------- one-home invariant
+    # `library.RECIPES` and `suggest.template_for(...)` MUST point at the same publishing
+    # endpoints for the kinds they both cover, so an edit to one lands in both. A drift is a
+    # ship-time defect this pin catches.
+    from krokai.library import RECIPES
+    recipe_urls = " | ".join(r[1] for r in RECIPES)
+    for kind in ("usc", "fr", "publaw", "cfr"):
+        template = suggest.template_for(kind)
+        ok("r79.3 one-home: %s template shares the publisher endpoint with library.RECIPES"
+           % kind,
+           any(host in recipe_urls for host in ("govinfo.gov/link/uscode",
+                                                "govinfo.gov/link/fr",
+                                                "govinfo.gov/link/plaw",
+                                                "ecfr.gov/api/versioner"))
+           and template is not None)
+
+    # ---------------------------------------------------------------- init writes SITE-ACCESS.md
+    matter = os.path.join(tmp, "r79p3-init")
+    os.makedirs(matter, exist_ok=True)
+    rc, out = run(["init", matter, "--no-claude-md"])
+    ok("r79.3 CLI init creates SITE-ACCESS.md in the matter root",
+       rc == 0 and os.path.isfile(os.path.join(matter, "SITE-ACCESS.md")),
+       out[-260:])
+    sa = io.open(os.path.join(matter, "SITE-ACCESS.md"), encoding="utf-8").read()
+    ok("r79.3 SITE-ACCESS.md lists the four known-good publishers",
+       "govinfo.gov/link/uscode" in sa and "govinfo.gov/link/fr" in sa
+       and "govinfo.gov/link/plaw" in sa and "ecfr.gov/api/versioner" in sa)
+    ok("r79.3 SITE-ACCESS.md names the three measured walls",
+       "unblock.federalregister.gov" in sa and "403" in sa
+       and "uscis.gov/policy-manual" in sa)
+
+    # A re-run of `init` on the SAME matter must not overwrite a hand-edited SITE-ACCESS.md.
+    io.open(os.path.join(matter, "SITE-ACCESS.md"), "a", encoding="utf-8").write(
+        "\n<!-- hand-edited by suite_r79_phase3 -->\n")
+    rc, out = run(["init", matter, "--force", "--no-claude-md"])
+    sa2 = io.open(os.path.join(matter, "SITE-ACCESS.md"), encoding="utf-8").read()
+    ok("r79.3 init --force preserves an existing SITE-ACCESS.md (never overwrites notes)",
+       "hand-edited by suite_r79_phase3" in sa2)
+
+    # ---------------------------------------------------------------- library --suggest-fetches
+    # Build a small matter with ONE banked entry whose file is on disk (§P-1, has 8usc-1255.xml)
+    # and one whose file is NOT on disk (§C-2, addressed 91 FR 45324). The suggest-fetches
+    # output must name the ready command for the missing one.
+    root = os.path.join(tmp, "r79p3-matter")
+    law = os.path.join(root, "law")
+    case = os.path.join(root, "case")
+    for d in (law, case):
+        os.makedirs(d, exist_ok=True)
+    _json.dump(TEMPLATE, io.open(os.path.join(root, CONFIG_NAME), "w", encoding="utf-8"))
+    io.open(os.path.join(law, "8usc-1255.xml"), "w", encoding="utf-8").write(
+        "Section 1255(k). No application may be denied solely because the applicant made a "
+        "late filing of the underlying nonimmigrant status extension.")
+    bank_text = """# Quote bank
+
+## For us
+
+### §P-1 Late filing safe harbour
+> No application may be denied solely because the applicant made a late filing.
+
+| | |
+|---|---|
+| **Address** | 8 U.S.C. § 1255(k) |
+| **On disk** | `8usc-1255.xml` |
+| **Verified** | igor, 2026-09-01 |
+| **Used in** | brief |
+| **What this does NOT prove** | Not for over-180 unlawful presence. |
+
+## Against us
+
+### §C-2 Preamble to the 2024 rule
+> The Department clarifies that the reinstatement provision applies without a duration limit.
+
+| | |
+|---|---|
+| **Address** | 91 FR 45324 |
+| **On disk** | `not-downloaded.md` |
+| **Verified** | igor, 2026-09-01 |
+| **Used in** | test |
+| **What this does NOT prove** | Does not amend the statute. |
+"""
+    io.open(os.path.join(case, "QUOTE-BANK.md"), "w", encoding="utf-8", newline="\n").write(
+        bank_text)
+
+    rc, out = run(["library", "--dir", root, "--suggest-fetches"])
+    ok("r79.3 CLI library --suggest-fetches prints the suggested-downloads section",
+       rc == 0 and "suggested downloads" in out, out[-260:])
+    ok("r79.3 CLI --suggest-fetches names the missing bank entry and the fetch command",
+       "§C-2" in out and "krokai fetch" in out
+       and "govinfo.gov/link/fr/91/45324" in out, out[-320:])
+
+    # ---------------------------------------------------------------- quote prints fetch command
+    # A quotation whose citation is next to it, of a source that is NOT in the corpus, must
+    # print the fetch command under the SIX_CAUSES ladder.
+    quote_text = ("Under 8 U.S.C. § 1234 the applicant is ineligible for anything invented "
+                  "for this test whose exact wording is nowhere on disk.")
+    rc, out = run(["quote", "--dir", root, quote_text])
+    ok("r79.3 CLI quote prints the fetch command under NOT_FOUND when the citation resolves",
+       "krokai fetch" in out and "govinfo.gov/link/uscode/8/1234" in out
+       and "cause 1 fits" in out, out[-320:])
+
+    # A quotation with NO citation next to it must NOT print the block - silence is correct
+    # when nothing new can be added.
+    rc, out = run(["quote", "--dir", root, "some text with no citation nearby at all invented"])
+    ok("r79.3 CLI quote is SILENT about fetch when no citation sits next to the quotation",
+       "krokai fetch" not in out or "cause 1 fits" not in out, out[-260:])
+
+    # ---------------------------------------------------------------- doctor argument accepted
+    # The flag must parse (executing --probe-sites would touch the network; the suite promises
+    # not to). The absence of a parser error is what this pin measures.
+    from krokai.cli import build_parser
+    ap = build_parser()
+    parsed = ap.parse_args(["doctor", "--probe-sites"])
+    ok("r79.3 doctor --probe-sites parses without error",
+       getattr(parsed, "probe_sites", False) is True)
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if root not in sys.path:
@@ -4236,6 +4453,7 @@ def main():
         suite_r78(tmp)
         suite_r79(tmp)
         suite_r79_phase2(tmp)
+        suite_r79_phase3(tmp)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)

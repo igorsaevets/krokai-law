@@ -41,9 +41,14 @@ coverage <draft ...>       bank <-> draft: mines (draft cites a rule the bank ma
                            bank entries missing pieces
 library --bank             corpus <-> bank inventory: what is downloaded and not
                            analysed, what is banked but has no file
+library --suggest-fetches  for every banked entry with no file on disk, print the
+                           ready-to-run download command (or the browser-only caveat
+                           for USCIS PM / policy memoranda)
 close                      mechanical end-of-round checks
 gate <file>                outbound check for secrets and personal identifiers,
                            BEFORE pasting anything into another AI
+doctor --probe-sites       live probe of the four known-good publisher URLs; the ONLY
+                           doctor knob that touches the network, opt-in
 review "<question>"        build a review brief, run outside reviewers, audit their quotations
 selftest                   behavioural checks; contacts nothing
 ```
@@ -65,6 +70,14 @@ rule the bank marks against us), the bank entries for us that the draft never us
 addresses the draft cites without the verbatim wording the bank already has, and the bank
 entries themselves that are missing an application boundary. The categories are not opinions;
 each was paid for by a measured filing in the sister project.
+
+**When a fetch fails, write it down in `SITE-ACCESS.md`.** The matter root carries a
+`SITE-ACCESS.md` created by `krokai init`; it records which publishers this environment can
+reach and which are behind an anti-bot layer. The first time you hit a `403` or a redirect to
+`unblock.federalregister.gov`, add a row — a note there costs seconds, and the next round pays
+for silence. `krokai library --suggest-fetches` prints ready-to-run download commands for
+every missing bank source (URL when the publisher has a stable one, browser-only caveat when
+it does not); `krokai doctor --probe-sites` tests the four known-good URLs on demand.
 
 **A script's verdict is evidence; your hand search is not.** The pipeline strips soft hyphens,
 non-breaking spaces, line-wrap hyphenation and markdown before comparing — a hand `grep` sees
