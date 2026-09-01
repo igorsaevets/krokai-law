@@ -346,6 +346,69 @@ def cmd_bank_dismiss(a):
     return run_dismiss(a)
 
 
+# ------------------------------------------------------------------------------- coverage
+def cmd_coverage(a):
+    """Bank ↔ draft coverage: mines, unapplied entries, paraphrases, missing pieces.
+
+    The four findings each answer a question a string check cannot: whether the ground the
+    drafter is standing on is ground the bank marks hostile (A), whether a rule the bank
+    holds for us is missing from the argument (B), whether the drafter summarised a rule the
+    bank has the exact wording of (C), and whether a bank entry itself is missing the fields
+    that let it be cited responsibly (D). Runs its own controls first - a zero from a broken
+    extractor is a statement about the extractor, not the world.
+    """
+    from .config import load
+    from .bank import read_bank
+    from .coverage import (parse_bank_entries, analyse, render_report, controls_pass)
+
+    cfg = load(a.dir)
+
+    # Controls before report. If the extractor is broken, an empty MINES section reads as
+    # clean and is not. Exit 2 keeps this failure loud - a hook or CI over `coverage` sees
+    # the same code any other bad-input situation would produce.
+    if not controls_pass():
+        print("🔴 coverage controls failed - the extractor is broken and any report from it")
+        print("   would be unreliable. Nothing was analysed. Run `krokai selftest` for detail.")
+        return 2
+
+    bank_path = cfg.abs(cfg["bank"])
+    entries = parse_bank_entries(read_bank(bank_path))
+    if not entries:
+        print("🔴 the bank is empty - coverage has nothing to compare against.")
+        print("   Bank at least one entry first: `krokai bank add ...`")
+        return 3
+
+    drafts = []
+    for p in a.drafts:
+        if not os.path.isfile(p):
+            print("🔴 not a file: %s" % p)
+            return 3
+        drafts.append((p, io.open(p, encoding="utf-8", errors="replace").read()))
+    if not drafts:
+        print("give one or more draft files as arguments")
+        return 2
+
+    report = analyse(drafts, entries)
+
+    if a.json:
+        # A machine-readable form so an outer hook can decide - the same discipline `check`
+        # already follows. The rendered text still prints, because a human running this
+        # locally reads the terminal, not the JSON.
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        render_report(report, out=sys.stdout)
+
+    # Exit codes: 0 clean, 1 unapplied or missing-pieces only (yellow), 5 mines or
+    # paraphrases (red). Distinct codes because a hook must be able to gate on mines
+    # without gating on the yellow shape - a fresh matter has unapplied entries by
+    # construction.
+    if a.strict and (report["mines"] or report["paraphrases"]):
+        return 5
+    if a.strict and (report["unapplied"] or report["unparsed"]):
+        return 1
+    return 0
+
+
 # ------------------------------------------------------------------------------- sidecar
 def cmd_sidecar(a):
     from .config import load
@@ -379,6 +442,40 @@ def cmd_library(a):
     if unindexed or missing:
         print("\nAn unindexed source gets downloaded again next round, and its absence turns an "
               "honest quotation into a NOT_FOUND that reads like a fabrication.")
+
+    if getattr(a, "bank", False):
+        # Corpus <-> bank inventory (G-D). The other side of the same "what is not connected"
+        # question: index counts what is on disk, bank counts what the matter has actually
+        # decided about. A file downloaded and never analysed is a rule the matter has yet to
+        # take a position on; an addressed bank entry with no file behind it means the entry
+        # cannot be re-checked and its quotation cannot be verified. Both are the silent-hole
+        # shape and both must be visible.
+        from .bank import read_bank
+        from .citations import load_packs
+        from .coverage import (parse_bank_entries, corpus_bank_inventory, controls_pass)
+        from .run import corpus_for
+
+        if not controls_pass():
+            print("\n🔴 coverage controls failed - the inventory would be unreliable.")
+            return 2
+        entries = parse_bank_entries(read_bank(cfg.abs(cfg["bank"])))
+        corpus = corpus_for(cfg, quiet=True)
+        packs = load_packs(cfg["citation_packs"])
+        inv = corpus_bank_inventory(corpus, entries, packs)
+        print("\ncorpus <-> bank inventory:")
+        print("  %d corpus file(s), %d matched by a bank entry, %d not"
+              % (inv["corpus_file_count"], inv["matched_sources"],
+                 len(inv["unparsed_sources"])))
+        for p in inv["unparsed_sources"][:20]:
+            print("     %s" % os.path.relpath(p, cfg.root))
+        if len(inv["unparsed_sources"]) > 20:
+            print("     ... and %d more" % (len(inv["unparsed_sources"]) - 20))
+
+        print("  %d bank entr%s whose address has no file in the corpus"
+              % (len(inv["missing_for_bank"]),
+                 "y" if len(inv["missing_for_bank"]) == 1 else "ies"))
+        for m in inv["missing_for_bank"][:20]:
+            print("     %s  (%s)" % (m["id"], m["address"]))
     return 0
 
 
@@ -754,6 +851,42 @@ def cmd_close(a):
     else:
         print("\n[5] bank ledger: header and body agree (%d entries)  OK" % body)
 
+    # [6] corpus <-> bank inventory. The other half of "what is not connected": a file with no
+    # bank entry is a rule the matter has yet to take a position on, and the read side (bank
+    # entry with no file) produces the same NOT_FOUND signal as fabrication. Only fires when
+    # both a bank and a corpus exist - a fresh matter has neither. Yellow, not red: neither
+    # direction is inherently wrong, and gating close on it would teach people to bank noise
+    # to make the count go down.
+    try:
+        from .coverage import (parse_bank_entries, corpus_bank_inventory, controls_pass)
+        from .citations import load_packs
+        from .run import corpus_for
+        entries = parse_bank_entries(read_bank(cfg.abs(cfg["bank"])))
+        if entries and controls_pass(printer=lambda s: None):
+            corpus = corpus_for(cfg, quiet=True)
+            if corpus.paths:
+                packs = load_packs(cfg["citation_packs"])
+                inv = corpus_bank_inventory(corpus, entries, packs)
+                verdict = ("OK" if not (inv["unparsed_sources"] or inv["missing_for_bank"])
+                           else "🟡")
+                print("\n[6] corpus <-> bank: %d source(s) with no bank entry, %d bank "
+                      "entr%s with no source  %s"
+                      % (len(inv["unparsed_sources"]), len(inv["missing_for_bank"]),
+                         "y" if len(inv["missing_for_bank"]) == 1 else "ies", verdict))
+                for p in inv["unparsed_sources"][:5]:
+                    print("      • unparsed: %s" % os.path.relpath(p, cfg.root))
+                for m in inv["missing_for_bank"][:5]:
+                    print("      • missing:  %s  (%s)" % (m["id"], m["address"]))
+                if inv["unparsed_sources"] or inv["missing_for_bank"]:
+                    print("      `krokai library --bank` prints the whole inventory. Not "
+                          "gated: a")
+                    print("      fresh matter has holes both ways by construction.")
+    except (SystemExit, Exception):                                   # noqa: BLE001
+        # A malformed bank must not kill `close` - this is one check of six and the round-end
+        # decisions depend on the other five. `SystemExit` handled the same as any Exception
+        # because it is this codebase's fatal-user-message idiom (`_configured_surnames`).
+        pass
+
     print("\n%s" % ("ALL CLEAR" if ok else "🔴 there are things to decide - see above"))
     return 0 if ok else 1
 
@@ -1077,7 +1210,22 @@ def build_parser():
 
     p = common(sub.add_parser("library", help="what is downloaded, what is unindexed"))
     p.add_argument("--recipes", action="store_true", help="print the retrieval recipes")
+    p.add_argument("--bank", action="store_true",
+                   help="also print the corpus <-> bank inventory: what is downloaded and "
+                        "not analysed, and what is banked but has no file")
     p.set_defaults(fn=cmd_library)
+
+    p = common(sub.add_parser(
+        "coverage",
+        help="bank <-> draft coverage: mines, unapplied entries, paraphrases, missing pieces"))
+    p.add_argument("drafts", nargs="+", metavar="DRAFT",
+                   help="the draft file(s) whose citations get checked against the bank")
+    p.add_argument("--json", action="store_true",
+                   help="print the report as JSON as well (for a hook or CI)")
+    p.add_argument("--strict", action="store_true",
+                   help="exit non-zero on findings: 5 for mines/paraphrases, 1 for unapplied/"
+                        "missing-pieces only")
+    p.set_defaults(fn=cmd_coverage)
 
     p = common(sub.add_parser(
         "fetch", help="download the text of a law into the inbox - no model in the path"))

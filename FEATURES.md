@@ -597,6 +597,101 @@ flagged, **and the quotation was right**.
 **A flag can mean the corpus is wrong.** Before "fixing" a document because of a flag, open the live
 page.
 
+### `library --bank` — the corpus ↔ bank inventory
+
+The other side of the "what is not connected" question. `orphans()` compares the corpus with the
+index; `--bank` compares it with the bank — **files downloaded and never analysed** on one side
+(rules the matter has yet to take a position on), **bank entries whose source is missing** on the
+other (their quotations cannot be re-checked, and next check would come back NOT FOUND — this
+tool's fabrication signal).
+
+Matching uses the citation packs' `file_matches`, tuned for real filename forms
+(`8CFR-part-214.xml`, `8usc-1255.xml`, `PM-602-0199-…md`). Same matcher as the address layer, so
+a file that resolves to an address in `check` and `bank add` also resolves here.
+
+Runs after the coverage extractor's own controls — positive-plus-negative probes must clear first
+or the inventory aborts, because a zero from a broken shape is a statement about the shape, not
+the world.
+
+`krokai close` prints the same inventory as a one-line **[6]** at end-of-round. Yellow, not red:
+a fresh matter has holes both ways by construction; gating the round on it would teach people to
+bank noise to make the count go down.
+
+---
+
+## coverage
+
+`krokai/coverage.py` — bank ↔ draft: mines, unapplied entries, paraphrases, missing pieces.
+
+**Why coverage is a separate layer from `check`.** `check` answers *"are these words really in
+the source you cited?"* and, folded with the address layer, *"in the source whose address you
+printed?"*. Both catch fabrication. Neither can see whether the ground the drafter stands on is
+ground the bank marks hostile — that requires comparison against a **decision** (the bank), not
+against a **text** (the corpus). The classic case, measured verbatim in the sister project:
+**8 CFR 214.2(f)(8)(i) was in the bank as §Π-13 (against us), and the filing rested on it as its
+own affirmative support.** Every quotation was verbatim; every address was right; every green
+was earned. `krokai coverage <draft>` is the one that catches it.
+
+### The four findings
+
+**[A] MINES** — the draft cites a rule the bank marks AGAINST us. Exit 5 under `--strict`. The
+finding lists which draft-side citation form triggered it, so the reader can locate the
+paragraph rather than hunting for the address.
+
+**[B] UNAPPLIED** — bank entries FOR us the draft never cites. Sometimes right (a shelf takes
+more books than any one argument uses); sometimes a rule everyone forgot. Yellow, not red.
+
+**[C] PARAPHRASE ONLY** — address cited in the draft, but the bank's verbatim quotation of it is
+not there. A summary is not a quotation, and an adjudicator following the pincite finds words
+that do not match the source — the fabrication-shape this toolkit exists to catch.
+
+**[D] BANK ENTRIES MISSING PIECES** — entries without an application boundary
+(*what this does NOT prove*) or without any prose saying how the entry applies to the matter.
+`bank add` refuses to write one without both; this is where hand-written entries from before the
+gatekeeper existed become visible.
+
+### The thin address layer
+
+`coverage.parse_addresses()` returns **fine keys** like `("cfr", "8", "214", "2", "f", "8", "i")`
+where `citations.py`'s packs return the coarse `("cfr", "8", "214")`. Coverage asks a different
+question from `check` — *"is THIS specific subparagraph the one the bank marks hostile?"* — so
+the subitems have to survive.
+
+Regexes for CFR, USC, INA (explicit `INA § N` and `section N of the Act`, deliberately NOT the
+bare `section N` which is ambiguous), Federal Register, Public Law. Each fine key is emitted
+with its human label so the report says `8 CFR 214.2(f)(8)(i)`, not `part 214`.
+
+### USC ↔ INA fold at extraction
+
+Title 8 of the U.S. Code is the codification of the Immigration and Nationality Act; the two
+citation systems name the same provisions. `8 U.S.C. § 1255(k)`, `INA § 245(k)`, and «section
+245(k) of the Act» all emit **both** a USC key and an INA key, so a bank entry addressed one way
+and a draft citation written the other still meet. `USC_TO_INA` is authoritative (the title-8
+sections a working immigration practice cites), one-to-one; a missing row degrades to «no fold
+for that section», never to a wrong fold.
+
+### 🔴 Asymmetric `related()` — parent implies child only when parent is narrow
+
+Measured in the sister project: a marginal note reading «8 CFR 214.2(f)» — the tab label of a
+whole subsection — was being counted as a mine against every specific paragraph the bank held
+under (f), including several the drafter had never touched.
+
+The rule: **exact-equality matches always fire; prefix matches fire only when the WIDER of the
+two is narrow enough to be a specific citation rather than a category.** For CFR that means at
+least three subitem levels past the part (section plus two paragraphs), for USC/INA one subitem
+past the section. `SUB_THRESHOLD` holds the numbers; the numbers are chosen against the AOS
+measurement, not by aesthetics.
+
+### Controls before report
+
+Every `krokai coverage` run and every `krokai library --bank` run clears a positive-plus-negative
+probe first: the extractor must parse a known fine key correctly, fold USC ↔ INA, refuse a
+broad-parent match, and never fold across kinds. A failure aborts with exit 2 rather than
+emitting an empty MINES section that reads as clean.
+
+*«НОЛЬ ОТ МОЕГО ШАБЛОНА ЕСТЬ УТВЕРЖДЕНИЕ О ШАБЛОНЕ, А НЕ О МИРЕ»* — оплачено четыре раза в
+соседнем проекте.
+
 ---
 
 ## sidecar

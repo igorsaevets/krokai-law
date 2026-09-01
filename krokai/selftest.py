@@ -3937,6 +3937,284 @@ def suite_r79(tmp):
     ok("r79 bare `krokai bank` is still the status view", rc == 0 and "quote bank:" in out)
 
 
+def suite_r79_phase2(tmp):
+    """R79 (Ф2): coverage - the four bank<->draft findings, plus corpus<->bank inventory.
+
+    Every pin here reproduces a branch first proven by execution against a live temp matter
+    while the module was being built. The four findings each come from a measured incident in
+    the sister project: a filing that rested on a rule the bank marked hostile as its own
+    affirmative support (MINE); a rule cited by shorthand where the bank held its verbatim
+    text (PARAPHRASE); a bank entry with an applicability boundary and one without (UNPARSED);
+    a corpus file downloaded and never analysed (G-D inventory).
+    """
+    import contextlib
+    import json as _json
+    from krokai.cli import main as cli_main
+    from krokai.config import TEMPLATE, CONFIG_NAME
+    from krokai.bank import BANK_HEADER
+    from krokai import coverage
+
+    def run(argv):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cli_main(argv)
+        return rc, buf.getvalue()
+
+    # ------------------------------------------------------------------------ address parser
+    # A CFR citation with three parenthetical subitems must land as a fine key that carries them
+    # all. This is the whole difference between the coverage extractor and the packs' coarse key,
+    # and the reason for it is the AOS §Π-13 case - the mine was against `(f)(8)(i)`, not against
+    # any (f) entry.
+    got = coverage.parse_addresses("see 8 CFR 214.2(f)(8)(i)(D) for the rule")
+    keys = [k for k, _l, _p in got if k[0] == "cfr"]
+    ok("r79.2 CFR citation parses with all subitems preserved",
+       ("cfr", "8", "214", "2", "f", "8", "i", "d") in keys,
+       "expected the full 8-tuple, got %r" % keys[:3])
+
+    # USC ↔ INA fold at extraction. A bank cite of «section 245(k) of the Act» and a draft cite
+    # of «8 U.S.C. § 1255(k)» must meet - the fold happens here so `related()` does not have to
+    # know about aliases.
+    got = coverage.parse_addresses("under 8 U.S.C. § 1255(k) the")
+    fine = {k for k, _l, _p in got}
+    ok("r79.2 USC 8:1255(k) also emits its INA twin 245(k)",
+       ("ina", "245", "k") in fine and ("usc", "8", "1255", "k") in fine)
+    got = coverage.parse_addresses("section 245(k) of the Act allows")
+    fine = {k for k, _l, _p in got}
+    ok("r79.2 «section 245(k) of the Act» folds to INA plus USC",
+       ("ina", "245", "k") in fine and ("usc", "8", "1255", "k") in fine)
+
+    # Bare «section 245(k)» without «of the Act» is ambiguous and must NOT parse as INA. Same
+    # words could be a state statute or a regulation; a false fold would generate mines that
+    # are not mines.
+    got = coverage.parse_addresses("state section 245(k) reads as")
+    ok("r79.2 bare «section 245(k)» (no «of the Act») does NOT parse as INA",
+       not any(k[0] == "ina" for k, _l, _p in got))
+
+    # -------------------------------------------------------------------------- related() rule
+    # The AOS-measured bug: a tab-label parent must not fire on specific children. `214.2(f)` is
+    # a category, `214.2(f)(8)(i)` is a specific paragraph; catching the parent as related to
+    # the child would revive the mine-inflation the fix exists to close.
+    parent = ("cfr", "8", "214", "2", "f")
+    child = ("cfr", "8", "214", "2", "f", "8", "i")
+    ok("r79.2 related() refuses tab-label parent -> specific child (the AOS bug)",
+       not coverage.related(parent, child))
+    ok("r79.2 related() accepts narrow parent -> specific child",
+       coverage.related(("cfr", "8", "214", "2", "f", "8"), child))
+    ok("r79.2 related() accepts exact-equality regardless of narrowness",
+       coverage.related(parent, parent))
+    ok("r79.2 related() refuses across kinds - the USC/INA fold happens at extraction",
+       not coverage.related(("cfr", "8", "214", "2"), ("usc", "8", "214", "2")))
+
+    # USC/INA thresholds are lower because a section is a single-topic provision by convention.
+    ok("r79.2 USC 1 subitem is narrow enough for a prefix match",
+       coverage.related(("usc", "8", "1255", "k"), ("usc", "8", "1255", "k", "1")))
+    ok("r79.2 USC 0 subitems (bare section) is NOT narrow enough",
+       not coverage.related(("usc", "8", "1255"), ("usc", "8", "1255", "k")))
+
+    # ---------------------------------------------------------------- bank parser
+    # 🔴 The two entries are placed BY HAND under their respective ## sections. Appending
+    # after `BANK_HEADER` alone would put both entries under `## Against us` (the last H2 in
+    # the header), because the parser assigns each entry to the last preceding `##` heading.
+    # This is the same subtle placement rule `bank_add._insert_entry` handles at write time;
+    # here the test is testing the PARSER, so we set the layout deliberately.
+    bank_text = """# Quote bank
+
+Every quotation below has been opened in the primary source by a person.
+
+## For us
+
+### §P-1 Late filing safe harbour
+> No application may be denied solely because the applicant made a late filing of the
+> underlying nonimmigrant status extension.
+
+| | |
+|---|---|
+| **Address** | 8 U.S.C. § 1255(k) |
+| **On disk** | `8usc-1255.xml` |
+| **How to re-check** | krokai quote ... |
+| **Verified** | igor, 2026-09-01 |
+| **Used in** | brief section III.B |
+| **Neighbours** | before — ... · after — ... |
+| **What this does NOT prove** | Does not cover unlawful presence exceeding 180 days. |
+
+## Against us
+
+### §C-1 F-1 reinstatement discretion
+> The district director may consider reinstating a student who makes a request for
+> reinstatement, but do not include instances where a pattern of repeated violations has
+> occurred.
+
+| | |
+|---|---|
+| **Address** | 8 CFR 214.2(f)(16) |
+| **On disk** | `8CFR-part-214.xml` |
+| **How to re-check** | krokai quote ... |
+| **Verified** | igor, 2026-09-01 |
+| **Used in** | 🔴 TO DO |
+| **Neighbours** | before — ... · after — ... |
+| **What this does NOT prove** | Discretion is not entitlement. |
+"""
+    # A companion bank text where BOTH entries are complete - used by the CLI "clean draft"
+    # test, so that --strict does not fire on a residual [D] finding from §C-1's empty
+    # «Used in» when the test is only checking [A]/[C] cleanliness.
+    bank_text_clean = bank_text.replace("| **Used in** | 🔴 TO DO |",
+                                        "| **Used in** | opposing brief IV.C |")
+    entries = coverage.parse_bank_entries(bank_text)
+    ok("r79.2 bank parser finds both entries", len(entries) == 2,
+       "got %d" % len(entries))
+    by_id = {e["id"]: e for e in entries}
+    ok("r79.2 §P-1 landed under «For us»", by_id.get("§P-1", {}).get("side") == "pro")
+    ok("r79.2 §C-1 landed under «Against us»", by_id.get("§C-1", {}).get("side") == "con")
+    ok("r79.2 the entry's address parsed into a fine key",
+       ("usc", "8", "1255", "k") in by_id["§P-1"]["addr_keys"])
+    ok("r79.2 USC address ALSO carries the INA twin (fold at parse time)",
+       ("ina", "245", "k") in by_id["§P-1"]["addr_keys"])
+    ok("r79.2 «Used in» filled with prose is non-empty on the entry",
+       by_id["§P-1"]["used_in"] == "brief section III.B")
+    ok("r79.2 «Used in» with a 🔴 TO DO placeholder is treated as empty",
+       by_id["§C-1"]["used_in"] == "")
+    ok("r79.2 the blockquote body is joined into a single normalised quote string",
+       "district director may consider reinstating" in by_id["§C-1"]["quote"])
+
+    # ---------------------------------------------------------------------- analyse: A/B/C/D
+    draft_with_mine = ("brief.md",
+                       "The applicant is eligible under section 245(k) of the Act. The rule at "
+                       "8 CFR 214.2(f)(16) - reinstatement - supports our position because the "
+                       "district director's discretion runs in favour of a compliant student. "
+                       "See also 8 U.S.C. § 1255(k).")
+    report = coverage.analyse([draft_with_mine], entries)
+    ok("r79.2 [A] MINE fires when the draft cites a rule the bank marks against us",
+       any(m["id"] == "§C-1" for m in report["mines"]),
+       "mines: %r" % report["mines"])
+    ok("r79.2 [A] a mine reports the draft's own address form as the trigger",
+       any("8 CFR 214.2(f)(16)" in "; ".join(m.get("triggers", []))
+           for m in report["mines"]))
+    ok("r79.2 [C] PARAPHRASE fires when address is cited but the bank's exact quote is missing",
+       any(p["id"] == "§P-1" for p in report["paraphrases"]))
+    ok("r79.2 [D] MISSING PIECES flags §C-1 for its empty «Used in»",
+       any(u["id"] == "§C-1" and any("used in" in m.lower() for m in u["missing"])
+           for u in report["unparsed"]))
+
+    # [B] UNAPPLIED requires a draft that does NOT cite the entry's address at all.
+    draft_no_pro = ("other.md",
+                    "The applicant lost F-1 status; 8 CFR 214.2(f)(16) is the reinstatement rule "
+                    "and does not apply here for reasons X, Y and Z. There is no adjustment.")
+    report2 = coverage.analyse([draft_no_pro], entries)
+    ok("r79.2 [B] UNAPPLIED fires for a For-us entry the draft never cites",
+       any(u["id"] == "§P-1" for u in report2["unapplied"]))
+
+    # ------------------------------------------------------------------ [C] verbatim exempts
+    draft_with_verbatim = ("brief.md",
+                           "The applicant is protected because «No application may be denied "
+                           "solely because the applicant made a late filing of the underlying "
+                           "nonimmigrant status extension.» See 8 U.S.C. § 1255(k).")
+    report3 = coverage.analyse([draft_with_verbatim], entries)
+    ok("r79.2 [C] no PARAPHRASE flag when the bank's exact wording is in the draft",
+       not any(p["id"] == "§P-1" for p in report3["paraphrases"]))
+
+    # ------------------------------------------------------------------ tab-label protection
+    # A draft citing `214.2(f)` (the tab label, no specific paragraph) MUST NOT mine §C-1 which
+    # is `(f)(16)`. This is the AOS bug and the whole reason `related()` is asymmetric.
+    draft_tab_label = ("weak.md", "See generally 8 CFR 214.2(f) for the whole framework.")
+    report_tab = coverage.analyse([draft_tab_label], entries)
+    ok("r79.2 tab-label reference 214.2(f) does NOT mine §C-1 which is (f)(16)",
+       not any(m["id"] == "§C-1" for m in report_tab["mines"]),
+       "the AOS bug would resurface as any (f) mention firing every (f) entry")
+
+    # ------------------------------------------------------------------ CLI integration
+    root = os.path.join(tmp, "r79p2-matter")
+    law = os.path.join(root, "law")
+    case = os.path.join(root, "case")
+    for d in (law, case):
+        os.makedirs(d, exist_ok=True)
+    _json.dump(TEMPLATE, io.open(os.path.join(root, CONFIG_NAME), "w", encoding="utf-8"))
+    io.open(os.path.join(law, "8CFR-part-214.xml"), "w", encoding="utf-8").write(REG)
+    io.open(os.path.join(law, "8usc-1255.xml"), "w", encoding="utf-8").write(
+        "Section 1255(k). No application may be denied solely because the applicant made a "
+        "late filing of the underlying nonimmigrant status extension.")
+    bank_path = os.path.join(case, "QUOTE-BANK.md")
+    io.open(bank_path, "w", encoding="utf-8", newline="\n").write(bank_text)
+
+    draft_path = os.path.join(case, "brief.md")
+    io.open(draft_path, "w", encoding="utf-8", newline="\n").write(draft_with_mine[1])
+
+    rc, out = run(["coverage", "--dir", root, draft_path])
+    ok("r79.2 CLI: coverage prints all four sections and exits 0 without --strict",
+       rc == 0 and "[A] MINES" in out and "[B] UNAPPLIED" in out
+       and "[C] PARAPHRASE" in out and "[D]" in out,
+       out[-260:])
+    ok("r79.2 CLI: --strict returns 5 when there is a MINE (or paraphrase)",
+       run(["coverage", "--dir", root, draft_path, "--strict"])[0] == 5)
+
+    # A clean draft against the clean bank: exact quotation, no mine, no [D] finding either.
+    io.open(bank_path, "w", encoding="utf-8", newline="\n").write(bank_text_clean)
+    clean_draft = os.path.join(case, "clean.md")
+    io.open(clean_draft, "w", encoding="utf-8", newline="\n").write(
+        "The applicant is protected because «No application may be denied solely because the "
+        "applicant made a late filing of the underlying nonimmigrant status extension.» See "
+        "8 U.S.C. § 1255(k).")
+    rc, out = run(["coverage", "--dir", root, clean_draft, "--strict"])
+    ok("r79.2 CLI: --strict exits 0 on a mine-free, paraphrase-free draft with the pro quote "
+       "verbatim AND a bank with no [D] findings",
+       rc == 0, out[-260:])
+    # Restore the dirty bank for the remaining CLI probes.
+    io.open(bank_path, "w", encoding="utf-8", newline="\n").write(bank_text)
+
+    # -------------------------------------------------------------- CLI: library --bank
+    rc, out = run(["library", "--dir", root, "--bank"])
+    ok("r79.2 CLI: library --bank prints the corpus <-> bank inventory",
+       rc == 0 and "corpus <-> bank inventory" in out, out[-260:])
+
+    # -------------------------------------------------------------- CLI: close [6]
+    rc, out = run(["close", "--dir", root])
+    ok("r79.2 CLI: close now prints a [6] corpus <-> bank line when bank has entries",
+       "[6] corpus <-> bank" in out, out[-260:])
+
+    # -------------------------------------------------------------- controls fail loudly
+    # A synthetic breakage of `related` would abort. We can't monkey-patch cleanly here, but
+    # we can assert the control set is honest by construction: it names each measured probe.
+    ok("r79.2 controls_pass returns True on the shipped extractor",
+       coverage.controls_pass(printer=lambda s: None))
+
+    # -------------------------------------------------------------- corpus_bank_inventory
+    from krokai.run import corpus_for
+    from krokai.config import load as load_cfg
+    from krokai.citations import load_packs
+    cfg = load_cfg(root)
+    corpus = corpus_for(cfg, quiet=True)
+    packs = load_packs(cfg["citation_packs"])
+    inv = coverage.corpus_bank_inventory(corpus, entries, packs)
+    ok("r79.2 inventory names the corpus files that match a bank entry",
+       inv["matched_sources"] >= 1,
+       "matched=%d unparsed=%d" % (inv["matched_sources"], len(inv["unparsed_sources"])))
+    ok("r79.2 inventory reports zero-missing when both entries have their file",
+       len(inv["missing_for_bank"]) == 0,
+       "missing: %r" % inv["missing_for_bank"])
+
+    # A THIRD bank entry, placed under `## Against us` (that is where `bank_text` ends), whose
+    # address has no file on disk - the missing-side signal.
+    bank_text_with_missing = bank_text + """
+### §C-2 Preamble to the 2024 rule
+> The Department clarifies that the reinstatement provision applies without a duration limit.
+
+| | |
+|---|---|
+| **Address** | 91 FR 45324 |
+| **On disk** | `not-downloaded.md` |
+| **How to re-check** | krokai quote ... |
+| **Verified** | igor, 2026-09-01 |
+| **Used in** | test |
+| **Neighbours** | before — ... · after — ... |
+| **What this does NOT prove** | Does not amend the statute or CFR rule. |
+"""
+    io.open(bank_path, "w", encoding="utf-8", newline="\n").write(bank_text_with_missing)
+    entries2 = coverage.parse_bank_entries(io.open(bank_path, encoding="utf-8").read())
+    inv2 = coverage.corpus_bank_inventory(corpus, entries2, packs)
+    ok("r79.2 inventory names a bank entry whose address has NO file on disk",
+       any(m["id"] == "§C-2" for m in inv2["missing_for_bank"]),
+       "missing: %r" % inv2["missing_for_bank"])
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if root not in sys.path:
@@ -3957,6 +4235,7 @@ def main():
         suite_r77b(tmp)
         suite_r78(tmp)
         suite_r79(tmp)
+        suite_r79_phase2(tmp)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)

@@ -108,6 +108,19 @@ and the gate says so out loud — it will not report `clean` about a check it ne
 **8. Makes it automatic.** Optional hooks fire when your AI writes a quotation into a document —
 not when you remember to check. This is the part that matters most, and the reason is below.
 
+**9. Checks the argument against the decisions you have already made.** The words in your
+quotations can be right, the addresses can be right, and the draft can still rest on a rule the
+bank has flagged as *against us* — the classic case, measured verbatim in the sister project:
+8 CFR 214.2(f)(8)(i) was in the bank as §Π-13 (against us), and the same filing cited it as
+its own affirmative support. `krokai coverage <the draft file>` runs the four checks a string
+comparison cannot: **mines** (draft cites a rule the bank marks against us), **unapplied**
+(bank has an entry for us the draft never uses), **paraphrase only** (address is cited but the
+bank's verbatim quotation is not in the draft — a summary is not a quotation, and an
+adjudicator following the pincite finds words that do not match the source), and **entries
+missing pieces** (an entry with no application boundary will be cited wider than it permits).
+Companion: `krokai library --bank` cross-references the corpus with the bank — files
+downloaded and never analysed on one side, bank entries whose source is missing on the other.
+
 ---
 
 ## Why a second opinion, and why it is not a separate download

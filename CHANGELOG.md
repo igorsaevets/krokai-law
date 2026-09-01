@@ -10,6 +10,74 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.13.0] - 2026-09-01
+
+The coverage layer. `krokai check` and its address fold answer *"are these words really in the
+source you cited?"* - which catches fabrication and cannot see mines. This release adds the
+second-order questions the string check was never going to answer: is the ground the drafter
+stands on ground the bank marks HOSTILE, is a rule the bank holds FOR US missing from the
+argument, is the drafter SUMMARISING a rule the bank has the exact wording of, and are the bank
+entries themselves in a state to be cited responsibly. The four are `krokai coverage <draft>`, and
+each is paid for by a measured incident in the sister project: a filing that rested on
+8 CFR 214.2(f)(8)(i) as its own affirmative support while the bank marked the same paragraph as
+against us; a rule cited by shorthand where the bank had the verbatim quotation sitting right
+there; and hand-written entries with no applicability boundary getting cited wider than they
+permit.
+
+Plus the inventory the other side of the account demanded: `krokai library --bank` and a new
+[6] block in `krokai close` cross-reference the corpus with the bank, so files that were
+downloaded and never analysed become visible next to bank entries whose source is missing. Both
+are the silent-hole shape and both must be visible.
+
+### Added
+- **`krokai coverage <draft ...>`** - the four findings in one command:
+  - **[A] MINES** - the draft cites a rule the bank marks AGAINST us. The classic case, verbatim
+    from the source project: 8 CFR 214.2(f)(8)(i) was §Π-13 in Against us, and the filing rested
+    on it as its own support. Nothing about the quotation was wrong; the defect was that the bank
+    knew the ground was hostile and the drafter did not. Exit 5 under `--strict`.
+  - **[B] UNAPPLIED** - bank entries FOR us the draft never cites. Sometimes right (a shelf takes
+    more books than any one argument uses), sometimes a rule everyone forgot. Yellow, not red.
+  - **[C] PARAPHRASE ONLY** - address cited in the draft, but the bank's verbatim quotation of it
+    is not there. A summary is not a quotation, and an adjudicator following the pincite finds
+    words that do not match the source - the fabrication-shape this toolkit exists to catch.
+  - **[D] BANK ENTRIES MISSING PIECES** - entries without an application boundary or without any
+    prose saying how they apply. The gatekeeper refuses to write one without both; this is where
+    hand-written entries from before the gatekeeper existed become visible.
+- **A thin address extractor that keeps subitems.** `parse_addresses` returns fine keys like
+  `("cfr", "8", "214", "2", "f", "8", "i")` where `citations.py`'s packs return the coarse
+  `("cfr", "8", "214")`. Coverage asks a different question from `check` (*"is THIS specific
+  subparagraph the one the bank marks hostile?"*), so the subitems have to survive.
+- **USC ↔ INA fold at extraction time.** `8 U.S.C. § 1255(k)`, «section 245(k) of the Act», and
+  `INA § 245(k)` all emit both a USC key and an INA key, so a bank entry addressed one way and
+  a draft citation written the other still meet in `related()`. Mapping is authoritative (the
+  title-8 sections a working immigration practice cites), one-to-one; a missing row degrades to
+  «no fold for that section», never to a wrong fold.
+- **Asymmetric `related(a, b)`.** Exact-equality matches always fire. Prefix matches fire only
+  when the WIDER of the two is narrow enough to be a specific citation rather than a category:
+  for CFR that means at least three subitem levels past the part (section plus two paragraphs),
+  for USC/INA one subitem past the section. Measured motivation: a marginal note reading
+  «8 CFR 214.2(f)» - the tab label of a whole subsection - was being counted as a mine against
+  every specific paragraph the bank held under (f), including several the drafter had never
+  touched.
+- **Controls before report.** Every coverage run and every G-D inventory run clears a
+  positive-plus-negative probe first: the extractor must parse a known fine key correctly,
+  fold USC ↔ INA, refuse a broad-parent match, and never fold across kinds. A failure aborts
+  with exit 2 rather than emitting an empty MINES section that reads as clean.
+- **`krokai library --bank`** - the corpus ↔ bank inventory: sources on disk with no bank
+  entry (rules the matter has yet to take a position on) and bank entries whose source is not
+  in the corpus (the quotation cannot be re-checked, and its next check would come back
+  NOT_FOUND - this toolkit's fabrication signal). Both directions are printed and both matter.
+- **`krokai close` gains a [6] check** - the same corpus ↔ bank inventory as an end-of-round
+  hygiene note. Yellow, not red: gating the round on it would teach people to bank noise to
+  make the count go down. `krokai library --bank` prints the full detail.
+
+### Notes
+- Coverage does not judge quotation quality - `check` and `quote` still own that. What coverage
+  adds is comparison against a decision (the bank) rather than against a text (the corpus).
+- The bare `## For us` / `## Against us` heading names are structural: coverage reads them to
+  classify entries. A bank predating the sections is treated as `side=None` and its entries
+  participate in [D] and the G-D inventory but not in [A]/[B]/[C].
+
 ## [0.12.0] - 2026-09-01
 
 The write gatekeeper. Until now the bank's header said "verbatim only, after someone opened the

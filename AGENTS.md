@@ -35,6 +35,12 @@ bank add                   write a bank entry: the quotation is SLICED from the 
                            between your --from/--to anchors, never typed, and verified
                            BEFORE the write. Dry-run by default; --apply writes
 bank dismiss "<fragment>"  tick one queue line WITHOUT banking it; --why is required
+coverage <draft ...>       bank <-> draft: mines (draft cites a rule the bank marks
+                           against us), unapplied entries, paraphrases (address cited
+                           but the bank's verbatim quotation is not in the draft),
+                           bank entries missing pieces
+library --bank             corpus <-> bank inventory: what is downloaded and not
+                           analysed, what is banked but has no file
 close                      mechanical end-of-round checks
 gate <file>                outbound check for secrets and personal identifiers,
                            BEFORE pasting anything into another AI
@@ -50,6 +56,15 @@ takes the quotation's opening and closing words and writes the slice of the sour
 the text is never in the arguments, so there is nowhere to mistype it. When it refuses - a
 repeated end anchor, a slice that stops before its proviso - the refusal is the feature. Do not
 paste the text in by hand to get past it; extend the anchors until the slice is honest.
+
+**The check that these words are in the source is not the check that the drafter should be
+citing them.** `check` catches fabrication and `quote` catches the wrong verbatim; neither can
+see that the paragraph the argument rests on is the paragraph the bank marks hostile. Before
+anything is filed, run `krokai coverage <the draft file>` - it names the mines (draft cites a
+rule the bank marks against us), the bank entries for us that the draft never uses, the
+addresses the draft cites without the verbatim wording the bank already has, and the bank
+entries themselves that are missing an application boundary. The categories are not opinions;
+each was paid for by a measured filing in the sister project.
 
 **A script's verdict is evidence; your hand search is not.** The pipeline strips soft hyphens,
 non-breaking spaces, line-wrap hyphenation and markdown before comparing — a hand `grep` sees
