@@ -319,6 +319,9 @@ work than maintaining this.
 Full function-by-function reference, with the incident behind each one:
 **[FEATURES.md](FEATURES.md)**
 
+If the reader is your AI assistant, the working discipline written for it is
+**[AGENTS.md](AGENTS.md)** — the same text `krokai agents` prints from any install, clone or pip.
+
 ---
 
 ## Found a bug? Want a feature? Want to work together?
