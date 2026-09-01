@@ -31,6 +31,10 @@ refuse to restate its own counts here.
 ```
 quote "<the quotation>"    check ONE quotation, right now, against the corpus
 check                      check everything you wrote, before anything is filed
+bank add                   write a bank entry: the quotation is SLICED from the source
+                           between your --from/--to anchors, never typed, and verified
+                           BEFORE the write. Dry-run by default; --apply writes
+bank dismiss "<fragment>"  tick one queue line WITHOUT banking it; --why is required
 close                      mechanical end-of-round checks
 gate <file>                outbound check for secrets and personal identifiers,
                            BEFORE pasting anything into another AI
@@ -39,6 +43,13 @@ selftest                   behavioural checks; contacts nothing
 ```
 
 ## The discipline — each rule was paid for before it was written
+
+**Never type a quotation into the bank - slice it.** A model PRODUCES text rather than copying
+it; re-typing six banked quotations by eye lost two markers of six, measured. `krokai bank add`
+takes the quotation's opening and closing words and writes the slice of the source between them:
+the text is never in the arguments, so there is nowhere to mistype it. When it refuses - a
+repeated end anchor, a slice that stops before its proviso - the refusal is the feature. Do not
+paste the text in by hand to get past it; extend the anchors until the slice is honest.
 
 **A script's verdict is evidence; your hand search is not.** The pipeline strips soft hyphens,
 non-breaking spaces, line-wrap hyphenation and markdown before comparing — a hand `grep` sees

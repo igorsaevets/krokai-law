@@ -39,6 +39,7 @@ the round — and three things are checked, not one:
 ```
 {KROKAI} quote "<the quotation>"     one, right now
 {KROKAI} check                        everything, before anything is filed
+{KROKAI} bank add                     bank a quotation - SLICED from the source, never typed
 {KROKAI} close                        end of session
 {KROKAI} gate <file>                  before pasting anything into another AI
 {KROKAI} agents                       the full working discipline, on demand
@@ -69,8 +70,15 @@ Ruling these out in order is the difference between fixing a document and corrup
 entry carries its address, where the source sits on disk, how to re-check it, and the mandatory line
 **what this quotation does NOT prove**.
 
+🔴 **Never type a quotation into the bank.** Entries are written by
+`{KROKAI} bank add --side pro|con --address "…" --from "<opening words>" --to "<closing words>"
+--not-proves "…" --apply` — the text is sliced from the source between the anchors, verified
+BEFORE the write, and the matching queue line is ticked by the write itself. If it refuses,
+extend the anchors; do not paste the text in by hand.
+
 `case/QUOTE-QUEUE.md` is written automatically and is a list of undone work, not a second bank. The
-decision — does this matter need the quotation — stays with a person.
+decision — does this matter need the quotation — stays with a person:
+`{KROKAI} bank dismiss "<fragment>" --why "…" --apply` declines a line with a recorded reason.
 
 ### Scans
 

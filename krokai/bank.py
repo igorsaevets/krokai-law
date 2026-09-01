@@ -3,7 +3,10 @@
 
 THE BANK is a decision. *"This quotation matters to the matter, here is its address, here is where
 the source sits on disk, here is how to re-check it in a minute, and here is what it does NOT
-prove."* A person writes it. Nothing writes to it automatically, ever.
+prove."* A person DECIDES it; since 0.12.0 the writing hand is `krokai bank add` (bank_add.py),
+which slices the quotation out of the source between two anchors - because a person or a model
+re-typing the text is how verbatim drifts. No hook ever writes to it: entry happens only at a
+person's explicit command.
 
 THE QUEUE is a list of undone work. A quotation appeared in an answer, it is not in the bank, so
 something must be decided about it. A hook writes it after every turn.
@@ -47,7 +50,9 @@ Every quotation below has been **opened in the primary source by a person** and 
 
 > ## Rules for this file
 > 1. A quotation enters only **verbatim** and only after someone opened the source. A paraphrase is
->    not a quotation. A row without `On disk` and `How to re-check` is incomplete.
+>    not a quotation. A row without `On disk` and `How to re-check` is incomplete. The write door
+>    is `krokai bank add`: the quotation is SLICED from the source between two anchors, never
+>    typed - re-typing by eye is how verbatim text drifts.
 > 2. The field **What this does NOT prove** is mandatory. It is what catches a dropped proviso and
 >    a pincite to the wrong page - the two defects a string check can never see.
 > 3. The section **against us** is not optional. A bank of only helpful quotations is a way to hear
@@ -63,6 +68,10 @@ Weight legend: 🟢 primary text, personally verified · 🟡 my inference, or a
 caveat · 🔴 not personally verified - open the source before this goes anywhere.
 
 ---
+
+## For us
+
+## Against us
 """
 
 ENTRY_TEMPLATE = """
@@ -86,9 +95,10 @@ QUEUE_HEADER = """# Quote queue - not yet banked
 Written automatically after each turn. This is a **list of undone work**, not a second bank:
 anything that appeared in an answer and is not in the quote bank lands here.
 
-**Closing a line:** open the source → decide whether the matter needs the quotation → if yes, bank
-it with its address, its location on disk and a "what this does NOT prove" note → tick the box.
-If not, tick the box and write one line saying why.
+**Closing a line:** open the source → decide whether the matter needs the quotation → if yes,
+bank it with `krokai bank add` - the quotation is SLICED from the source between your two
+anchors, never typed, and a successful write ticks the matching box here itself. If not:
+`krokai bank dismiss "<fragment>" --why "<the reason>"` ticks it and records why.
 
 🔴 A green mark means the checker found the words verbatim. It does **not** mean the quotation is
 apt: a dropped proviso and a wrong pincite are caught by eyes, not by string comparison.

@@ -310,6 +310,7 @@ def cmd_quote(a):
 def cmd_bank(a):
     from .config import load
     from .bank import read_bank, queue_open_items, in_bank
+    from .bank_add import revision_ledger
 
     cfg = load(a.dir)
     bank_path = cfg.abs(cfg["bank"])
@@ -317,6 +318,11 @@ def cmd_bank(a):
     entries = bank.count("\n### ")
     print("quote bank: %s" % bank_path)
     print("  %d entr%s, %d bytes" % (entries, "y" if entries == 1 else "ies", len(bank.encode())))
+    ledger, _body = revision_ledger(bank)
+    if ledger is not None and ledger != entries:
+        # The one state worth a line here: the header's count and the body disagree, which for an
+        # append-only file is either a silent deletion or hand entries - `krokai close` explains.
+        print("  🔴 the revision line says %d - the body disagrees; run `krokai close`" % ledger)
     todo = bank.count("TO DO")
     if todo:
         print("  🔴 %d entr%s still say TO DO - most often the 'what this does NOT prove' field, "
@@ -328,6 +334,16 @@ def cmd_bank(a):
     if a.text:
         print("\nin bank: %s" % ("yes" if in_bank(a.text, bank) else "NO"))
     return 0
+
+
+def cmd_bank_add(a):
+    from .bank_add import run_add
+    return run_add(a)
+
+
+def cmd_bank_dismiss(a):
+    from .bank_add import run_dismiss
+    return run_dismiss(a)
 
 
 # ------------------------------------------------------------------------------- sidecar
@@ -685,8 +701,9 @@ def cmd_close(a):
     for it in items[:15]:
         print("      • %s" % it)
     if op:
-        print("      Closing a line = bank it (address · file on disk · what it does NOT prove),")
-        print("      or tick it and write one line saying why the matter does not need it.")
+        print("      Closing a line = `krokai bank add` (slices the quotation from the source,")
+        print("      verifies it BEFORE writing, and ticks the line here itself), or")
+        print("      `krokai bank dismiss \"<fragment>\" --why ...` to decline with a reason.")
         ok = False
 
     unindexed, missing = orphans(cfg.source_dirs, cfg.abs(cfg["library_index"]),
@@ -711,6 +728,31 @@ def cmd_close(a):
     print("\n[4] outbound gate")
     if not self_test(printer=lambda s: print("      " + s)):
         ok = False
+
+    # 🔴 The bank is append-only BY RULE, and a rule enforces nothing: this check does. The
+    # header's revision line is refreshed by every `krokai bank add --apply`; a body SMALLER
+    # than the ledger means entries vanished between writes - a hand or model deletion, the one
+    # edit an append-only file must make loud. A body larger is merely hand-written entries.
+    from .bank import read_bank
+    from .bank_add import revision_ledger
+    ledger, body = revision_ledger(read_bank(cfg.abs(cfg["bank"])))
+    if ledger is None:
+        print("\n[5] bank ledger: no revision line yet (the bank predates `krokai bank add`)  OK")
+    elif body < ledger:
+        print("\n[5] bank ledger: the header says %d entries, the body holds %d  🔴 ENTRIES "
+              "VANISHED" % (ledger, body))
+        print("      An entry was deleted since the last gatekeeper write. Restore it from "
+              "version control")
+        print("      or a backup; if the deletion was deliberate, correct the revision line by "
+              "hand - in writing.")
+        ok = False
+    elif body > ledger:
+        print("\n[5] bank ledger: %d hand-written entr%s since the last gatekeeper write  🟡"
+              % (body - ledger, "y" if body - ledger == 1 else "ies"))
+        print("      Legitimate - the bank stays hand-editable. The next `krokai bank add "
+              "--apply` refreshes the count.")
+    else:
+        print("\n[5] bank ledger: header and body agree (%d entries)  OK" % body)
 
     print("\n%s" % ("ALL CLEAR" if ok else "🔴 there are things to decide - see above"))
     return 0 if ok else 1
@@ -974,9 +1016,59 @@ def build_parser():
     p.add_argument("--file")
     p.set_defaults(fn=cmd_quote)
 
-    p = common(sub.add_parser("bank", help="quote-bank and queue status"))
-    p.add_argument("text", nargs="?", help="ask whether this quotation is already banked")
-    p.set_defaults(fn=cmd_bank)
+    # `bank` grew subcommands in 0.12.0. Bare `krokai bank` stays the status view; the parent's
+    # own --dir/--quiet still work for it. The children define their own copies with SUPPRESS
+    # defaults - argparse otherwise CLOBBERS a parent-parsed value with the child's default,
+    # so `krokai bank --dir X add` would silently lose X.
+    def bank_common(bp):
+        bp.add_argument("--dir", default=argparse.SUPPRESS,
+                        help="start looking for casefile.json here (default: cwd)")
+        bp.add_argument("--quiet", action="store_true", default=argparse.SUPPRESS)
+        return bp
+
+    p = common(sub.add_parser(
+        "bank", help="quote-bank and queue: status, the write gatekeeper, dismiss"))
+    p.set_defaults(fn=cmd_bank, text=None)
+    bsub = p.add_subparsers(dest="bank_cmd")
+
+    q = bank_common(bsub.add_parser("status", help="bank and queue status (the default)"))
+    q.add_argument("text", nargs="?", help="ask whether this quotation is already banked")
+    q.set_defaults(fn=cmd_bank)
+
+    q = bank_common(bsub.add_parser(
+        "add", help="write ONE bank entry - the quotation is SLICED from the source between "
+                    "two anchors, never typed. Dry-run unless --apply"))
+    q.add_argument("--side", required=True, choices=("pro", "con"),
+                   help="which section the entry serves: for us, or against us")
+    q.add_argument("--address", required=True,
+                   help='the citation this quotation is OF, e.g. "8 CFR 214.2(f)(6)" - for law '
+                        'it also picks the source file')
+    q.add_argument("--from", dest="from_", required=True, metavar="WORDS",
+                   help="the quotation's OPENING words, verbatim; must be unique in the file")
+    q.add_argument("--to", dest="to", required=True, metavar="WORDS",
+                   help="the quotation's CLOSING words, searched after the opening anchor")
+    q.add_argument("--to-nth", dest="to_nth", type=int, default=None, metavar="N",
+                   help="when the closing words repeat: which occurrence (1-based). Refused "
+                        "rather than guessed - the guess loses the condition at the end")
+    q.add_argument("--kind", choices=("law", "guidance"), default="law",
+                   help="guidance = agency manuals/memoranda with no code address; needs --file, "
+                        "a year in the address, and a demonstrable address-to-file link")
+    q.add_argument("--not-proves", dest="not_proves", required=True, metavar="TEXT",
+                   help="the applicability boundary - what this quotation does NOT prove")
+    q.add_argument("--claim", help="entry title (default: the address)")
+    q.add_argument("--file", help="the source file, when the address alone cannot pick one")
+    q.add_argument("--id", dest="entry_id", metavar="ID",
+                   help="explicit entry id (default: next free in the section)")
+    q.add_argument("--apply", action="store_true", help="write; without it: a full dry-run")
+    q.set_defaults(fn=cmd_bank_add)
+
+    q = bank_common(bsub.add_parser(
+        "dismiss", help="tick ONE open queue line WITHOUT banking it, recording why"))
+    q.add_argument("fragment", help="a fragment of the quotation (matched against the queue's "
+                                    "quotation lines only)")
+    q.add_argument("--why", required=True, help="why the matter does not need this quotation")
+    q.add_argument("--apply", action="store_true", help="write; without it: a dry-run")
+    q.set_defaults(fn=cmd_bank_dismiss)
 
     p = common(sub.add_parser("sidecar", help="extract PDF text next to each PDF so grep sees it"))
     p.add_argument("--force", action="store_true")

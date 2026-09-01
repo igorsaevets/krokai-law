@@ -159,6 +159,16 @@ were in no source on disk at all.
 A hook is executed by the harness, not by the assistant. Topic cannot influence it. That is the
 entire argument for the hooks, and it is why this is a tool and not a checklist.
 
+The same measurement has a second half: even when a quotation **is** banked, somebody has to copy
+it — and a model produces text rather than copying it. Re-typing six banked quotations by eye
+lost two markers of six in the source project. So the bank is written by a gatekeeper,
+`krokai bank add`: you give the opening words and the closing words, and the tool slices the text
+between them out of the source file — the quotation is never in the arguments, so there is
+nowhere to mistype it. The slice is verified *before* the write (one that stops a clause short of
+`except as provided…` is refused, with the dropped continuation on screen), the address is checked
+against the file, the *what this does NOT prove* boundary is mandatory, and a successful write
+ticks the matching queue line itself. Dry-run by default; `--apply` writes.
+
 ---
 
 ## Install in about a minute

@@ -3760,6 +3760,183 @@ def suite_r78_repo(root):
 
 
 # ------------------------------------------------------------------------------------------------
+def suite_r79(tmp):
+    """R79 (Ф1): the bank write gatekeeper - `krokai bank add` / `krokai bank dismiss`.
+
+    Every pin here reproduces a branch first proven by execution on a live temp matter the day
+    the feature was built. The design is ported from a sister project's gatekeeper, whose
+    measured motivation was: an assistant re-typing six banked quotations by eye lost two
+    markers of six - the quotation must be a SLICE of the source, with nowhere to mistype it.
+    """
+    import contextlib
+    import json as _json
+    from krokai.cli import main as cli_main, build_parser
+    from krokai.config import TEMPLATE, CONFIG_NAME
+    from krokai.bank import BANK_HEADER, append_queue
+    from krokai.bank_add import revision_ledger, SIDES
+
+    def run(argv):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cli_main(argv)
+        return rc, buf.getvalue()
+
+    root = os.path.join(tmp, "r79-matter")
+    law = os.path.join(root, "law")
+    case = os.path.join(root, "case")
+    for d in (law, case):
+        os.makedirs(d, exist_ok=True)
+    _json.dump(TEMPLATE, io.open(os.path.join(root, CONFIG_NAME), "w", encoding="utf-8"))
+    io.open(os.path.join(law, "8CFR-part-214.txt"), "w", encoding="utf-8").write(REG)
+    bank_path = os.path.join(case, "QUOTE-BANK.md")
+    io.open(bank_path, "w", encoding="utf-8", newline="\n").write(BANK_HEADER)
+
+    # --- the init template carries BOTH side sections (G-B: structure, not prose) --------------
+    for side, heading in SIDES.items():
+        ok("r79 init bank template carries the «%s» section" % side,
+           re.search(r"(?m)^%s\s*$" % re.escape(heading), BANK_HEADER) is not None)
+
+    NP = "Admissibility standard only; it does not prove this applicant is admissible."
+    base = ["bank", "add", "--dir", root, "--side", "pro", "--address", "8 CFR 214.2",
+            "--from", "An applicant shall not be admitted",
+            "--to", "not inadmissible under section 212.", "--not-proves", NP]
+
+    # --- dry-run is the default: everything shown, nothing written -----------------------------
+    before = io.open(bank_path, encoding="utf-8").read()
+    rc, out = run(base)
+    ok("r79 dry-run: exit 0 and the would-be id is on screen", rc == 0 and "§P-1" in out, out[-200:])
+    ok("r79 dry-run: the bank file is untouched",
+       io.open(bank_path, encoding="utf-8").read() == before)
+
+    # --- --apply writes; the quotation is the SLICE, not the anchors ---------------------------
+    rc, out = run(base + ["--apply"])
+    body = io.open(bank_path, encoding="utf-8").read()
+    ok("r79 apply: written, and the post-write re-read is reported", rc == 0 and "re-read" in out)
+    ok("r79 apply: the middle words - present in NEITHER anchor - are in the banked quote",
+       "establishes to the satisfaction of the officer" in body,
+       "proof the text was sliced from the source, not assembled from the arguments")
+    ledger, entries = revision_ledger(body)
+    ok("r79 apply: the header ledger agrees with the body", ledger == entries == 1,
+       "%s/%s" % (ledger, entries))
+    ok("r79 apply: the entry sits under «For us», above «Against us»",
+       body.find("## For us") < body.find("### §P-1 ") < body.find("## Against us"))
+    ok("r79 apply: the entry says it was sliced, and the verdict at banking",
+       "not typed" in body and "at banking: VERIFIED" in body)
+
+    # --- the headline refusal: a slice that stops before its proviso ---------------------------
+    rc, out = run(["bank", "add", "--dir", root, "--side", "con", "--address", "8 CFR 214.2",
+                   "--from", "The district director may consider reinstating",
+                   "--to", "makes a request for reinstatement", "--not-proves", NP])
+    ok("r79 the cut-condition shape is REFUSED before writing (exit 3)",
+       rc == 3 and "REFUSED" in out, "the whole reason the gatekeeper exists")
+    ok("r79 the refusal shows the continuation the slice dropped",
+       "but do not include" in out)
+    ok("r79 the connector warning fired on the edge print", "CONNECTOR" in out)
+    ok("r79 nothing was written by the refusal",
+       "§C-" not in io.open(bank_path, encoding="utf-8").read())
+
+    # --- anchors: unique start, explicit choice for a repeated end -----------------------------
+    rc, out = run(["bank", "add", "--dir", root, "--side", "pro", "--address", "8 CFR 214.2",
+                   "--from", "student", "--to", "occurred.", "--not-proves", NP])
+    ok("r79 a non-unique start anchor is refused with its count",
+       rc == 3 and "2 times" in out, out[-160:])
+    amb = ["bank", "add", "--dir", root, "--side", "pro", "--address", "8 CFR 214.2",
+           "--from", "(f)(16) Reinstatement", "--to", "student", "--not-proves", NP]
+    rc, out = run(amb)
+    ok("r79 a repeated end anchor is refused, listing each occurrence with its slice",
+       rc == 3 and "--to-nth 2" in out and "-character slice" in out)
+    rc, out = run(amb + ["--to-nth", "2"])
+    ok("r79 --to-nth resolves the ambiguity explicitly", rc == 0 and "VERIFIED" in out)
+
+    # --- floors and ids ------------------------------------------------------------------------
+    rc, _out = run(base[:-1] + ["too short"])
+    ok("r79 the --not-proves floor holds (the boundary field must not be decorative)", rc == 2)
+    rc, out = run(base + ["--id", "P-1"])
+    ok("r79 a taken id is refused - ids are never reused", rc == 3 and "already taken" in out)
+    rc, out = run(base + ["--id", "P-10"])
+    ok("r79 §P-10 is free while §P-1 is taken (id equality, not substring)", rc == 0,
+       "the naive `'§P-1' in text` test would refuse it")
+
+    # --- the queue closes BY the write, under the containment floors ---------------------------
+    queue_path = os.path.join(case, "QUOTE-QUEUE.md")
+    covered = ("The district director may consider reinstating a student who makes a request "
+               "for reinstatement, but do not include instances where a pattern of repeated "
+               "violations has occurred.")
+    unrelated = ("An officer may not deny an application without first issuing a notice of "
+                 "intent to deny under this part in any circumstance whatsoever.")
+    also_notice = ("The notice of intent to deny procedure applies to every application filed "
+                   "under this part without exception at all times.")
+    short_contained = "Reinstatement to student status. The district"
+    append_queue(queue_path, [(covered, "NOT_FOUND", "t", ""),
+                              (unrelated, "NOT_FOUND", "t", ""),
+                              (also_notice, "NOT_FOUND", "t", ""),
+                              (short_contained, "NOT_FOUND", "t", "")])
+    rc, out = run(["bank", "add", "--dir", root, "--side", "con", "--address", "8 CFR 214.2",
+                   "--from", "(f)(16) Reinstatement", "--to", "violations has occurred.",
+                   "--not-proves", NP, "--apply"])
+    q = io.open(queue_path, encoding="utf-8").read()
+    ok("r79 banking ticks the covered queue line, naming the entry",
+       rc == 0 and "closed: banked as §C-1" in q)
+    ok("r79 a short contained line is NOT closed (no piece of sixty)",
+       short_contained in q and q.count("- [x]") == 1,
+       "a stock legal opening once closed two different provisions")
+    ok("r79 unrelated lines stay open", q.count("- [ ]") >= 2)
+
+    # --- dismiss: one line, one reason, floors -------------------------------------------------
+    rc, _out = run(["bank", "dismiss", "--dir", root, "notice of intent", "--why", "short"])
+    ok("r79 the --why floor holds", rc == 2)
+    rc, out = run(["bank", "dismiss", "--dir", root, "notice of intent",
+                   "--why", "Procedural posture only; the matter has no denial to answer."])
+    ok("r79 a fragment matching two open lines is refused - one reason cannot cover two "
+       "decisions", rc == 3 and "matches 2" in out)
+    rc, out = run(["bank", "dismiss", "--dir", root, "in any circumstance whatsoever",
+                   "--why", "Procedural posture only; the matter has no denial to answer.",
+                   "--apply"])
+    q = io.open(queue_path, encoding="utf-8").read()
+    ok("r79 a unique dismiss ticks the line and records the reason",
+       rc == 0 and "dismissed: Procedural posture only" in q)
+
+    # --- the ledger makes deletion loud --------------------------------------------------------
+    body = io.open(bank_path, encoding="utf-8").read()
+    cut = re.sub(r"(?s)### §P-1 .*?(?=### §P-10|## Against us)", "", body, count=1)
+    ledger, entries = revision_ledger(cut)
+    ok("r79 a hand deletion is visible: body below the header ledger",
+       ledger is not None and entries == ledger - 1, "%s vs %s" % (ledger, entries))
+    io.open(bank_path, "w", encoding="utf-8", newline="\n").write(cut)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = cli_main(["close", "--dir", root])
+    ok("r79 `krokai close` says ENTRIES VANISHED and fails the round",
+       rc == 1 and "VANISHED" in buf.getvalue())
+
+    # --- guidance: no code-address laundering, year + demonstrable link, sha in the entry ------
+    gpath = os.path.join(law, "uscis-policy-manual-vol7-2019.md")
+    io.open(gpath, "w", encoding="utf-8").write(
+        "USCIS Policy Manual, Volume 7 - Adjustment of Status (2019 edition)\n\n"
+        "The officer must evaluate the record as a whole in every adjustment case before any "
+        "favorable exercise of discretion is recorded in the decision.\n")
+    g = ["bank", "add", "--dir", root, "--side", "pro", "--kind", "guidance",
+         "--file", gpath, "--from", "The officer must evaluate the record",
+         "--to", "recorded in the decision.", "--not-proves", NP]
+    rc, out = run(g + ["--address", "8 CFR 214.2"])
+    ok("r79 guidance refuses an address that parses as a code citation",
+       rc == 3 and "parses as a code citation" in out,
+       "a CFR quote under a guidance label would dodge the address binding")
+    rc, out = run(g + ["--address", "USCIS Policy Manual Volume 7"])
+    ok("r79 guidance demands a year in the address", rc == 3 and "YEAR" in out)
+    rc, out = run(g + ["--address", "USCIS Policy Manual Volume 7 (2019)", "--apply"])
+    body = io.open(bank_path, encoding="utf-8").read()
+    ok("r79 guidance banks with the source sha256 in the entry",
+       rc == 0 and "source sha256" in body)
+
+    # --- the parser keeps the parent's --dir/--quiet reachable from the subcommands ------------
+    a = build_parser().parse_args(base)
+    ok("r79 the namespace carries --dir/--quiet defaults for the subcommand (no argparse "
+       "clobber)", hasattr(a, "dir") and hasattr(a, "quiet"))
+    rc, out = run(["bank", "--dir", root])
+    ok("r79 bare `krokai bank` is still the status view", rc == 0 and "quote bank:" in out)
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if root not in sys.path:
@@ -3779,6 +3956,7 @@ def main():
         suite_r77_cli(tmp)
         suite_r77b(tmp)
         suite_r78(tmp)
+        suite_r79(tmp)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)

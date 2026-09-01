@@ -10,6 +10,55 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.12.0] - 2026-09-01
+
+The write gatekeeper. Until now the bank's header said "verbatim only, after someone opened the
+source" and nothing enforced it: `krokai bank` was a status view, and every entry was typed - by
+a person or, worse, by a model, which PRODUCES text rather than copying it. The source project
+measured the cost of that: an assistant re-typing six banked quotations by eye lost two markers
+of six. The new door takes two anchors - the opening words and the closing words - and writes
+the slice of the source between them. The text of the quotation is never in the arguments, so
+there is nowhere to mistype it.
+
+### Added
+- **`krokai bank add`** - the gatekeeper. Its guarantees, each construction rather than effort:
+  the start anchor must be unique in the file; a repeated end anchor is refused with every
+  occurrence listed rather than guessed (`--to-nth N` chooses explicitly, and stays in the
+  command history); the slice's edges are printed plus what the source says NEXT, with a loud
+  warning when the continuation opens with a connector; the verifier runs BEFORE the write and
+  a verdict outside `CLEAN` refuses it - a slice that stops one clause short of `except as
+  provided…` comes back `TRUNCATED_CONDITION` and is not written (no override flag: a
+  documented escape becomes the default); the address is resolved to the source file through
+  the citation packs, so "found somewhere" cannot be banked under someone else's address; the
+  entry records the neighbours, the reproducing command as its re-check recipe, the verdict at
+  banking, and that the text was sliced, not typed. Dry-run is the default; `--apply` writes,
+  then re-reads the file from disk and proves the entry landed exactly once.
+- **`--kind guidance`** for sources with no code address (policy manuals, memoranda): the
+  address must NOT parse as a code citation - otherwise a CFR quotation could be laundered
+  under a guidance label past the address binding - must carry a year, must demonstrably match
+  the file's name or header, and the entry records the source file's sha256.
+- **`krokai bank dismiss "<fragment>" --why "<reason>"`** - tick ONE open queue line without
+  banking it. The fragment is matched against the queue's quotation lines only; a fragment
+  matching several lines is refused, because one reason cannot cover two decisions; the reason
+  has a floor, because «not needed» teaches nothing three weeks later.
+- **The queue closes BY the write.** A successful `--apply` ticks every open queue line the
+  banked quotation covers, naming the entry id. Containment has floors - all substantial
+  fragments contained, at least one long one - because a stock legal opening shared by two
+  different provisions once closed both lines.
+- **A bank ledger, and `krokai close` now reads it.** `Bank revision: <date> - entries: N` is
+  refreshed in the header on every gatekeeper write; a new close check compares it with the
+  body. A body SMALLER than the ledger - an entry deleted between writes - fails the round:
+  the bank is append-only by rule, and a rule enforces nothing.
+- **The bank template now carries both side sections** - `## For us` / `## Against us` - so
+  "the against-us section is not optional" is structure, not prose, and `--side pro|con` has a
+  target. A bank predating the sections gets them created on first write.
+
+### Changed
+- `krokai bank` grew subcommands. The bare command is still the status view (now also flagging
+  a ledger/body disagreement); the old positional `krokai bank "<text>"` is now
+  `krokai bank status "<text>"`. The queue header and `krokai close` name the two new commands
+  instead of describing hand edits - the tool's own mouth teaches the new door.
+
 ## [0.11.0] - 2026-09-01
 
 The harvest release: a sister project's paid-for citation lessons were adjudicated against this

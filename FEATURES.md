@@ -486,9 +486,34 @@ real fabrication hides in a pile of shrugs.
 
 **The bank is a decision.** *This quotation matters, here is its address, here is where the source
 sits on disk, here is how to re-check it in a minute, and here is what it does NOT prove.* A person
-writes it. Nothing writes to it automatically, ever.
+decides it; since 0.12.0 the writing hand is the gatekeeper below. No hook ever writes to it —
+entry happens only at a person's explicit command.
 
 **The queue is a list of undone work.** A hook writes it after every turn.
+
+### 🔴 `bank add` — the write gatekeeper (0.12.0)
+
+The header said *"verbatim only"* and nothing enforced it. The source project measured what
+enforcement-by-instruction is worth: an assistant re-typing six banked quotations by eye lost two
+markers of six — a model **produces** text, it does not copy it. So the gatekeeper takes two
+anchors, the opening and the closing words, and writes the **slice of the source between them**:
+the quotation is never in the arguments, so there is nowhere to mistype it.
+
+The guarantees are construction, not effort: the start anchor must be **unique** in the file; a
+repeated end anchor is **refused with every occurrence listed** — `--to-nth N` chooses explicitly
+and stays in the command history — because silently taking the first occurrence is exactly how a
+condition at the end of a provision is lost. The slice's edges are printed **plus what the source
+says next**, with a warning when the continuation opens with a connector. The verifier runs
+**before** the write, and a verdict outside `CLEAN` refuses it — a slice that stops one clause
+short of `except as provided…` comes back `TRUNCATED_CONDITION` and is not written; there is no
+override flag, because a documented escape becomes the default. The address is resolved to the
+source file through the citation packs, so *found somewhere* cannot be banked under someone
+else's address; `--kind guidance` (no code address) demands a year, refuses an address that
+parses as a code citation, proves the address↔file link, and records the file's sha256. A
+successful `--apply` re-reads the file from disk, proves the entry landed exactly once, ticks
+the queue lines the quotation covers, and refreshes a header ledger that `krokai close` compares
+with the body — an entry deleted between writes fails the round, because append-only is
+otherwise just a rule, and a rule enforces nothing.
 
 ### 🔴 Why they are not one file
 
