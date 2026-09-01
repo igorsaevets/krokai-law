@@ -32,7 +32,7 @@ import tempfile
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from ._datadir import data_dir
+from ._datadir import data_dir, data_file
 
 PASS = []
 FAIL = []
@@ -3477,6 +3477,289 @@ def suite_r77b(tmp):
 
 
 # ------------------------------------------------------------------------------------------------
+def suite_r78(tmp):
+    """R78 (И3): AGENTS.md delivery, editorial-mark symmetry, catalogue honesty, docstring
+    pointers. Every behavioural pin here started as a RED probe through the real pipeline
+    (reviews/r78-i3/probes in the meta-project); the pins keep the repairs from regressing and
+    keep two deliberate DECISIONS from being "improved" away."""
+    import contextlib
+    from krokai.corpus import Corpus
+    from krokai.verify import check
+    from krokai.verdicts import CLEAN, DANGEROUS, SIX_CAUSES
+    from krokai import mutations
+
+    # --- the [sic] that belongs to the source (probe b1; was PARTIAL on a faithful quote) -----
+    sic_src = ("The Board received the application on Setpember [sic] 22, 1987, and denied it "
+               "as untimely under the applicable regulation because the delay was not excused")
+    law = os.path.join(tmp, "law-r78")
+    os.makedirs(law, exist_ok=True)
+    io.open(os.path.join(law, "matter-of-sic.txt"), "w", encoding="utf-8").write(
+        "Decision text. " + sic_src + ". Further text follows here.")
+    c = Corpus([law], quiet=True)
+
+    v, _w, d = check(sic_src, c)
+    ok("r78 [sic] in the SOURCE: a faithful quotation (mark included) is clean",
+       v == "VERIFIED", v)
+    ok("r78 [sic] in the SOURCE: the detail says the mark was KEPT, not stripped",
+       "kept, not stripped" in (d or ""), d[:90])
+
+    nosic = sic_src.replace(" [sic]", "")
+    law2 = os.path.join(tmp, "law-r78b")
+    os.makedirs(law2, exist_ok=True)
+    io.open(os.path.join(law2, "matter-of-nosic.txt"), "w", encoding="utf-8").write(
+        "Decision text. " + nosic + ". Further text follows here.")
+    c2 = Corpus([law2], quiet=True)
+
+    v, _w, d = check(sic_src, c2)     # the drafter's own editorial mark - source has none
+    ok("r78 drafter-added [sic] (source without): still clean - the common case survives",
+       v == "VERIFIED", v)
+    # --- no silent excision (probe c1/c2: the strip left no trace anywhere) -------------------
+    ok("r78 excision is visible: stripping a mark leaves a note in the detail",
+       "stripped before comparison" in (d or ""), d[:90])
+
+    v, _w, d = check(nosic, c)        # the quote CUT the source's [sic]
+    ok("r78 a quotation that OMITS the source's [sic] stays loud (cutting source text)",
+       v not in CLEAN, v)
+
+    # The kept pass may not COST a diagnosis: a quotation truncated before its proviso that
+    # includes the source's own [sic] must come back TRUNCATED_CONDITION (the kept pass's
+    # located verdict), not the first pass's PARTIAL artifact. Found by shape enumeration
+    # against the fix itself (probe_q1_shape).
+    trunc_src = ("The application [sic] must be filed before the deadline expires under this "
+                 "part, provided that the applicant establishes timely eligibility for the "
+                 "benefit sought")
+    law4 = os.path.join(tmp, "law-r78d")
+    os.makedirs(law4, exist_ok=True)
+    io.open(os.path.join(law4, "matter-of-q1.txt"), "w", encoding="utf-8").write(
+        "Decision text. " + trunc_src + ". Tail text here.")
+    c4 = Corpus([law4], quiet=True)
+    v, _w, d = check("The application [sic] must be filed before the deadline expires "
+                     "under this part", c4)
+    ok("r78 [sic]-kept pass keeps the SHARP verdict: truncation, not a PARTIAL artifact",
+       v == "TRUNCATED_CONDITION", "%s %s" % (v, (d or "")[:60]))
+    v, _w, _d = check(trunc_src + ".", c4)
+    ok("r78 ...and the untruncated control with the same [sic] stays clean",
+       v == "VERIFIED", v)
+
+    # --- R78 PANEL pins: each was a probe-proven red before its repair ------------------------
+    # (1) A source-side [sic] between the quotation's end and the limiter blinded LIMITER_RE on
+    # BOTH asking branches - a silent truncation graded VERIFIED, and the alnum twin explained
+    # itself with the confidently wrong «our quotation adds `,`».
+    blind_src = ("An applicant remains eligible for the requested relief [sic], unless the "
+                 "applicant has been convicted of a felony offense after the date of filing")
+    law5 = os.path.join(tmp, "law-r78e")
+    os.makedirs(law5, exist_ok=True)
+    io.open(os.path.join(law5, "matter-of-blind.txt"), "w", encoding="utf-8").write(
+        "Decision text. " + blind_src + ". Tail.")
+    c5 = Corpus([law5], quiet=True)
+    v, _w, d = check("An applicant remains eligible for the requested relief", c5)
+    ok("r78 panel: a source [sic] before the limiter no longer blinds the exact branch",
+       v == "TRUNCATED_CONDITION", "%s %s" % (v, (d or "")[:60]))
+    v, _w, d = check("An applicant remains eligible, for the requested relief", c5)
+    ok("r78 panel: ...nor the alnum branch (the comma-drift twin)",
+       v == "TRUNCATED_CONDITION", "%s %s" % (v, (d or "")[:60]))
+
+    # (2) The [OPENED]-for-'opened' laundering: a provenance tag whose letters equal a real
+    # source word must NOT ride the marks-kept pass to a green PUNCTUATION, and no note may
+    # call it "the source's own text". Gate on the editorial class + exact-anchored wins.
+    open_src = ("The record was opened to the public on June 1, 2020, and the applicant was "
+                "notified in writing of the decision")
+    law6 = os.path.join(tmp, "law-r78f")
+    os.makedirs(law6, exist_ok=True)
+    io.open(os.path.join(law6, "order-of-open.txt"), "w", encoding="utf-8").write(
+        "Order text. " + open_src + ". Tail.")
+    c6 = Corpus([law6], quiet=True)
+    v, _w, d = check(open_src.replace(" opened ", " [OPENED] "), c6)
+    ok("r78 panel: [OPENED] colliding with the word 'opened' stays loud (no laundering)",
+       v not in CLEAN, "%s %s" % (v, (d or "")[:60]))
+    ok("r78 panel: ...and the note never claims a provenance tag is the source's own text",
+       "source's own text" not in (d or ""), (d or "")[:80])
+
+    # (3) The mixed-tags cost: a faithful source-[sic] quotation carrying a provenance tag
+    # beside it used to fail BOTH passes (all-or-nothing keep). The editorial/provenance split
+    # keeps [sic] and strips [OPENED] on the second pass.
+    v, _w, d = check(sic_src + " [OPENED]", c)
+    ok("r78 panel: faithful source-[sic] + a provenance tag beside it is clean again",
+       v == "VERIFIED", "%s %s" % (v, (d or "")[:70]))
+    ok("r78 panel: ...with the provenance tag's excision still visible in the detail",
+       "[OPENED]" in (d or ""), (d or "")[:90])
+
+    # (4) init refuses the toolkit's own checkout (three reviewers independently). The positive
+    # control - init working in a normal folder - is suite_install's whole job.
+    from krokai.cli import cmd_init
+    fake = os.path.join(tmp, "fake-checkout")
+    os.makedirs(os.path.join(fake, "krokai"), exist_ok=True)
+    io.open(os.path.join(fake, "CHANGELOG.md"), "w", encoding="utf-8").write("# log\n")
+    io.open(os.path.join(fake, "krokai", "selftest.py"), "w", encoding="utf-8").write("# st\n")
+
+    class _A(object):
+        path = fake
+        force = False
+        claude_md_only = False
+    try:
+        cmd_init(_A())
+        refused = False
+        msg = "<no exception>"
+    except SystemExit as e:
+        refused = True
+        msg = str(e)
+    ok("r78 panel: init REFUSES a folder that looks like the toolkit's own checkout",
+       refused and "matter" in msg, msg[:80])
+
+    # (5) The live CLI ladder is DERIVED from SIX_CAUSES - the hand-written four-cause block
+    # survived a whole release after the code went to six. Source-level pin: the old literal is
+    # gone and the derivation is present in cli.py.
+    cli_src = io.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "cli.py"),
+                      encoding="utf-8").read()
+    ok("r78 panel: cmd_quote's NOT_FOUND ladder derives from SIX_CAUSES (old literal gone)",
+       "THE CORPUS IS INCOMPLETE" not in cli_src and cli_src.count("SIX_CAUSES") >= 1)
+
+    # (6) Every `krokai <sub>` named in channels.json resolves to a real subcommand - the _doc
+    # said `krokai consult` for releases after the command became `review` (dangling-pointer
+    # class, in DATA this time).
+    import json as _json
+    from krokai.cli import build_parser
+    reg_text = io.open(data_file("channels.json"), encoding="utf-8").read()
+    subs = set()
+    for act in build_parser()._subparsers._group_actions:
+        subs |= set(getattr(act, "choices", {}) or {})
+    cited = set(re.findall(r"krokai ([a-z-]+)", reg_text))
+    ok("r78 panel: every `krokai <sub>` cited in channels.json is a real subcommand",
+       cited <= subs, "cited-but-missing: %s" % sorted(cited - subs))
+
+    # (7) The snippet's rungs carry their SIX_CAUSES twins - counting alone would pass a ladder
+    # with the right length and the wrong content.
+    snip_t = io.open(os.path.join(data_dir("templates"), "CLAUDE.md.snippet"),
+                     encoding="utf-8").read()
+    section_t = snip_t.split("`NOT_FOUND` is not `INVENTED`", 1)[-1].split("###", 1)[0]
+    rung_keys = ("downloaded", "edition", "damaged", "placeholder", "law", "rewritten")
+    rungs = re.findall(r"(?m)^\d+\.\s+(.+(?:\n\s{3,}.+)*)", section_t)
+    paired = len(rungs) == len(rung_keys) and all(
+        k in r.lower() for k, r in zip(rung_keys, rungs))
+    ok("r78 panel: each snippet rung matches its SIX_CAUSES twin by key word, in order",
+       paired, "rungs=%d" % len(rungs))
+
+    # --- DECISION pin (probe a2): an interposed running header stays LOUD ---------------------
+    # «677 Interim Decision #2282» welded mid-sentence by a page break comes back OPERATOR. That
+    # is a false alarm about a CORPUS defect, and it stays: an automatic excuse for
+    # header-shaped insertions would also excuse a real edit of the same shape - the exact hole
+    # the R76 mandatory-group fix in FOOTNOTE_RE closed. The cure is in the corpus copy
+    # (SIX_CAUSES cause 3 names it); this pin keeps the forgiveness from being added back.
+    sent = ("The respondent has established that his deportation would result in extreme "
+            "hardship to his lawful permanent resident spouse within the meaning of the statute")
+    law3 = os.path.join(tmp, "law-r78c")
+    os.makedirs(law3, exist_ok=True)
+    io.open(os.path.join(law3, "interim-header.txt"), "w", encoding="utf-8").write(
+        "Opinion text. " + sent[:98] + " 677 Interim Decision #2282 " + sent[98:] + ". More.")
+    c3 = Corpus([law3], quiet=True)
+    v, _w, _d = check(sent, c3)
+    ok("r78 DECISION: a running header welded mid-sentence stays a loud corpus-damage alarm",
+       v in DANGEROUS, v)
+    ok("r78 ...and cause 3 of SIX_CAUSES names the welded-header and wrong-projection cases",
+       "running header" in SIX_CAUSES[2] and "PROJECTION" in SIX_CAUSES[2], SIX_CAUSES[2][:80])
+
+    # --- Д-3 micro: the generator is no narrower than the checker (probe d1) ------------------
+    q_semi = ("An application for adjustment of status shall be filed with the fee prescribed "
+              "and with the documents specified in the instructions; provided that the "
+              "applicant establishes eligibility at the time of filing")
+    m = mutations.m_cut_condition(q_semi)
+    ok("r78 Д-3: m_cut_condition mutates the '; provided that' form the checker catches",
+       bool(m) and "provided" not in (m or ""), repr(m)[:70])
+    m2 = mutations.m_synonym("the alien is eligible for relief from removal proceedings")
+    ok("r78 Д-3: the synonym bank tests the real 2026 shift, alien -> noncitizen",
+       bool(m2) and " noncitizen " in m2, repr(m2)[:70])
+
+    # --- Д-3: the catalogue mirrors the code, bidirectionally ---------------------------------
+    rows = set(re.findall(r"(?m)^\s{4}([a-z][a-z-]+)\s{2,}", mutations.__doc__ or ""))
+    implemented = {n for n, _f, _m in mutations.MUTATIONS} | {"splice"}
+    ok("r78 Д-3: every catalogue row is implemented (no row mirrors nothing)",
+       rows <= implemented, "rows not implemented: %s" % sorted(rows - implemented))
+    ok("r78 Д-3: every implemented mutation has its catalogue row (drift is two-way)",
+       implemented <= rows, "implemented but unlisted: %s" % sorted(implemented - rows))
+    ok("r78 Д-3: wrong-address is honestly recorded as the ADDRESS layer's class, not a row",
+       "wrong-address" in (mutations.__doc__ or "") and "ADDRESS layer" in (mutations.__doc__ or ""))
+
+    # --- Д-1 class: directive docstring pointers resolve to files -----------------------------
+    # Scope: `see X.py` / `see \`X.py\`` and double-backticked ``X.py`` in krokai/*.py. This
+    # file itself is excluded - it QUOTES pointer shapes as data, and scanning the scanner
+    # grades its own examples. Provenance citations without a directive shape (a probe named
+    # with its round) are out of scope on purpose: they cite history, not the tree.
+    pkg = os.path.dirname(os.path.abspath(__file__))
+    hooks_dir = data_dir("hooks")
+    dangling, seen = [], 0
+    for fn in sorted(os.listdir(pkg)):
+        if not fn.endswith(".py") or fn == os.path.basename(__file__):
+            continue
+        src = io.open(os.path.join(pkg, fn), encoding="utf-8", errors="replace").read()
+        for mm in re.finditer(r"(?i)\bsee\s+`{0,2}([\w.-]+\.py)`{0,2}|``([\w.-]+\.py)``", src):
+            name = mm.group(1) or mm.group(2)
+            seen += 1
+            if not (os.path.isfile(os.path.join(pkg, name))
+                    or os.path.isfile(os.path.join(hooks_dir, name))):
+                dangling.append("%s -> %s" % (fn, name))
+    ok("r78 Д-1: every directive docstring pointer resolves to a file in the tree "
+       "(the fourth dangling-pointer incident was verdicts.py naming a module that never shipped)",
+       seen > 0 and not dangling, "checked %d; dangling: %s" % (seen, dangling))
+
+    # --- Б-12: the brief asks for the field that was right when the verdict was wrong ---------
+    from krokai.prompts import QUOTE_RULES
+    ok("r78 Б-12: the brief demands 'what evidence would change your conclusion'",
+       "would change your conclusion" in QUOTE_RULES)
+
+    # --- Б-6: the snippet's ladder is the code's ladder ---------------------------------------
+    snip = io.open(os.path.join(data_dir("templates"), "CLAUDE.md.snippet"),
+                   encoding="utf-8").read()
+    ok("r78 Б-6: the snippet says SIX causes, not the four it said while the code held six",
+       "six causes" in snip and "four causes" not in snip)
+    section = snip.split("`NOT_FOUND` is not `INVENTED`", 1)[-1].split("###", 1)[0]
+    numbered = re.findall(r"(?m)^\d+\.\s", section)
+    ok("r78 Б-6: the snippet ladder has exactly len(SIX_CAUSES) rungs - counted, not recalled",
+       len(numbered) == len(SIX_CAUSES), "snippet %d vs code %d" % (len(numbered), len(SIX_CAUSES)))
+    ok("r78 В-1: the snippet points the matter's assistant at `agents` for the full discipline",
+       "{KROKAI} agents" in snip)
+
+    # --- В-1: AGENTS.md travels with the package and the command prints it --------------------
+    agents_path = data_file("AGENTS.md")
+    ok("r78 В-1: AGENTS.md resolves in this layout (wheel force-include or repo root)",
+       os.path.isfile(agents_path), agents_path)
+    from krokai.cli import main as cli_main
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = cli_main(["agents"])
+    out = buf.getvalue()
+    ok("r78 В-1: `krokai agents` prints the discipline and exits 0",
+       rc == 0 and "ai-second-opinion" in out and "INSTALL-FOR-AI.md" in out,
+       "rc=%s len=%d" % (rc, len(out)))
+
+
+def suite_r78_repo(root):
+    """Root-file half of R78 - meaningful only from a source checkout (the wheel does not carry
+    the repository root). The CLAUDE.md bridge exists because Claude Code reads CLAUDE.md and
+    not AGENTS.md, and a backticked `@path` is a literal, not an import - so the bridge line
+    must be bare."""
+    ap = os.path.join(root, "AGENTS.md")
+    cp = os.path.join(root, "CLAUDE.md")
+    ok("r78 repo: AGENTS.md exists at the repository root", os.path.isfile(ap), ap)
+    body = io.open(ap, encoding="utf-8").read() if os.path.isfile(ap) else ""
+    ok("r78 repo: AGENTS.md names the install runbook and the orchestration sibling",
+       "INSTALL-FOR-AI.md" in body and "ai-second-opinion" in body)
+    ok("r78 repo: AGENTS.md is not a template - no {KROKAI} placeholder to rot unrendered",
+       "{KROKAI}" not in body)
+    ok("r78 repo: CLAUDE.md bridge exists", os.path.isfile(cp), cp)
+    bridge = io.open(cp, encoding="utf-8").read() if os.path.isfile(cp) else ""
+    ok("r78 repo: the bridge line is a BARE @AGENTS.md (backticked = literal = silent no-op)",
+       re.search(r"(?m)^@AGENTS\.md\s*$", bridge) is not None)
+    # The R78 panel showed the presence pin above is decorative against contamination: init in
+    # the clone root would APPEND a matter block after the import and this pin would still
+    # pass. So: the bridge holds NOTHING but its comment and the import line.
+    residue = re.sub(r"(?s)<!--.*?-->", "", bridge).replace("@AGENTS.md", "").strip()
+    ok("r78 repo: the bridge file holds ONLY the comment and the import - no appended blocks",
+       residue == "", residue[:60])
+    ok("r78 repo: no second AGENTS.md inside the package dir (data_file must serve the root's)",
+       not os.path.isfile(os.path.join(root, "krokai", "AGENTS.md")))
+
+
+# ------------------------------------------------------------------------------------------------
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if root not in sys.path:
@@ -3495,6 +3778,7 @@ def main():
         suite_r77(tmp)
         suite_r77_cli(tmp)
         suite_r77b(tmp)
+        suite_r78(tmp)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)
@@ -3530,15 +3814,18 @@ def main():
         #
         # The skip is announced, not silent. A test that quietly vanishes reads as a test that
         # passed, which is the exact failure shape this project exists to catch.
+        # The count in this message is DERIVED from the list, not typed: the typed «3» went
+        # stale the same hour a fourth suite was added (R78) - the exact number-in-prose class
+        # this file's own header warns about.
+        repo_suites = [suite_no_real_identifiers, suite_rename, suite_docs, suite_r78_repo]
         if _is_source_checkout(root):
-            suite_no_real_identifiers(root)
-            suite_rename(root)
-            suite_docs(root)
+            for s in repo_suites:
+                s(root)
         else:
-            print("note: 3 repository-hygiene suites skipped - this is an installed copy, not a\n"
+            print("note: %d repository-hygiene suites skipped - this is an installed copy, not a\n"
                   "      source checkout, so there is no tree of ours to scan (looked in: %s).\n"
                   "      To run them: git clone the repo and `python -m krokai selftest` there."
-                  % root)
+                  % (len(repo_suites), root))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

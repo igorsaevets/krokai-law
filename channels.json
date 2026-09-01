@@ -1,5 +1,5 @@
 {
-  "_doc": "Which outside models to ask, and how to reach them. Adding, disabling or re-pointing a channel is a change HERE, never in the code. Copy this file next to your casefile.json to override it for one matter; `krokai consult --registry <path>` overrides it for one run.",
+  "_doc": "Which outside models to ask, and how to reach them. Adding, disabling or re-pointing a channel is a change HERE, never in the code. Copy this file next to your casefile.json to override it for one matter; `krokai review --registry <path>` overrides it for one run.",
 
   "_why_a_file": "Every value in here rotates. Model names change monthly, a weekly subscription limit runs out mid-round, a vendor renames a flag. Measured on the system this was extracted from: two review CLIs changed their model identifier inside one week, and a document that asserted the old one read as documentation rather than as stale. Configuration rots visibly; code rots silently.",
 

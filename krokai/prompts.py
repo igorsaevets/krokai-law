@@ -108,7 +108,8 @@ QUOTE_RULES = """\
    If a step in layer 2 needs something layer 1 does not contain, that is the finding: write "layer 1
    does not support this" rather than closing the gap with fluent prose.
 
-10. Name the weakest point in YOUR OWN answer, in one line, at the end.
+10. Name the weakest point in YOUR OWN answer, and what evidence would change your conclusion -
+    one line each, at the end.
 === END ===
 """
 # ^ Rules 7-9 were added after this toolkit's grader was found to punish a failure the brief never
@@ -117,6 +118,10 @@ QUOTE_RULES = """\
 # the reviewer happened to guess. Rules 7 and 9 come from an operator's standing instruction and are
 # NOT measured here - said out loud, because this file's own convention is that every rule carries
 # the incident that produced it, and two of these carry an intention instead.
+# Rule 10's second clause IS measured, twice independently: in an 11-reviewer adjudication the one
+# reviewer who was right about a disputed defect said so in its "what would change my conclusion"
+# line while its verdict was wrong - and a sister project measured the same field answering more
+# honestly than a direct question about confidence. Ask for that field on purpose.
 
 
 RESEARCH_SYSTEM = """\

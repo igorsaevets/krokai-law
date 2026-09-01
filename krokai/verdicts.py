@@ -33,8 +33,11 @@ is not true.
 No string comparison can catch **the right words under a pincite to the wrong page of the right
 document**. Measured: a published checklist quoted a decision's editorial *headnote* while citing
 the page of the *opinion*, where the sentence reads differently by one word that matters. Both
-sentences are genuinely in the PDF, so this tool says VERIFIED and always will. That class needs a
-reader - see ``judge.py``.
+sentences are genuinely in the PDF, so this tool says VERIFIED and always will. String comparison
+cannot tell a *headnote* sentence from an *opinion* sentence on another page of the same file;
+that is a stated limit, not a missing detector. A second reader that checked pincite against page
+is not in this package. Until one exists, a headnote-shaped quotation under an opinion pincite is
+a human check, not a tool result.
 """
 from __future__ import annotations
 
@@ -50,8 +53,10 @@ SIX_CAUSES = (
     "not have (when the address layer can prove this, the verdict is NO_SOURCE_ON_DISK)",
     "the source on disk is a different EDITION - revised, renumbered or superseded since the "
     "quotation was taken; see the revision report",
-    "the corpus COPY is damaged - no text layer, a Type 3 substitution cipher, soft hyphens, "
-    "or a scrape that silently dropped part of the page",
+    "the corpus COPY is damaged or incomplete - no text layer, a Type 3 substitution cipher, "
+    "soft hyphens, a scrape that silently dropped part of the page or saved the wrong "
+    "PROJECTION of it (all of the body text, none of the footnotes), or a running header "
+    "welded into the middle of a sentence by a page break. Fix the copy, not the checker",
     "a placeholder was saved instead of the chapter - a bot wall or an error page passed the "
     "download and holds no law at all",
     "the quotation is not of LAW - press releases, FAQ pages and news are not in a corpus of "
@@ -216,7 +221,9 @@ MEANING = {
         "SCATTERED": "each sentence is verbatim, but they are not adjacent in the source",
         "WRONG_SPEAKER": "~ verbatim - but the source is reciting a commenter or a party here",
         "PUNCTUATION": "same words, same order, punctuation differs",
-        "TYPESETTING": "~ the CORPUS copy is damaged (line-break hyphen, welded footnote, header)",
+        "TYPESETTING": "~ the CORPUS copy's typesetting is damaged (a word broken across a "
+                       "line) - repair the copy, not the quotation. A welded header or bare "
+                       "number surfaces as a LOUD verdict instead, on purpose",
         "ASSEMBLED": "ellipsis quotation, all fragments found in order, nothing material hidden",
     },
     "ru": {
@@ -241,7 +248,9 @@ MEANING = {
         "SCATTERED": "каждое предложение дословно, но в источнике они не рядом",
         "WRONG_SPEAKER": "~ дословно — но источник здесь пересказывает комментатора или сторону",
         "PUNCTUATION": "слова и порядок те же, знаки разошлись",
-        "TYPESETTING": "~ испорчен КОРПУС (перенос, колонтитул, вклеенная сноска), а не цитата",
+        "TYPESETTING": "~ испорчена вёрстка КОПИИ корпуса (слово разорвано переносом) — чините "
+                       "копию, не цитату. Вклеенный колонтитул или голое число нарочно выходят "
+                       "ГРОМКИМ вердиктом, не этим",
         "ASSEMBLED": "цитата с многоточием, все куски найдены по порядку",
     },
 }

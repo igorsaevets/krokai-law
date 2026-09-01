@@ -41,16 +41,25 @@ the round — and three things are checked, not one:
 {KROKAI} check                        everything, before anything is filed
 {KROKAI} close                        end of session
 {KROKAI} gate <file>                  before pasting anything into another AI
+{KROKAI} agents                       the full working discipline, on demand
 ```
 
-### 🔴 `NOT_FOUND` is not `INVENTED` — four causes, in this order
+### 🔴 `NOT_FOUND` is not `INVENTED` — six causes, in this order
 
-1. **The corpus is incomplete.** It is a set of downloads and can be silently missing text. Open the
-   live page.
-2. **The extraction is broken.** Check with a second PDF engine — one splits words (`resu lt`) while
-   the PDF has them whole.
-3. **Your own normalisation.** Strip the blockquote marker, the bold, the line wrap, and re-search.
-4. Only now: the quotation is altered.
+1. **The source was never downloaded.** The address beside the quotation names a file you do not
+   have. Open the live page; save it into `law/` and the index.
+2. **The source on disk is a different edition** — revised, renumbered or superseded since the
+   quotation was taken. Check the revision report.
+3. **The corpus copy is damaged or incomplete.** No text layer, split words (`resu lt`), soft
+   hyphens, a scrape that dropped part of the page or saved the text without its footnotes, a
+   running header welded mid-sentence. Check with a second PDF engine; fix the copy, not the tool.
+4. **A placeholder was saved instead of the chapter.** A bot wall or an error page passed the
+   download and holds no law at all.
+5. **The quotation is not of law.** Press releases, FAQ pages and news are not in a corpus of
+   statutes by construction.
+6. **The quotation was rewritten in our own file.** Strip the blockquote marker, the bold, the
+   line wrap, and re-search; normalisation cannot bridge reworded text. Only after all six:
+   treat it as altered.
 
 Ruling these out in order is the difference between fixing a document and corrupting a correct one.
 

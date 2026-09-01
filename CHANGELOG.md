@@ -10,7 +10,109 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
-## [0.10.1] - 2026-08-31
+## [0.11.0] - 2026-09-01
+
+The harvest release: a sister project's paid-for citation lessons were adjudicated against this
+toolkit line by line, and everything that survived probing landed here. The headline is a root
+`AGENTS.md` — the working discipline for an AI assistant using krokai — delivered three ways
+without creating a second rotting copy: the file at the repository root (Codex/Cursor read it
+automatically), a bare-import `CLAUDE.md` bridge beside it (Claude Code reads `CLAUDE.md`, not
+`AGENTS.md`, and a backticked `@path` is a literal, so the bridge line is bare), and a new
+`krokai agents` command that prints the wheel's force-included copy for the pip user, who never
+sees the repository. The matter-side assistant block gains one pointer line instead of a copy.
+
+### Fixed — probe-proven (every one started as a RED probe through the real pipeline)
+- **A faithful quotation of a source that itself prints `[sic]` came back PARTIAL.**
+  `strip_markdown` cuts editorial marks from the quotation — right for the common case, the
+  drafter's own annotation, which is in no source. But a court reciting a government typo prints
+  the `[sic]` on its own page, and the tool punished exactly the practice it exists to protect.
+  `check()` now runs one more pass with the marks kept when the stripped comparison is not
+  clean, and takes it when it lands clean — or on a TRUNCATION verdict, which only arises from
+  a located span and is therefore proof the marks belong to the source (found by enumerating
+  shapes against the fix itself: a quotation truncated before its proviso that includes the
+  source's own `[sic]` must say `TRUNCATED_CONDITION`, not a `PARTIAL` stripping artifact). A
+  quotation that OMITS the source's `[sic]` still comes back loud — cutting a character of the
+  source remains report-worthy.
+- **No excision is silent any more.** Stripping `[sic]`/`[OPENED]`-class marks from a quotation
+  left no trace anywhere; "matched as written" and "matched after surgery" were
+  indistinguishable. The detail now says which marks were stripped — or that a mark matched as
+  the source's own text — added once in `check()` above all of the tree's returns, because a
+  note added on one branch of twenty is the R50 defect by construction.
+- **The mutation generator was narrower than the checker it grades — twice in one round.**
+  `_LIMITER_IN` demanded a comma, so a quotation cut before `; provided that` — a form the
+  checker catches — was never generated; the first repair hand-copied five of the checker's
+  twenty-plus limiter words, which is the same defect smaller. The generator's width is now
+  built from the checker's own `LIMITER_RE` and cannot drift on its own. The synonym bank also
+  tests `alien` ↔ `noncitizen` — the pair that actually swaps in official usage (the USCIS
+  Policy Manual updates page carries BOTH replacement directions in its history, checked live)
+  — instead of a substitution no reviewer would make. No direction is asserted: the first
+  version of that comment asserted one, and it was contradicted by the live page within hours.
+- **`verdicts.py` pointed readers at a module that never shipped** (`see judge.py` — the fourth
+  measured dangling-pointer incident). The paragraph now states the headnote-under-pincite
+  limit honestly: a stated limit, not a missing detector; until a pincite-vs-page reader
+  exists, that class is a human check, not a tool result. A new self-test pin resolves every
+  directive docstring pointer against the tree.
+- **The mutation catalogue claimed a `wrong-address` row that no code implements.** The class
+  is structural, not an omission: `check()` receives no claimed address, so the bank has
+  nothing to falsify — it belongs to the address layer (`FOUND_ELSEWHERE`), which has its own
+  suite. The catalogue now says so, and two new pins keep the catalogue and the implemented
+  set equal in BOTH directions.
+- **The assistant snippet said "four causes" while the code ships `SIX_CAUSES`.** The snippet
+  ladder is now the code's ladder, and a pin counts its rungs against `len(SIX_CAUSES)` instead
+  of trusting either prose.
+
+### Decided — and pinned so the decision is not "improved" away
+- **A running header welded mid-sentence stays a loud alarm.** `«…677 Interim Decision #2282…»`
+  inside a quotation span comes back OPERATOR: a false alarm about a real corpus defect. An
+  automatic excuse for header-shaped insertions would also excuse a real edit of the same shape
+  — the exact hole the R76 mandatory-group fix in `FOOTNOTE_RE` closed. The cure is in the
+  corpus copy; cause 3 of `SIX_CAUSES` now names the welded-header and wrong-projection
+  (full text, missing footnotes) cases, and a pin keeps the alarm loud.
+
+### Fixed — the review panel on this very diff (four external reviewers, before release)
+- **A source-side `[sic]` between a quotation's end and its limiter blinded the truncation
+  detector** (probe-proven on BOTH asking branches; the alnum twin even explained itself with
+  the confidently wrong «our quotation adds `,`»). The corpus tail is now cleared of
+  editorial/provenance marks before `LIMITER_RE` reads it, at both call sites. This was a
+  pre-existing hole — a silently truncated condition graded `VERIFIED` — surfaced by this
+  round's focus on the mark machinery.
+- **The marks-kept second pass could launder a loud verdict into a green `PUNCTUATION`** when a
+  provenance tag's letters collided with a real word (`[OPENED]` in place of *opened*) — and
+  the promotion note then claimed the tag was "the source's own text". Two constraints close
+  it: the second pass is gated on the EDITORIAL mark class only (`[sic]`-family; a provenance
+  tag is never source text by definition — `normalize` now derives both classes and their
+  union from one home), and it wins only on the exact-anchored verdicts (`VERIFIED`,
+  `WRONG_SPEAKER`, the two truncations), never through the forgiving alnum branch. The split
+  also un-punishes a faithful source-`[sic]` quotation that carries a provenance tag beside it.
+- **`krokai quote` still printed the pre-R76 FOUR-cause `NOT_FOUND` ladder** while the code,
+  the snippet and `AGENTS.md` said six — the tool's own mouth was the stale copy, on the
+  command documented as a new user's first. The block is now printed FROM `SIX_CAUSES`.
+- **`krokai init` in the toolkit's own checkout is refused** (named independently by three
+  reviewers): it would have appended the matter block after the repository's `@AGENTS.md`
+  bridge and scattered `law/`, `case/`, `casefile.json` through the source tree, while the
+  repo self-test kept passing.
+- **`neighbours()` did not learn the marks-kept pass** — after a source-`[sic]` quotation
+  verified through it, the neighbour print (the whole reason a VERIFIED is shown) searched the
+  stripped string and printed nothing. Same fallback, same gate.
+- Stale strings that vouched for things that do not exist: the no-channel fallback and the
+  registry `_doc` said `krokai consult` (the command is `review`); a `consult.py` comment
+  claimed the brief's SHA-256 "is printed before dispatch" — that feature was deliberately cut,
+  and a stale comment vouching for a removed feature is how a cut thing gets rebuilt;
+  `FEATURES.md` said "one of fifteen verdicts" while `ORDER` holds eighteen; the `TYPESETTING`
+  meaning promised header-damage coverage that actually (and deliberately) surfaces loud.
+
+### Added
+- **`AGENTS.md`** at the repository root; **`CLAUDE.md`** bridge (`@AGENTS.md`, bare);
+  **`krokai agents`** prints the shipped copy in both install layouts (`data_file` resolves the
+  wheel's force-included copy or the repo root). The brief's rule 10 now also demands *"what
+  evidence would change your conclusion"* — measured twice independently: the one reviewer who
+  was right about a disputed defect said so in that field while its verdict was wrong.
+- `suite_r78` / `suite_r78_repo`: the pins above, plus delivery checks (snippet pointer line,
+  `agents` exit code and content, bridge line shape) and the panel-round pins (limiter-blinding
+  both branches, laundering refusals, init guard, live-ladder derivation, command names cited
+  in `channels.json` resolving against the parser).
+
+
 
 The R76 panel's deferred backlog, closed item by item — PLUS the R77 panel round (five external
 reviewers on the diff itself: grokbuild + spark12cont + agy31pro + agy37flash; codex-gpt-5.5

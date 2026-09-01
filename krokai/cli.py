@@ -15,7 +15,7 @@ import os
 import sys
 
 from . import __version__
-from ._datadir import data_dir
+from ._datadir import data_dir, data_file
 
 if hasattr(sys.stdout, "reconfigure"):
     # Without this, output goes out in the console's legacy code page on Windows and any non-ASCII
@@ -143,6 +143,18 @@ def cmd_init(a):
     from .library import INDEX_HEADER
 
     root = os.path.abspath(a.path or ".")
+    # 🔴 Refuse to initialise a matter inside the toolkit's own checkout (R78 panel, named
+    # independently by three reviewers). `init` targets the cwd, and in the clone root the
+    # target CLAUDE.md is the repository's @AGENTS.md bridge - the block would be appended
+    # after the import, matter folders (law/, case/) would land in the source tree, and the
+    # repo pin would keep passing because the bare bridge line is still present. Same two
+    # markers as the self-test's `_is_source_checkout`: either alone is too weak.
+    if (os.path.isfile(os.path.join(root, "CHANGELOG.md"))
+            and os.path.isfile(os.path.join(root, "krokai", "selftest.py"))):
+        raise SystemExit(
+            "%s looks like the krokai repository itself, not a client matter. Refusing to "
+            "initialise a matter inside the toolkit's own tree - run this from the matter "
+            "folder instead:  cd <matter> && krokai init ." % root)
     cfgp = os.path.join(root, CONFIG_NAME)
     if os.path.exists(cfgp) and not a.force:
         print("%s already exists. Nothing was touched. Use --force to overwrite." % cfgp)
@@ -280,15 +292,17 @@ def cmd_quote(a):
               "condition\n       you have dropped, and the checker above cannot see it.")
 
     if verdict == "NOT_FOUND":
-        print("""
-🔴 NOT FOUND is not the same as INVENTED. Rule them out in this order, and only the last one is a
-   defect in the quotation:
-     1. THE CORPUS IS INCOMPLETE. It is a set of downloads and can be silently missing text.
-        Measured: a scraped agency chapter held four of its six bullet points. Open the live page.
-     2. THE EXTRACTION IS BROKEN. Check with a second PDF engine - one splits words ("resu lt")
-        while the PDF has them whole.
-     3. YOUR OWN NORMALISATION. Strip the blockquote marker, the bold, the line wrap, and re-search.
-     4. Only now: the quotation is altered.""")
+        # 🔴 DERIVED from SIX_CAUSES, never retyped (R78 panel, two channels independently):
+        # this block was a hand-written FOUR-item ladder for a whole release after the code
+        # shipped six - the assistant snippet was synced and the tool's own mouth was not.
+        # The one command documented as a new user's first is the worst place for a stale copy.
+        import textwrap
+        from .verdicts import SIX_CAUSES
+        print("\n🔴 NOT FOUND is not the same as INVENTED. Rule these out in order - only what"
+              "\n   survives all of them is a defect in the quotation:")
+        for i, cause in enumerate(SIX_CAUSES, 1):
+            print(textwrap.fill(cause, width=96, initial_indent="     %d. " % i,
+                                subsequent_indent="        "))
     return 0 if verdict == "VERIFIED" else 1
 
 
@@ -815,6 +829,25 @@ def cmd_packs(a):
     return 0
 
 
+def cmd_agents(a):
+    """Print the toolkit's AGENTS.md - the working discipline for an assistant in a matter.
+
+    WHY A COMMAND AND NOT A FILE COPIED INTO THE MATTER. A pip user never sees the repository, so
+    the root AGENTS.md has to travel inside the wheel - but writing a copy into every matter would
+    create a second home that rots the moment the package updates, which is the exact
+    two-files-on-one-subject failure this project keeps measuring. So the matter gets a one-line
+    pointer (in the `init` block) and the content stays in the package, always the installed
+    version's own. `data_file` resolves both layouts: the force-included copy inside the wheel,
+    or the repository root when running from a clone.
+    """
+    path = data_file("AGENTS.md")
+    if not os.path.isfile(path):
+        raise SystemExit("AGENTS.md is missing from this install. Reinstall the package, or run "
+                         "from a full clone of the repository.")
+    print(io.open(path, encoding="utf-8").read())
+    return 0
+
+
 def cmd_selftest(a):
     from .selftest import main as st
     return st()
@@ -1033,6 +1066,10 @@ def build_parser():
 
     p = sub.add_parser("packs", help="list the citation packs that ship")
     p.set_defaults(fn=cmd_packs)
+
+    p = sub.add_parser("agents", help="print AGENTS.md - the working discipline for an AI "
+                                      "assistant using this toolkit")
+    p.set_defaults(fn=cmd_agents)
 
     p = sub.add_parser("scan-pdfs",
                        help="find PDFs with broken text layers (PScript5 / Type 3)")

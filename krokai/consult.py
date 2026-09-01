@@ -858,9 +858,11 @@ def triage(result, g):
 # будем». Noted rather than silently dropped, because the next person to think of it should know it
 # was considered and cut, not overlooked.
 #
-# What survives is the part that costs nothing and is used every round: the brief's SHA-256 is
-# printed before dispatch, so "every channel got the same brief" is a fact rather than an intention.
-# That is a check on THIS round. It is not a file that accumulates.
+# 🔴 The printed brief hash was cut in the same decision (this file's top docstring records it),
+# and an earlier revision of THIS comment kept claiming "the brief's SHA-256 is printed before
+# dispatch" after the code stopped doing it - a stale comment vouching for a removed feature is
+# how a cut thing gets rebuilt (R78 panel). What actually guarantees "every channel got the same
+# brief" is construction: one brief string is built once and handed to every dispatcher verbatim.
 
 
 def write_analytics(path, rows, seconds, lang="en"):
@@ -1074,7 +1076,7 @@ def run_round(reg, system, brief, out_dir, marker="REVIEW-COMPLETE", only=(), sk
         printer("  * set %s to your own harness, or" % (
             (reg.get("channels", {}).get("harness") or {}).get("env") or "KROKAI_REVIEW_HARNESS"))
         printer("  * run `krokai brief` and paste it into each model by hand, then")
-        printer("    `krokai consult --audit <folder>` - which is the step that matters.")
+        printer("    `krokai review --audit <folder>` - which is the step that matters.")
         return [], out_dir
 
     out_dir = os.path.abspath(out_dir)

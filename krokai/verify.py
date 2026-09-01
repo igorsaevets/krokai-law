@@ -13,8 +13,8 @@ import difflib
 import os
 import re
 
-from .normalize import (normalise, alnum, dehyph, ellipsis_parts, prepare_quote,
-                        ELLIPSIS_RE)
+from .normalize import (normalise, alnum, dehyph, editorial_marks, ellipsis_parts,
+                        prepare_quote, source_marks, strip_all_marks, ELLIPSIS_RE)
 from .verdicts import CLEAN
 
 __all__ = ["check", "word_diff", "neighbours", "OPERATORS"]
@@ -315,7 +315,10 @@ def truncated_condition(quote_n, corpus, restrict_to=None):
         tail = corpus.after(path, off, len(quote_n))
         if not tail:
             continue
-        nxt = tail.lstrip(" ,;:-")
+        # 🔴 strip_all_marks BEFORE the limiter question (R78, probe-proven): a source-side
+        # «[sic]» between the quotation's end and «, unless …» made the tail start with `[`,
+        # LIMITER_RE saw no limiter, and a silent truncation was graded VERIFIED.
+        nxt = strip_all_marks(tail).lstrip(" ,;:-")
         m = LIMITER_RE.match(nxt)
         if m:
             return path, m.group(0), " ".join(nxt.split()[:26])
@@ -495,8 +498,16 @@ def neighbours(quote, corpus, cap=3, window=420):
     Same preparation as `check`, and for the same reason: `krokai quote` calls both with the user's
     raw text, so a difference between them shows up as "the checker found it and the neighbours are
     blank" - which reads as "there is nothing after it" and is the opposite of the truth.
+
+    🔴 Which is exactly what happened when `check` learned the marks-kept second pass and this
+    function did not (R78 panel): a source-``[sic]`` quotation verified through the kept pass,
+    then neighbours searched the STRIPPED string, found nothing, and printed nothing - for the
+    verdict whose whole reason to show neighbours is that nobody re-opens it. Same fallback,
+    same gate.
     """
     n = normalise(prepare_quote(quote))
+    if not corpus.find_all_pos(n, cap=1) and source_marks(quote):
+        n = normalise(prepare_quote(quote, keep_tags=True))
     out = []
     for path, off in corpus.find_all_pos(n, cap=cap):
         head = corpus.before(path, off, window)
@@ -532,7 +543,7 @@ def wrong_speaker(quote_n, corpus):
 
 
 # ------------------------------------------------------------------------------------------------
-def _check_inner(quote, corpus):
+def _check_inner(quote, corpus, keep_tags=False):
     """Return `(verdict, path_or_None, detail)`.
 
     The order of the tree is the design. An exact match is tested first and then **immediately
@@ -543,8 +554,11 @@ def _check_inner(quote, corpus):
     `extract_quotes` and by `bank`, and simply not applied by `krokai quote` - so the same text got
     different verdicts depending on which door it came through. A rule that every caller must
     remember is a rule that one caller will forget, and this one had.
+
+    ``keep_tags`` is `check()`'s second pass: the ``[sic]`` a court prints on its own page must
+    stay in the quotation to match. See the note in `check()` below.
     """
-    quote = prepare_quote(quote)
+    quote = prepare_quote(quote, keep_tags=keep_tags)
     n = normalise(quote)
     if not n:
         return "NOT_FOUND", None, ""
@@ -646,7 +660,10 @@ def _check_inner(quote, corpus):
             span = _alnum_span(n, hit, corpus)
             if span:
                 start, end, src = span
-                nxt = src[end:end + 220].lstrip(" ,;:-")
+                # Same strip_all_marks guard as truncated_condition - this is the second of the
+                # two call sites that ask "does a limiter follow", and the R78 probe reddened
+                # both (the branch-counting lesson: a guard on one branch of two is half a guard).
+                nxt = strip_all_marks(src[end:end + 220]).lstrip(" ,;:-")
                 m = LIMITER_RE.match(nxt)
                 if m:
                     return ("TRUNCATED_CONDITION", hit,
@@ -800,8 +817,8 @@ def _fragment_hits(text, corpus, min_words=8, min_chars=40, max_hits=5):
 
 
 def check(quote, corpus, *a, **kw):
-    """`_check_inner`, plus the one question the text comparison cannot ask: is the file it found
-    still the edition in force?
+    """`_check_inner`, plus the two questions the text comparison cannot ask: did an editorial
+    mark belong to the source, and is the file it found still the edition in force?
 
     🔴 This wraps rather than edits the comparison on purpose. The words really ARE in that file -
     that part of the answer is correct and must not be thrown away - and the superseded fact lives
@@ -811,8 +828,49 @@ def check(quote, corpus, *a, **kw):
     It is applied HERE and not in the report, because a check that runs outside the path it protects
     is decorative: the hooks and the reviewer-answer audit call `check()` directly and would
     otherwise keep grading superseded law as clean.
+
+    🔴 THE ``[sic]`` THAT IS THE SOURCE'S OWN TEXT (R78, probe-proven). ``strip_markdown`` cuts
+    the editorial marks from the quotation because the common case is the drafter's annotation,
+    which is in no source. But a court reciting a government typo prints ``[sic]`` on its own
+    page, and a FAITHFUL quotation of that page came back PARTIAL - the tool punished exactly
+    the practice it exists to protect. So: when EDITORIAL-class marks were present and the
+    stripped comparison is not clean, one more pass runs with those marks kept. A quotation
+    that OMITS the source's ``[sic]`` has no marks to keep, retries nothing, and stays loud -
+    cutting a character of the source is still a report-worthy difference.
+
+    🔴 THREE CONSTRAINTS ON THE SECOND PASS, each one a refuted laundering (R78 panel,
+    probe-proven before repair):
+      * gate on ``source_marks`` (the ``[sic]`` family), never on provenance tags - a
+        ``[OPENED]`` colliding with the real word *opened* laundered a missing-word PARTIAL
+        into a green PUNCTUATION whose note then claimed the tag was "the source's own text";
+      * the win set is the EXACT-ANCHORED verdicts only (VERIFIED, WRONG_SPEAKER, and the two
+        truncations) - a promotion through the forgiving alnum branch is what made that
+        laundering possible, and a truncation found by the kept pass is the sharper diagnosis,
+        not a defeat (a source-``[sic]`` quotation cut before its proviso must say
+        TRUNCATED_CONDITION, not the stripping artifact PARTIAL);
+      * the kept pass may land in a DIFFERENT file than the first (nothing constrains ``w2``):
+        which file the citation *names* is the address layer's question, not this function's.
+
+    🔴 AND NO EXCISION IS SILENT. Whatever branch decided the verdict, if marks were stripped on
+    the way in, the detail says so - here, once, above ALL of `_check_inner`'s returns, because a
+    note added on one branch of twenty is the R50 defect by construction.
     """
     verdict, where, detail = _check_inner(quote, corpus, *a, **kw)
+    marks = editorial_marks(quote)
+    kept = source_marks(quote)
+    if kept and verdict not in CLEAN:
+        v2, w2, d2 = _check_inner(quote, corpus, keep_tags=True)
+        if v2 in ("VERIFIED", "WRONG_SPEAKER", "TRUNCATED_CONDITION", "TRUNCATED_OPENING"):
+            verdict, where = v2, w2
+            detail = ((d2 + " - " if d2 else "")
+                      + "%s matched as the source's own text (kept, not stripped)"
+                      % ", ".join(kept[:4]))
+            # Provenance tags were still stripped on the winning pass; only they get the note.
+            marks = [m for m in marks if m not in kept]
+    if marks:
+        detail = ((detail + "; " if detail else "")
+                  + "editorial/provenance mark(s) stripped before comparison: %s"
+                  % ", ".join(marks[:4]))
     if where and verdict in CLEAN and getattr(corpus, "is_superseded", None) \
             and corpus.is_superseded(where):
         extra = ("the words are in `%s`, which the law register marks as SUPERSEDED by a newer "

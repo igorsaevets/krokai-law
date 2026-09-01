@@ -29,7 +29,7 @@ import re
 __all__ = [
     "normalise", "alnum", "dehyph", "strip_markdown", "strip_scrape_artifacts",
     "prepare_quote", "ellipsis_parts", "latin_share", "is_mostly_cyrillic",
-    "strip_invisibles",
+    "strip_invisibles", "editorial_marks", "source_marks", "strip_all_marks",
 ]
 
 # Typography a model re-types differently from the source while meaning the identical thing.
@@ -74,7 +74,7 @@ _TYPOGRAPHY = (
 _SOFT_BREAK_RE = re.compile(u"\u00ad[ \t]*\r?\n[ \t]*")
 _SOFT_RE = re.compile(u"\u00ad")
 
-# Provenance tags that a review brief REQUIRES a channel to emit, plus the two editorial marks a
+# Provenance tags that a review brief REQUIRES a channel to emit, plus the editorial marks a
 # careful drafter puts next to a government typo. They land inside the quoted span and then make a
 # byte-exact quotation fail to match.
 #
@@ -82,11 +82,20 @@ _SOFT_RE = re.compile(u"\u00ad")
 # for this reason alone. Both editorial conventions are stripped before comparison, so a project can
 # use Bluebook "[sic]" inside the quotation marks for filings AND a bracketed note outside them for
 # internal files, without either convention breaking verification.
-_TAG_RE = re.compile(
-    r"\s*\[(?:OPENED|SNIPPET|MEMORY|RETRIEVED|UNVERIFIED"
-    r"|ОТКРЫЛ|СНИППЕТ|ПАМЯТЬ"
-    r"|sic|so in original|так в источнике)\]",
-    re.I)
+#
+# 🔴 TWO CLASSES, AND THE SPLIT IS LOAD-BEARING (R78 panel, three independent findings). A
+# PROVENANCE tag ([OPENED], [MEMORY], ...) is the reviewer's own metadata and is NEVER the
+# source's text - so it may never justify a marks-kept comparison, or a contaminated corpus
+# that contains one gets promoted as "the source's own text". An EDITORIAL mark ([sic], [so in
+# original]) legitimately appears IN sources - a court reciting a typo prints it on the page -
+# so only this class earns the checker's second, marks-kept pass. The union is built from the
+# two parts so the three regexes cannot drift apart.
+_EDITORIAL_PAT = r"sic|so in original|так в источнике"
+_PROVENANCE_PAT = (r"OPENED|SNIPPET|MEMORY|RETRIEVED|UNVERIFIED"
+                   r"|ОТКРЫЛ|СНИППЕТ|ПАМЯТЬ")
+_EDITORIAL_RE = re.compile(r"\s*\[(?:%s)\]" % _EDITORIAL_PAT, re.I)
+_PROVENANCE_RE = re.compile(r"\s*\[(?:%s)\]" % _PROVENANCE_PAT, re.I)
+_TAG_RE = re.compile(r"\s*\[(?:%s|%s)\]" % (_PROVENANCE_PAT, _EDITORIAL_PAT), re.I)
 
 # `[text](url)` -> `text`.  A model turns a citation into a link; the link is not part of the text.
 _MD_LINK_RE = re.compile(r"\[([^\]\n]{1,200})\]\((?:https?:|/|#)[^)\n]*\)")
@@ -198,7 +207,7 @@ def strip_invisibles(s: str) -> str:
     return s
 
 
-def strip_markdown(s: str) -> str:
+def strip_markdown(s: str, keep_tags: bool = False) -> str:
     """Remove formatting a drafter applied *inside* a quotation, plus provenance tags.
 
     A model bolds a word inside a quoted span for emphasis. That is presentation, and it makes the
@@ -209,6 +218,16 @@ def strip_markdown(s: str) -> str:
     are stripped - and **asymmetric ones too**: a span cut out of a longer sentence keeps only its
     closing guillemet, and that single character was enough to report perfectly good quotations as
     ALTERED across an entire first run.
+
+    ``keep_tags`` keeps the EDITORIAL class (``[sic]``-family) in place - and still strips the
+    provenance tags, because a provenance tag is never the source's text by definition. It
+    exists for one caller: the checker's second pass over a quotation whose ``[sic]`` may be
+    the SOURCE'S own text rather than the drafter's annotation - a court reciting a typo prints
+    the ``[sic]`` on the page, and a faithful quotation of that page must keep it to match.
+    Stripping everything is still the right default: the common case is the drafter's own
+    editorial mark, which is not in any source. The split also lets a faithful source-``[sic]``
+    quotation carry a provenance tag beside it without the tag blocking the kept-marks match
+    (R78 panel: the all-or-nothing version failed exactly that mix).
     """
     if not s:
         return ""
@@ -235,7 +254,7 @@ def strip_markdown(s: str) -> str:
     s = _OMIT_RE.sub(_hold, s)
     s = _MD_LINK_RE.sub(r"\1", s)
     s = re.sub(r"\*\*|__|\*|`", "", s)
-    s = _TAG_RE.sub("", s)
+    s = _PROVENANCE_RE.sub("", s) if keep_tags else _TAG_RE.sub("", s)
     s = re.sub(r"(?m)^\s*>\s?", "", s)
     s = s.strip()
     for _ in range(4):
@@ -254,7 +273,43 @@ def strip_markdown(s: str) -> str:
     return s
 
 
-def prepare_quote(s: str) -> str:
+def editorial_marks(s: str):
+    """ALL marks - editorial and provenance - present in a RAW quotation, as written.
+
+    Returns the matched marks (``["[sic]", "[OPENED]"]``-shaped, whitespace trimmed). Used by
+    ``verify.check`` for VISIBILITY: this function only REPORTS what ``strip_markdown`` would
+    remove, so an excision is never silent - the AOS measurement behind this is a pipeline that
+    cut marks from quotations and logged nothing, and the reader could not tell "matched as
+    written" from "matched after surgery".
+    """
+    return [m.strip() for m in _TAG_RE.findall(s or "")]
+
+
+def strip_all_marks(s: str) -> str:
+    """Remove every ``_TAG_RE`` mark from a SOURCE-side span before a detector reads it.
+
+    Exists for one measured hole (R78 panel, probe-proven on both branches): the source's own
+    ``[sic]`` sitting between a quotation's end and the limiting clause blinded ``LIMITER_RE``
+    - the tail began with ``[``, no limiter matched, and a silently truncated condition was
+    graded VERIFIED with a confident wrong explanation. The detectors ask "does a limiter
+    follow"; a bracketed mark between the two is typography of the page, not an answer.
+    """
+    return _TAG_RE.sub("", s or "")
+
+
+def source_marks(s: str):
+    """Only the EDITORIAL class (``[sic]``-family) - the marks that can be the source's own text.
+
+    This is the gate for the checker's marks-kept second pass, and the narrowness is the fix:
+    the first version gated on ALL marks, and the R78 panel showed what that buys - a corpus
+    contaminated with a reviewer's ``[OPENED]`` promoted as "matched as the source's own text",
+    and a ``[OPENED]`` colliding with the real word *opened* laundering a loud verdict through
+    the punctuation branch. A provenance tag is never source text; it must never argue for one.
+    """
+    return [m.strip() for m in _EDITORIAL_RE.findall(s or "")]
+
+
+def prepare_quote(s: str, keep_tags: bool = False) -> str:
     """Everything a QUOTATION passes through before it is compared with a source.
 
     🔴 There is exactly one normaliser in this package and there was still a drift, because the
@@ -275,7 +330,7 @@ def prepare_quote(s: str) -> str:
     this itself, and no caller can forget. Solving the retyped-function problem left the
     assembled-pipeline problem standing; they are the same defect wearing a different coat.
     """
-    return strip_markdown(s or "")
+    return strip_markdown(s or "", keep_tags=keep_tags)
 
 
 def strip_scrape_artifacts(s: str) -> str:

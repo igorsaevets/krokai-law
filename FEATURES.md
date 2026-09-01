@@ -297,9 +297,11 @@ this one. Confirmed by execution, not by reading.
 
 ## verify
 
-`krokai/verify.py` + `krokai/verdicts.py` — one quotation in, one of fifteen verdicts out.
+`krokai/verify.py` + `krokai/verdicts.py` — one quotation in, one verdict out; the vocabulary is
+`verdicts.ORDER`, and the count is deliberately not written here (this line said "fifteen" while
+`ORDER` held eighteen — a number in prose is a claim with no error signal).
 
-### Why fifteen and not two
+### Why a vocabulary and not PASS/FAIL
 
 Because the interesting failures are not "the quotation is missing". They are the ones where **the
 strings match and the meaning does not** — and a two-valued checker answers those with a cheerful
@@ -731,8 +733,10 @@ sure"* is to sound sure.
    wrong answer.
 5. **A fabricated quotation is worse than a refusal.**
 6. **Never claim non-existence from a failed search.**
-7. **Name the weakest point in your own answer.** Cheap self-calibration; channels answer this more
-   honestly than a direct question about confidence.
+7. **Name the weakest point in your own answer — and what evidence would change your conclusion.**
+   Cheap self-calibration; channels answer this more honestly than a direct question about
+   confidence. Measured separately: in one adjudicated round the only reviewer who was right about
+   a disputed defect said so in its *what would change my conclusion* line, not in its verdict.
 
 ### `SNIPPET_WARNING` — what a search integration actually returns
 

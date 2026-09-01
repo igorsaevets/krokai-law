@@ -81,6 +81,8 @@ packages = ["krokai"]
 "templates" = "krokai/templates"
 "hooks" = "krokai/hooks"
 "channels.json" = "krokai/channels.json"
+# `krokai agents` prints this for the pip user, who never sees the repository root.
+"AGENTS.md" = "krokai/AGENTS.md"
 
 [tool.hatch.build.targets.sdist]
-include = ["krokai", "packs", "templates", "hooks", "channels.json", "README.md", "LICENSE", "CHANGELOG.md"]
+include = ["krokai", "packs", "templates", "hooks", "channels.json", "AGENTS.md", "CLAUDE.md", "README.md", "LICENSE", "CHANGELOG.md"]

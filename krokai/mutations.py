@@ -24,7 +24,15 @@ THE CATALOGUE MIRRORS THE INCIDENT LOG - ONE MUTATION PER PAID-FOR INCIDENT
     cut-condition       cut right before ", but ..."    10 found among already-VERIFIED quotations
     synonym             one word paraphrased            "produces text, not a quotation"
     splice              two quotations welded with ...  an ellipsis joining two authorities
-    wrong-address       right words, wrong citation     a decision under another's footnote
+
+One more paid-for class, **wrong-address** ("right words, wrong citation - a decision under
+another's footnote"), is deliberately NOT a row above, and the reason is structural, not an
+omission: ``check()`` receives a quotation and a corpus, never a CLAIMED address, so this bank
+has nothing to falsify - a mutated address would change an input the checker cannot see. The
+class belongs to the ADDRESS layer (``address.py``, verdict ``FOUND_ELSEWHERE``), which binds
+each quotation to the citation printed next to it and is exercised by its own self-test suite.
+Recorded here because an earlier revision listed it as a row, and a catalogue row that mirrors
+no code is the exact defect class (a pointer with no target) this toolkit keeps measuring.
 
 🔴 A MUTATION IS "CAUGHT" ONLY IF THE REASON IS RIGHT
 ------------------------------------------------------
@@ -37,14 +45,24 @@ from __future__ import annotations
 import re
 
 from .normalize import normalise
-from .verify import check
+from .verify import check, LIMITER_RE
 from .verdicts import DANGEROUS
 
 __all__ = ["MUTATIONS", "run"]
 
 _MODAL = re.compile(r"\b(shall|may|must|will|does|do|is|are)\b(?!\s+not)", re.I)
-_LIMITER_IN = re.compile(r",\s*(but|except|unless|provided|however)\b", re.I)
-_SYNONYMS = [(" apply ", " request "), (" prior to ", " before "), (" alien ", " applicant "),
+# 🔴 DERIVED from the checker's own LIMITER_RE, never retyped (R78, twice in one round). The
+# first version demanded a comma, so "; provided that" was never generated while the checker
+# catches it; the second version hand-copied five words of the checker's twenty-plus. A
+# generator narrower than its checker is a blind spot wearing a green tally - so the width is
+# now the checker's width BY CONSTRUCTION, and cannot drift on its own.
+_LIMITER_IN = re.compile(r"[,;:]?\s+(?:%s)" % LIMITER_RE.pattern.lstrip("^"), re.I)
+# " alien " -> " noncitizen ": the pair that actually swaps in official usage - the USCIS
+# Policy Manual updates page carries BOTH replacement directions in its history (checked live,
+# R78) - so it is the substitution a reviewer's paraphrase will realistically make. No
+# direction is asserted here on purpose: a dated direction claim in a comment is the exact
+# rotting-fact class this file exists to measure, and the first version of this line had one.
+_SYNONYMS = [(" apply ", " request "), (" prior to ", " before "), (" alien ", " noncitizen "),
              (" pursuant to ", " according to "), (" upon ", " on "), (" shall ", " will "),
              (" must ", " has to "), (" may not ", " cannot ")]
 
