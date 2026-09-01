@@ -86,6 +86,13 @@ lists the files with no text layer; OCR belongs to an OCR engine run by a person
 tool. It blocks credentials outright and personal identifiers unless overridden, reporting the
 kind and the line, never the value.
 
+**Name every NEW file and folder in Latin — `A-Za-z0-9._-` only.** No Cyrillic, no other
+scripts, avoid spaces. Non-ASCII names break the tooling around a matter in quiet ways, each one
+measured rather than imagined: console code pages mangle them, a hook reading stdin in a
+single-byte codec dies on them **without raising anything**, shells quote them differently, and
+a path one tool wrote another cannot open. Existing non-Latin names stay as they are — renaming
+breaks every reference to them; the rule is for what you create from now on.
+
 ## Outside reviewers: krokai audits, ai-second-opinion orchestrates
 
 Sending one question to several independent models is a different job with its own tool:
