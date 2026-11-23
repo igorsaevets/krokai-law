@@ -92,6 +92,11 @@ FAILURE_MEANING = {
                      "message that does not say so",
     "HTTP_ERROR": "the endpoint answered with an error status",
     "POLICY_REFUSAL": "the channel declined to engage with the subject, and produced no review",
+    # K004: a delegated round with nothing to grade is a failed round, never an empty clean one.
+    "HARNESS_NO_ANSWER": "the review harness left no answer to grade - read its REPORT.md / "
+                         "diagnostics.json in the round folder; a round with no answer is not clean",
+    "HARNESS_CRASHED": "the review harness reports that it crashed (its diagnostics.json holds the "
+                       "scrubbed traceback); answers written before the crash are graded above",
 }
 
 # A round is DIRTY on any of these: readable, but do not repeat anything from it unchecked.
@@ -197,9 +202,29 @@ def find_harness(reg, explicit=None):
         return os.path.abspath(env)
     for c in ch.get("candidates") or []:
         p = _expand(c)
+        if any(x in p for x in "*?["):
+            # 🔴 K004: ai-second-opinion's FIRST install route is a Claude Code plugin, and a plugin
+            # lives in one folder per version, ~/.claude/plugins/cache/<marketplace>/<plugin>/<ver>/;
+            # the versions it replaced stay on disk marked `.orphaned_at` (measured 2026-11-23). No
+            # fixed path can name it, so a candidate may be a pattern: the newest live match wins.
+            import glob
+            live = [m for m in glob.glob(p) if os.path.isfile(m) and not _orphaned_plugin(m)]
+            if live:
+                return os.path.abspath(max(live, key=os.path.getmtime))
+            continue
         if os.path.exists(p):
             return os.path.abspath(p)
     return None
+
+
+def _orphaned_plugin(path, depth=4):
+    """True when a folder above `path` (up to `depth` levels) is a plugin version Claude Code retired."""
+    d = os.path.dirname(path)
+    for _ in range(depth):
+        if os.path.exists(os.path.join(d, ".orphaned_at")):
+            return True
+        d = os.path.dirname(d)
+    return False
 
 
 def _bin_path(ch):
@@ -507,11 +532,7 @@ def call_http(name, ch, system, brief, marker, floor, timeout, printer=print):
     return _finish(r, marker, floor)
 
 
-# Files this module writes into the round folder itself. Anything else that appears is an answer.
-_OURS = {"brief.md", "system.md", "analytics.md", "run.log"}
-
-
-def absorb_delegated(out_dir, marker, floor, since=None):
+def absorb_delegated(out_dir, marker, floor, since=None, harness_exit=None, printer=print):
     """Grade and record the answers a delegated harness produced.
 
     🔴 THIS FUNCTION EXISTS BECAUSE THE FIRST LIVE ROUND EXPOSED THE HOLE IT FILLS. With a harness
@@ -526,34 +547,35 @@ def absorb_delegated(out_dir, marker, floor, since=None):
     The grading is deliberately the SAME code as for the built-in transports. A trust layer that
     judged its own transports more strictly than a delegate's would be measuring the transport, not
     the answer.
+
+    🔴 K004: WHICH files are answers is decided in ONE place, `roundfolder.classify`, shared with
+    the quotation audit. Here it graded the harness's own REPORT.md / HANDOFF.md / PROGRESS.md /
+    READING.md as reviewers that FAILED, so a round in which nothing failed exited 1. And a harness
+    that left no answer at all (crashed, refused its arguments, every channel down) produced zero
+    rows, which `cmd_review` read as "nothing to judge" and exited 0 - the first live round's
+    `OK 0 · DIRTY 0 · FAILED 0` again, one level up. That is now a FAILED row carrying its exit code.
     """
-    rows, stale = [], []
-    for fn in sorted(os.listdir(out_dir)):
-        if not fn.lower().endswith(".md") or fn.lower() in _OURS:
-            continue
-        path = os.path.join(out_dir, fn)
-        if not os.path.isfile(path):
-            continue
-        # 🔴 R77 (#341, kimik3/codex/lunapro): only answers WRITTEN BY THIS DISPATCH are graded.
-        # A reused output folder held last round's answers, and they were absorbed as this
-        # round's - a stale answer to an old brief read as a fresh voice agreeing. The margin
-        # absorbs filesystem mtime granularity; the skip is printed, because a silently ignored
-        # file in an answers folder is how the opposite defect starts.
-        try:
-            if since and os.path.getmtime(path) < since:
-                stale.append(fn)
-                continue
-        except OSError:
-            pass
-        text = io.open(path, encoding="utf-8", errors="replace").read()
-        r = _result(os.path.splitext(fn)[0].lower(), text=text)
+    from .roundfolder import classify, report
+
+    # 🔴 R77 (#341, kimik3/codex/lunapro): only answers WRITTEN BY THIS DISPATCH are graded (`since`).
+    # A reused output folder held last round's answers, and they were absorbed as this round's - a
+    # stale answer to an old brief read as a fresh voice agreeing. `classify` keeps that rule and
+    # prints every skip, because a silently ignored file is how the opposite defect starts.
+    c = classify(out_dir, since=since)
+    report(c, printer=printer)
+    rows = []
+    for fn, channel in c["answers"]:
+        text = io.open(os.path.join(out_dir, fn), encoding="utf-8", errors="replace").read()
+        r = _result(channel, text=text, file=fn)
         # The delegate reports its own telemetry in its own format; this layer does not parse it.
         # Saying "not measured here" is honest. Saying "0" would not be.
         r["quality"].append(("NO_TELEMETRY", "graded from the answer; the harness keeps its own"))
         rows.append(_finish(r, marker, floor))
-    if stale:
-        print("  skipped %d file(s) already in the folder BEFORE this dispatch (a previous "
-              "round's answers): %s" % (len(stale), ", ".join(stale)))
+    if c["crashed"]:
+        rows.append(_result("harness", failures=[("HARNESS_CRASHED", c["crashed"][:300])]))
+    elif not rows:
+        rows.append(_result("harness", failures=[(
+            "HARNESS_NO_ANSWER", "exit %s" % harness_exit if harness_exit is not None else "")]))
     return rows
 
 
@@ -1095,9 +1117,10 @@ def run_round(reg, system, brief, out_dir, marker="REVIEW-COMPLETE", only=(), sk
         delegated = []
         if delegating:
             t_dispatch = time.time() - 2          # margin for coarse filesystem mtimes
-            call_delegate(harness, brief_path, system_path, out_dir, marker=marker,
-                          extra=harness_args or (), printer=printer)
-            delegated = absorb_delegated(out_dir, marker, floor, since=t_dispatch)
+            h_rc = call_delegate(harness, brief_path, system_path, out_dir, marker=marker,
+                                 extra=harness_args or (), printer=printer)
+            delegated = absorb_delegated(out_dir, marker, floor, since=t_dispatch,
+                                         harness_exit=h_rc, printer=printer)
 
         jobs = {}
         with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
@@ -1123,7 +1146,8 @@ def run_round(reg, system, brief, out_dir, marker="REVIEW-COMPLETE", only=(), sk
     rows = []
     for name, (ch, payload, r) in sorted(results.items()):
         if r.get("text"):
-            io.open(os.path.join(out_dir, name.upper() + ".md"), "w",
+            r["file"] = name.upper() + ".md"      # K004: the audit reads exactly this round's answers
+            io.open(os.path.join(out_dir, r["file"]), "w",
                     encoding="utf-8", newline="\n").write(r["text"])
         verdict, quality, ground = triage(r, g)
         rows.append({**r, "verdict": verdict, "quality": quality, "ground": ground,
@@ -1146,7 +1170,8 @@ def run_round(reg, system, brief, out_dir, marker="REVIEW-COMPLETE", only=(), sk
             ", commentary %d" % len(gr["nonauthoritative"]) if gr["nonauthoritative"] else "",
             ", 🔴 LOOKALIKE %d" % len(gr["lookalike"]) if gr["lookalike"] else ""))
         for code, detail in r["failures"]:
-            printer("    FAIL %-22s %s" % (code, FAILURE_MEANING.get(code, "")))
+            printer("    FAIL %-22s %s%s" % (code, FAILURE_MEANING.get(code, ""),
+                                          " [%s]" % detail if detail and code.startswith("HARNESS_") else ""))
         for code, detail in r["quality"]:
             # 🔴 Nothing is silently skipped here any more. The one code that used to be skipped was
             # the only code that could produce the verdict on the line above, so the most common

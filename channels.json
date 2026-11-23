@@ -181,10 +181,12 @@
       "telemetry": true,
       "candidates": [
         "~/.claude/skills/model-orchestration/orchestrate.py",
-        "~/ai-second-opinion/orchestrate.py",
-        "~/tools/ai-second-opinion/orchestrate.py",
-        "./ai-second-opinion/orchestrate.py"
+        "~/.agents/skills/model-orchestration/orchestrate.py",
+        "~/.claude/plugins/cache/review-channels/model-orchestration/*/skills/model-orchestration/orchestrate.py",
+        "~/ai-second-opinion/plugins/model-orchestration/skills/model-orchestration/orchestrate.py",
+        "./ai-second-opinion/plugins/model-orchestration/skills/model-orchestration/orchestrate.py"
       ],
+      "candidates_from": "ai-second-opinion v1.125.0 (2026-11-19): install.ps1 / install.sh copy the skill to ~/.claude/skills and ~/.agents/skills (and the other agents' folders); the Claude Code plugin route (/plugin install model-orchestration@review-channels) keeps one folder per version under ~/.claude/plugins/cache; a clone keeps it under plugins/model-orchestration/skills/. The old repo-root paths (~/ai-second-opinion/orchestrate.py) stopped existing when the kit moved into plugins/. Anywhere else: set KROKAI_REVIEW_HARNESS.",
       "env": "KROKAI_REVIEW_HARNESS",
       "notes": "If you already run a dedicated orchestration tool, this hands it the same gated brief and then audits everything it brings back. Preferred over the built-in transports when present: it has more channels and better telemetry. When it is absent the built-in CLI channels above still work, so this toolkit is never a dead feature."
     }

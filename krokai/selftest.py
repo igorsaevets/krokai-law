@@ -4809,6 +4809,234 @@ def suite_r79_phase4(tmp):
        md_e is None and stats_e.get("error") == "no entries")
 
 
+# The stand-in harness for suite_k004: it takes the harness's OWN arguments (required, so a change in
+# what krokai passes fails here) and writes the harness's real folder layout (ai-second-opinion: a
+# live round folder + its v1.125.0 source, read 2026-11-23). It calls nothing and sends nothing.
+_K004_FAKE_HARNESS = r'''
+import argparse, io, json, os, sys
+ap = argparse.ArgumentParser()
+for flag in ("--brief", "--system", "--out", "--marker"):
+    ap.add_argument(flag, required=True)
+a = ap.parse_args()
+if not io.open(a.brief, encoding="utf-8").read().strip():
+    sys.exit(3)
+if os.environ.get("K004_FAKE_MODE") == "silent":
+    sys.exit(1)
+os.makedirs(a.out, exist_ok=True)
+def w(name, text):
+    io.open(os.path.join(a.out, name), "w", encoding="utf-8").write(text)
+q = os.environ["K004_QUOTE"]
+w("GOODCH.md", "The reviewer reads the brief and answers at length. " * 20
+  + "\n\n> " + q + "\n\n" + a.marker + "\n")
+w("GOODCH.quote-verify.md", "| quotation | verdict |\n\n> " + q + "\n")
+w("REPORT.md", "# Review round report\n" + "| goodch | ok |\n" * 60)
+w("HANDOFF.md", "# Handoff\n" + "Read GOODCH.md first.\n" * 60)
+w("PROGRESS.md", "# Progress\n" + "GOODCH answered.\n" * 60)
+w("READING.md", "## GOODCH.md\n\n> The reader typed this line from memory, and it stands in no source.\n")
+w("NEWKITFILE.md", "a file the harness writes for itself\n" * 40)
+w("run.log", "log\n")
+w("diagnostics.json", json.dumps({"schema": "model-orchestration/diagnostics/1", "channels": {
+    "goodch": {"answer_file": "GOODCH.md", "ok": True, "seconds": 3.0},
+    "downch": {"answer_file": None, "ok": False, "seconds": 9.0}}}))
+'''
+
+
+def suite_k004_kit_contract(tmp, corpus):
+    """K004: the krokai <-> review-harness contract on the OUTPUT side - which files are answers.
+
+    🔴 Measured in K001 S4 (2026-11-23): the harness (ai-second-opinion) writes REPORT.md and
+    HANDOFF.md - since its R193 also PROGRESS.md, and READING.md for its reader - beside the answers;
+    krokai graded every one as a reviewer that FAILED, and a round in which nothing failed exited 1.
+    `review --dry-run` returns before the harness is called, so nothing had ever exercised it.
+    """
+    import json as _json
+    import subprocess as _sp
+    import time as _time
+    from krokai import roundfolder as _rf
+    from krokai.consult import absorb_delegated, find_harness
+    from krokai.review import audit_answers
+
+    base = os.path.join(tmp, "k004")
+    os.makedirs(base, exist_ok=True)
+    mark = "REVIEW-COMPLETE"
+    quote = ("No application for adjustment of status shall be approved unless the applicant "
+             "establishes clear eligibility for the benefit sought at filing.")
+    invented = "The reader typed this line from memory, and it stands in no source at all."
+    answer = ("The reviewer reads the brief and answers at length. " * 20
+              + "\n\n> " + quote + "\n\n" + mark + "\n")
+    record = {"schema": "model-orchestration/diagnostics/1", "channels": {
+        "goodch": {"answer_file": "GOODCH.md", "attempt_files": ["GOODCH.first.md"],
+                   "ok": True, "seconds": 3.0},
+        "downch": {"answer_file": None, "ok": False, "seconds": 9.0},
+        "nemo": {"answer_file": "NEMO.md", "never_read": True, "ok": True, "seconds": 4.0}}}
+
+    def layout(name, rec=record, extra=()):
+        d = os.path.join(base, name)
+        os.makedirs(os.path.join(d, "goodch-ws"), exist_ok=True)
+        os.makedirs(os.path.join(d, ".never-read"), exist_ok=True)
+        files = [("brief.md", "the brief krokai wrote\n"), ("system.md", "the framing\n"),
+                 ("GOODCH.md", answer), ("GOODCH.first.md", "the first attempt, cut short\n"),
+                 ("GOODCH.quote-verify.md", "| quotation | verdict |\n\n> " + quote + "\n"),
+                 ("REPORT.md", "# Review round report\n" + "| goodch | ok |\n" * 60),
+                 ("HANDOFF.md", "# Handoff\n" + "Read GOODCH.md first.\n" * 60),
+                 ("PROGRESS.md", "# Progress\n" + "GOODCH answered.\n" * 60),
+                 ("READING.md", "## GOODCH.md\n\n> " + invented + "\n"),
+                 ("run.log", "log\n"), ("progress.json", "{}"), ("GOODCH.events.ndjson", "{}\n"),
+                 (os.path.join(".never-read", "NEMO.md.gz"), "not text")] + list(extra)
+        if rec is not None:
+            files.append(("diagnostics.json", _json.dumps(rec)))
+        for n, s in files:
+            io.open(os.path.join(d, n), "w", encoding="utf-8").write(s)
+        return d
+
+    said = []
+
+    def grab(*a, **k):
+        said.append(" ".join(str(x) for x in a))
+
+    def quiet(*a, **k):
+        pass
+
+    # --- the harness as installed here (its R193 layout = the K001 S4 folder) --------------------
+    t0 = _time.time() - 2
+    d1 = layout("installed")
+    rows = absorb_delegated(d1, mark, 100, since=t0, printer=grab)
+    got = [(r["channel"], r.get("file")) for r in rows]
+    ok("k004: the harness's REPORT/HANDOFF/PROGRESS/READING, its quote-check sidecar and a second "
+       "attempt are never graded as reviewers - only the answer its record claims (K001 S4)",
+       got == [("goodch", "GOODCH.md")], str(got))
+    ok("k004: a clean round through the harness has no FAILED row",
+       not [r for r in rows if r.get("failures")],
+       str([(r["channel"], r["failures"]) for r in rows]))
+    told = "\n".join(said)
+    ok("k004: what is not graded is SAID - a channel that left no answer, a never_read channel",
+       "downch" in told and "nemo" in told, told[:300])
+
+    # --- one home: the audit reads exactly what the grading graded --------------------------------
+    arows = audit_answers(d1, corpus, None, 45, printer=quiet)
+    ok("k004: the quotation audit reads exactly the files the grading graded - the reader's "
+       "READING.md quotation is not a reviewer's", sorted({r[0] for r in arows}) == ["GOODCH.md"],
+       str(sorted({r[0] for r in arows})))
+    import krokai.consult as _cm
+    import krokai.review as _rv
+    srcs = [io.open(m.__file__.replace(".pyc", ".py"), encoding="utf-8").read() for m in (_cm, _rv)]
+    ok("k004: neither reader keeps a private list of non-answers again (one home: roundfolder)",
+       not any("_OURS" in s or "ours = {" in s for s in srcs), "")
+
+    # --- a file the harness starts writing tomorrow: named, not graded, no alarm ------------------
+    said[:] = []
+    d3 = layout("newfile", extra=[("NEWKITFILE.md", "a file the harness writes for itself\n" * 40)])
+    rows = absorb_delegated(d3, mark, 100, since=t0, printer=grab)
+    ok("k004: a file the harness's record does not claim is not graded - and it is named aloud",
+       [r["channel"] for r in rows] == ["goodch"] and "NEWKITFILE.md" in "\n".join(said),
+       "%s | %s" % ([r["channel"] for r in rows], " ".join(said)[:200]))
+
+    # --- no record (answers pasted by hand, another harness): judged by name -----------------------
+    d4 = os.path.join(base, "byhand")
+    os.makedirs(d4)
+    for n in ("REPORT.md", "HANDOFF.md", "PROGRESS.md", "READING.md", "brief.md", "CHAN.md",
+              "NOTES.txt"):
+        io.open(os.path.join(d4, n), "w", encoding="utf-8").write("text\n")
+    c4 = _rf.classify(d4)
+    ok("k004: without a record the harness's own names are still not answers; a pasted .txt is",
+       [f for f, _ch in c4["answers"]] == ["CHAN.md", "NOTES.txt"] and not c4["by_record"],
+       str(c4["answers"]))
+
+    # --- a record that is not this round's, or in a schema this krokai does not know --------------
+    d5 = layout("stalerecord")
+    old = _time.time() - 3600
+    os.utime(os.path.join(d5, "diagnostics.json"), (old, old))
+    c5 = _rf.classify(d5, since=t0)
+    ok("k004: a previous round's record is not trusted for this round - and that is said",
+       not c5["by_record"] and "previous round" in c5["note"], c5["note"])
+    d5b = layout("newschema", rec=dict(record, schema="model-orchestration/diagnostics/2"))
+    c5b = _rf.classify(d5b, since=t0)
+    ok("k004: a record in a schema this krokai does not know is not guessed at - it is said",
+       not c5b["by_record"] and "diagnostics/2" in c5b["note"], c5b["note"])
+
+    # --- the reverse defect: a harness that crashed or wrote nothing is never a clean round -------
+    d6 = os.path.join(base, "crashed")
+    os.makedirs(d6)
+    io.open(os.path.join(d6, "diagnostics.json"), "w", encoding="utf-8").write(_json.dumps({
+        "schema": "model-orchestration/diagnostics/1", "crashed": True,
+        "error_type": "ValueError", "error": "boom"}))
+    rows = absorb_delegated(d6, mark, 100, since=t0, printer=quiet)
+    ok("k004: a harness that reports a crash is a FAILED row, never an empty clean round",
+       [(r["channel"], r["failures"][0][0]) for r in rows] == [("harness", "HARNESS_CRASHED")],
+       str([(r["channel"], r["failures"]) for r in rows]))
+    d7 = os.path.join(base, "nothing")
+    os.makedirs(d7)
+    rows = absorb_delegated(d7, mark, 100, since=t0, harness_exit=1, printer=quiet)
+    ok("k004: a harness that left nothing is a FAILED row carrying its exit code",
+       [(r["channel"], r["failures"]) for r in rows]
+       == [("harness", [("HARNESS_NO_ANSWER", "exit 1")])],
+       str([(r["channel"], r["failures"]) for r in rows]))
+
+    # --- where krokai looks: the harness's published install routes, the plugin one included -----
+    cache = os.path.join(base, "plugins", "cache", "review-channels", "model-orchestration")
+    for ver, retired in (("1.124.0", True), ("1.125.0", False)):
+        sk = os.path.join(cache, ver, "skills", "model-orchestration")
+        os.makedirs(sk)
+        io.open(os.path.join(sk, "orchestrate.py"), "w").write("# stub\n")
+        if retired:
+            io.open(os.path.join(cache, ver, ".orphaned_at"), "w").write("0")
+    pat = os.path.join(cache, "*", "skills", "model-orchestration", "orchestrate.py")
+    reg = {"channels": {"harness": {"env": "KROKAI_K004_UNSET_VARIABLE", "candidates": [pat]}}}
+    got = find_harness(reg) or ""
+    ok("k004: a plugin-installed harness is found, and the live version wins over a retired one",
+       os.path.join("1.125.0", "skills") in got, got)
+    io.open(os.path.join(cache, "1.125.0", ".orphaned_at"), "w").write("0")
+    ok("k004 control: only retired plugin versions on disk -> not found, never a stale copy",
+       find_harness(reg) is None, str(find_harness(reg)))
+    from krokai._datadir import data_file
+    shipped = _json.load(io.open(data_file("channels.json"), encoding="utf-8"))
+    cands = ((shipped.get("channels") or {}).get("harness") or {}).get("candidates") or []
+    ok("k004: the shipped candidates name the plugin route and no pre-plugins/ repo-root path",
+       any("plugins/cache/review-channels/" in c for c in cands)
+       and not any(c.endswith("ai-second-opinion/orchestrate.py") for c in cands), str(cands))
+
+    # --- through the real CLI: krokai review -> harness -> grading -> audit -> exit code ---------
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    matter = os.path.join(base, "matter")
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["KROKAI_KEY_DIR"] = os.path.join(base, "no-keys-here")
+    fake = os.path.join(base, "fake_harness.py")
+    io.open(fake, "w", encoding="utf-8").write(_K004_FAKE_HARNESS)
+
+    def krokai(*args, **extra_env):
+        return _sp.run([sys.executable, "-m", "krokai"] + list(args), cwd=root,
+                       env=dict(env, **extra_env), capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=240)
+
+    r = krokai("init", matter, "--no-claude-md")
+    if r.returncode != 0:
+        ok("k004 CLI: init failed - the CLI pins are skipped", False, (r.stderr or "")[-200:])
+        return
+    io.open(os.path.join(matter, "law", "8USC-1255.md"), "w", encoding="utf-8").write(
+        "SEC. 1255. " + quote)
+
+    def review(name, mode, q):
+        return krokai("review", "--dir", matter, "--harness", fake, "--out",
+                      os.path.join(base, "out-" + name),
+                      "Does the provision require eligibility at filing? Quote it.",
+                      K004_FAKE_MODE=mode, K004_QUOTE=q)
+
+    ra = review("clean", "layout", quote)
+    out_a = ra.stdout or ""
+    ok("k004 CLI: a clean round through a harness writing its real layout exits 0 (it exited 1)",
+       ra.returncode == 0, "rc=%s tail=%s" % (ra.returncode, out_a[-500:]))
+    ok("k004 CLI: none of the harness's own files is a reviewer row; its unknown file is named",
+       "[FAILED]" not in out_a and "NEWKITFILE.md" in out_a and "goodch" in out_a, out_a[-300:])
+    rv = review("invented", "layout", invented)
+    ok("k004 CLI control: an invented quotation through the same harness still exits 5",
+       rv.returncode == 5, "rc=%s tail=%s" % (rv.returncode, (rv.stdout or "")[-300:]))
+    rs = review("silent", "silent", quote)
+    ok("k004 CLI: a harness that exits 1 and writes nothing exits 1 - never the empty clean 0",
+       rs.returncode == 1 and "HARNESS_NO_ANSWER" in (rs.stdout or ""),
+       "rc=%s tail=%s" % (rs.returncode, (rs.stdout or "")[-300:]))
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if root not in sys.path:
@@ -4832,6 +5060,7 @@ def main():
         suite_r79_phase2(tmp)
         suite_r79_phase3(tmp)
         suite_r79_phase4(tmp)
+        suite_k004_kit_contract(tmp, corpus)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)

@@ -96,22 +96,27 @@ def prepare(question, material="", out_dir=".", marker="REVIEW-COMPLETE",
     return bp, sp
 
 
-def audit_answers(answers_dir, corpus, packs, min_len=45, printer=print):
+def audit_answers(answers_dir, corpus, packs, min_len=45, printer=print, files=None):
     """🔴 The step the orchestration harness cannot do: check the reviewers' quotations.
+
+    `files`: the answer files to audit - after a round, exactly the ones that round graded. When
+    absent (`review --audit <folder>`), the folder is sorted by `roundfolder.classify`.
 
     Returns `[(file, verdict, quote, detail), ...]`, worst first.
     """
     from .verify import check
 
-    # R76 (orgemini37flash): our own round artifacts land in the SAME folder as the answers,
-    # and everything not excluded here is audited AS an answer - ANALYTICS.md was being graded
-    # as a failed reviewer. These are the harness's files, not voices.
-    ours = {"brief.md", "system.md", "analytics.md", "handoff.md", "report.md",
-            "adjudication.md"}
+    # R76 (orgemini37flash): our own round artifacts land in the SAME folder as the answers, and
+    # everything not excluded is audited AS an answer - ANALYTICS.md was being graded as a failed
+    # reviewer. 🔴 K004: that exclusion list lived here AND in consult.py, and the two differed;
+    # what is an answer now has one home, shared with the grading of the same folder.
+    if files is None:
+        from .roundfolder import classify, report
+        c = classify(answers_dir)
+        report(c, printer=printer)
+        files = [fn for fn, _channel in c["answers"]]
     rows = []
-    for fn in sorted(os.listdir(answers_dir)):
-        if not fn.lower().endswith((".md", ".txt")) or fn.lower() in ours:
-            continue
+    for fn in files:
         path = os.path.join(answers_dir, fn)
         body = io.open(path, encoding="utf-8", errors="replace").read()
         for q in extract_quotes(body, min_len):

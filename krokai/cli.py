@@ -794,12 +794,12 @@ def cmd_review(a):
     # runs for. 5, distinct from 1 (a channel failed) - transport and trust are different alarms.
     from .verdicts import CLEAN as _CLEAN
 
-    def _audit(folder):
+    def _audit(folder, files=None):
         from .run import corpus_for
         from .citations import load_packs
         corpus = corpus_for(cfg)
         return audit_answers(folder, corpus, load_packs(cfg["citation_packs"]),
-                             cfg["min_quote_length"])
+                             cfg["min_quote_length"], files=files)
 
     if a.audit:
         audit_rows = _audit(os.path.abspath(a.audit))
@@ -857,7 +857,10 @@ def cmd_review(a):
         return 0
 
     print("\n--- checking the reviewers' quotations against YOUR corpus ---")
-    audit_rows = _audit(out)
+    # 🔴 K004: exactly the answers this round graded. Listing the folder again audited a previous
+    # round's answers left in the reused default folder (`reviews/round`), and the harness's own
+    # files beside them - the grading had skipped those, the audit had not.
+    audit_rows = _audit(out, files=[r["file"] for r in rows if r.get("file")])
     if any(r["verdict"] == "FAILED" for r in rows):
         return 1
     return 5 if any(r[1] not in _CLEAN for r in audit_rows) else 0

@@ -10,6 +10,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.17.0] - 2026-11-23
+
+`krokai review` through ai-second-opinion (the review harness) exited 1 on a round in which nothing
+failed. The command line between the two still matched; the drift was in the output folder. The
+harness writes files for itself beside the reviewers' answers, and krokai graded every one as a
+reviewer that FAILED. Measured end to end through the harness as installed and as published
+(v1.125.0), with no model called: `REPORT.md`, `HANDOFF.md`, the harness's own quote check of an
+answer (`<CHANNEL>.quote-verify.md`) and, in its newer code, `PROGRESS.md` - four FAILED rows, exit
+1, on a clean answer. `review --dry-run` returns before the harness is called, so nothing had ever
+exercised this path.
+
+### Fixed
+- **Which files are answers now has one home** (`krokai/roundfolder.py`), shared by the grading of
+  a round and by the quotation audit; the two kept separate lists, and the lists differed. When
+  the harness leaves its own record of the round (`diagnostics.json`, schema
+  `model-orchestration/diagnostics/1`), that record decides: it names the file each channel wrote,
+  and only those are graded. A second attempt or a copy of the winning answer is not a second
+  voice; a `never_read` channel stays unread. A file the record does not claim is named aloud and
+  not graded - the next file the harness adds shows up there instead of as a failed reviewer. A
+  record from a previous round, or in a schema this version does not know, is said and not used;
+  without a record (answers pasted by hand, another harness) files are judged by name, as before.
+- **A harness that leaves no answer is a failed round, never a clean one.** A harness that crashed,
+  refused its arguments or had every channel fail produced zero rows, and `krokai review` exited 0
+  under `OK 0 · DIRTY 0 · FAILED 0`. It is now a FAILED row that carries the harness's exit code
+  (`HARNESS_NO_ANSWER`, or `HARNESS_CRASHED` with the harness's own error), and the exit is 1.
+- **The audit after a round reads exactly the answers that round graded.** It listed the folder
+  again, so in the reused default folder (`reviews/round`) it also audited a previous round's
+  answers and the harness's own files, which the grading had skipped.
+- **krokai finds the harness where it is installed today.** Its first install route is a Claude
+  Code plugin, kept per version under `~/.claude/plugins/cache/review-channels/model-orchestration/`;
+  the installer also writes `~/.agents/skills/model-orchestration/`. Three of the four places krokai
+  looked (`~/ai-second-opinion/orchestrate.py` and two alike) stopped existing when the harness
+  moved into `plugins/`. A candidate may now be a pattern: the newest version that Claude Code has
+  not retired (`.orphaned_at`) wins. Anywhere else, `KROKAI_REVIEW_HARNESS` still decides.
+
+### Tests
+- The self-test reproduces the measured folder (the harness's live layout and its v1.125.0 one)
+  and runs `krokai review` through a stand-in harness that takes the harness's own required
+  arguments and writes that layout: a clean round exits 0, an invented quotation still exits 5, a
+  harness that writes nothing exits 1. Against 0.16.0 the new checks fail.
+
 ## [0.16.0] - 2026-11-23
 
 A packaging release; the checker itself is unchanged. Two defects that needed no code change to
