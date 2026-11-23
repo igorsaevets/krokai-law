@@ -180,7 +180,7 @@ jobs:
           [ "$rc" = 0 ] || { echo "selftest exit $rc"; exit 1; }
           # PyMuPDF 2.x warns that `fitz` "will be removed"; once it is, a leftover `import fitz`
           # reads as "PyMuPDF not installed" and the second PDF engine drops out silently.
-          if grep -F 'The `fitz` API is deprecated' selftest.err; then
+          if grep -E 'fitz.*FutureWarning|FutureWarning.*fitz' selftest.err; then
             echo "a code path still imports PyMuPDF under its deprecated name"; exit 1
           fi
           out="$("$PROBE_PY" -m krokai doctor || true)"; echo "$out"
