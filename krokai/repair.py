@@ -16,10 +16,12 @@ from __future__ import annotations
 import os
 import sys
 
+from . import _pdfengine
+
 
 def _has_fitz():
     try:
-        import fitz  # noqa: F401
+        _pdfengine.load()
         return True
     except ImportError:
         return False
@@ -72,7 +74,7 @@ def is_broken_type3(path):
     """
     if not _has_fitz():
         return False
-    import fitz
+    fitz = _pdfengine.load()
     try:
         doc = fitz.open(path)
     except Exception:
@@ -164,7 +166,7 @@ def fix_broken_pdf(src_path, dest_path, dpi=300, callback=None):
     Raises ``RuntimeError`` when a required dependency is missing.
     """
     try:
-        import fitz
+        fitz = _pdfengine.load()
     except ImportError:
         raise RuntimeError("pymupdf (fitz) is required.  pip install pymupdf")
     try:

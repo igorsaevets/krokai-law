@@ -1072,9 +1072,15 @@ def cmd_doctor(a):
 
     eng = engines_available()
     print("\noptional libraries - each one absent means a whole file type reads as empty:")
+    # OCR is its own pip command, never an extra (K003): pip answers an extra it cannot satisfy by
+    # installing an OLDER krokai, and onnxruntime ships no wheel for a Python newer than it is.
+    howto = {"RapidOCR": "pip install rapidocr onnxruntime"}
     for name, present in sorted(eng.items()):
         print("   %-10s %s" % (name, "installed" if present else
-                               "MISSING  (pip install %s)" % name.lower()))
+                               "MISSING  (%s)" % howto.get(name, "pip install %s" % name.lower())))
+    if not eng.get("RapidOCR"):
+        print("   (OCR is not in krokai[all]. If pip finds no onnxruntime for Python %d.%d, OCR waits "
+              "for its wheels; every other reader works without it.)" % sys.version_info[:2])
     if not eng.get("pypdf") and not eng.get("PyMuPDF"):
         print("   🔴 With no PDF engine at all, every PDF in your library is invisible and every "
               "quotation from one comes back NOT FOUND. Install at least one.")

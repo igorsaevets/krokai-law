@@ -24,6 +24,7 @@ import os
 import re
 
 from .corpus import walk_error
+from . import _pdfengine
 
 # 🔴 R77: every artifact this module writes is STAMPED as tool output. The dump folder is the
 # user's to choose, and a `.forms.txt` or `cross-check.md` inside a sources directory would
@@ -72,7 +73,7 @@ def _sha8(path):
 def _extract_fitz(path):
     """Return (rows, page_count) using PyMuPDF. Rows sorted by reading order (page, y, x)."""
     try:
-        import fitz
+        fitz = _pdfengine.load()
     except ImportError:
         return None, 0
     rows = []

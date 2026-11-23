@@ -1502,6 +1502,38 @@ def suite_docs(root):
             ok("docs: --version matches the newest changelog entry", __version__ == heads[0],
                "__version__=%s, changelog=%s" % (__version__, heads[0]))
 
+    # -- the Python floor: one fact, five homes ----------------------------------------------------
+    # 🔴 K003 (2026-11-23): INSTALL.md promised 3.9 after GitHub's ubuntu-latest had stopped
+    # offering a 3.9 to test it on, and CI went red with no code change. pip enforces the floor in
+    # pyproject.toml; the install documents, the version classifiers and the CI matrix restate it,
+    # so they are read back here. The CI half matters most: a floor that no runner executes is a
+    # number in prose. Versions are compared as numbers - as strings "3.9" sorts above "3.15".
+    pp = os.path.join(root, "pyproject.toml")
+    wf = os.path.join(root, ".github", "workflows", "selftest.yml")
+    if os.path.isfile(pp) and os.path.isfile(wf):
+        ptxt = io.open(pp, encoding="utf-8").read()
+        wtxt = io.open(wf, encoding="utf-8").read()
+        minor = lambda v: int(v.split(".")[1])
+        m = re.search(r'^requires-python\s*=\s*">=\s*(3\.\d+)"\s*$', ptxt, re.M)
+        ok("docs: pyproject.toml states the Python floor as a plain >=3.N", bool(m),
+           "no `requires-python = \">=3.N\"` line")
+        if m:
+            floor = m.group(1)
+            for f in ("INSTALL.md", "INSTALL-FOR-AI.md"):
+                if f in text:
+                    said = sorted(set(re.findall(r"\b(3\.\d+) or newer", text[f])))
+                    ok("docs: %s states the floor pyproject.toml enforces" % f, said == [floor],
+                       "pyproject %s, %s says %s" % (floor, f, said or "nothing"))
+            ci = sorted(set(re.findall(r"""['"](3\.\d+)['"]""", wtxt)), key=minor)
+            ok("docs: CI runs the suite on the floor Python itself, and on nothing older",
+               bool(ci) and ci[0] == floor, "floor %s, CI matrix %s" % (floor, ci))
+            cls = sorted(set(re.findall(r'Python :: (3\.\d+)"', ptxt)), key=minor)
+            ok("docs: the version classifiers are exactly the Pythons CI runs",
+               cls == ci, "classifiers %s, CI %s" % (cls, ci))
+    else:
+        print("note: the Python-floor check did not run - pyproject.toml or the CI workflow is not "
+              "beside the package here.")
+
     # -- an install command nobody can run --------------------------------------------------------
     # 🔴 FOURTH TIME IN THIS PROJECT that a safety check fired on the documentation OF that check:
     # the changelog entry describing the placeholder defect contains the placeholder. A false
@@ -1624,7 +1656,8 @@ def suite_ported(tmp):
     # library actually returns for a real file.
     from krokai.readers import read_pdf, _form_values, no_text_layer
     try:
-        import fitz as _fitz
+        from krokai import _pdfengine
+        _fitz = _pdfengine.load()
     except Exception:
         ok("readers: (skipped) PyMuPDF not installed, cannot build a form fixture", True)
     else:
@@ -2026,7 +2059,7 @@ def suite_missing_engine_is_loud(tmp):
             return real_import(name, *a, **kw)
         return fake
 
-    builtins.__import__ = hide({"pypdf", "fitz"})
+    builtins.__import__ = hide({"pypdf", "fitz", "pymupdf"})   # K003: both PyMuPDF names
     try:
         try:
             R.read_pdf(pdf)
@@ -2053,6 +2086,41 @@ def suite_missing_engine_is_loud(tmp):
                "krokai[docx]" in str(e), str(e).splitlines()[-1])
     finally:
         builtins.__import__ = real_import
+
+    # 🔴 K003: PyMuPDF 2.x prints "The `fitz` API is deprecated and will be removed in future". The
+    # day it is removed, every `import fitz` raises ImportError, which this package reads as "not
+    # installed": doctor would say MISSING on a machine that has it, and the two-engine cross-check
+    # would drop to one engine without a word. Simulated by hiding the OLD name only - and gated on
+    # the new name really importing here, or the check would measure the environment, not the code.
+    try:
+        import pymupdf as _new
+    except Exception:
+        _new = None
+        print("note: readers K003 check skipped - `import pymupdf` fails here (PyMuPDF absent or "
+              "older than 1.24.3), so its premise does not hold.")
+    if _new is not None:
+        fx = os.path.join(tmp, "k003-new-name.pdf")
+        d = _new.open()
+        pg = d.new_page()
+        # Over MIN_TEXT_LAYER on purpose: with pypdf hidden, a page shorter than the floor reads as
+        # "no text layer" by design, and the check would then fail for the wrong reason.
+        for i in range(8):
+            pg.insert_text((72, 90 + 16 * i), "line %d of the new name probe marker K003" % i)
+        d.save(fx)
+        d.close()
+        builtins.__import__ = hide({"fitz", "pypdf"})
+        try:
+            eng = R.engines_available()
+            ok("readers: PyMuPDF still counts as installed once its old `fitz` name is gone (K003)",
+               eng.get("PyMuPDF") is True, str(eng))
+            try:
+                got = R.read_pdf(fx)
+            except MissingReader as e:
+                got = "MissingReader: %s" % e
+            ok("readers: and a PDF is still read through the `pymupdf` name alone (K003)",
+               "new name probe marker K003" in (got or ""), repr(got)[:80])
+        finally:
+            builtins.__import__ = real_import
 
     # 🔴 The control, and it must be GATED on the engines really being there, not assume it.
     #
@@ -2896,9 +2964,10 @@ def suite_r77(tmp):
     os.makedirs(pet2)
     io.open(os.path.join(pet2, "note.md"), "w", encoding="utf-8").write("See Exhibit B-3.")
     io.open(os.path.join(pet2, "scan.pdf"), "wb").write(b"%PDF-1.4 broken")
-    saved = {m: sys.modules.get(m) for m in ("pypdf", "fitz")}
+    saved = {m: sys.modules.get(m) for m in ("pypdf", "fitz", "pymupdf")}
     sys.modules["pypdf"] = None
     sys.modules["fitz"] = None
+    sys.modules["pymupdf"] = None                       # K003: PyMuPDF answers to both names
     try:
         r2 = reconcile([pet2], [exd])
     finally:
@@ -2950,7 +3019,8 @@ def suite_r77(tmp):
 
     # --- #351: a long THIN scan is excluded by the per-page rate, not passed by the total ----
     try:
-        import fitz as _fz
+        from krokai import _pdfengine
+        _fz = _pdfengine.load()
     except ImportError:
         _fz = None
     if _fz is not None:

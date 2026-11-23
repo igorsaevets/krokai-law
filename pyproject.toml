@@ -20,7 +20,19 @@
 #   pip install krokai[pdf]       -> + PDF reading
 #   pip install krokai[docx]      -> + .docx reading
 #   pip install krokai[fetch]     -> + fetching a source over the network
-#   pip install krokai[all]       -> everything
+#   pip install krokai[all]       -> all three
+#
+# 🔴 NO EXTRA MAY NAME A PACKAGE THAT SHIPS WHEELS ONLY (K003, measured 2026-11-23). When one
+# requirement of an extra has no wheel and no sdist for the user's Python or platform, pip does not
+# fail: it walks back through OLDER krokai releases until it finds one whose extra resolves, and
+# prints "Successfully installed". 0.9.0 put onnxruntime (wheels only, cp311-cp314, five platforms)
+# into `all` and `ocr`; from then on `pip install "krokai[all]"` on Python 3.15 - and on 3.14 on any
+# Mac with an Intel chip - replaced the current release with 0.8.6, seven releases old, exit 0. An
+# environment marker cannot fix it: musl, an old glibc, macOS 13 and free-threaded builds have no
+# marker. So OCR is its own pip command, `pip install rapidocr onnxruntime`, which names no krokai:
+# where onnxruntime has no wheel it fails loudly and leaves krokai alone. `krokai doctor` says so.
+# Every extra here is pure Python or ships an sdist; CI installs the BUILT wheel with `[all]` on
+# every supported Python - a local wheel file cannot be backtracked, so a regression goes red.
 
 [build-system]
 requires = ["hatchling>=1.27"]
@@ -31,7 +43,12 @@ name = "krokai"
 dynamic = ["version"]
 description = "Check every quotation in a document against the actual source text on your own disk. A grounded citation does not prove the quote is real."
 readme = "README.md"
-requires-python = ">=3.9"
+# 3.11 (K003, 2026-11-23): 3.9 and 3.10 are end-of-life; GitHub's ubuntu-latest has no 3.9 to test
+# on; PyMuPDF 2.x and today's onnxruntime start at 3.11; pip on 3.9 cannot use the Windows
+# certificate store, so behind a TLS-inspecting antivirus it cannot install anything. An older
+# Python is not stranded: pip skips this release for it and installs the last one that supports it.
+# NEVER add an upper bound here - pip would answer it by installing an older krokai without one.
+requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Igor Saevets" }]
@@ -45,6 +62,11 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Text Processing :: Linguistic",
     "Topic :: Utilities",
 ]
@@ -56,8 +78,7 @@ dependencies = []
 pdf = ["pypdf>=4", "pymupdf>=1.24"]
 docx = ["mammoth>=1.6"]
 fetch = ["requests>=2.28"]
-ocr = ["pymupdf>=1.24", "rapidocr", "onnxruntime", "numpy"]
-all = ["pypdf>=4", "pymupdf>=1.24", "mammoth>=1.6", "requests>=2.28", "rapidocr", "onnxruntime", "numpy"]
+all = ["pypdf>=4", "pymupdf>=1.24", "mammoth>=1.6", "requests>=2.28"]
 
 [project.scripts]
 krokai = "krokai.cli:main"

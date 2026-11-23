@@ -13,6 +13,7 @@ import os
 import re
 
 from .normalize import normalise, strip_scrape_artifacts
+from . import _pdfengine
 from .repair import is_broken_type3
 
 
@@ -60,9 +61,10 @@ EXTRACTOR_VERSION = "3"
 def engines_available():
     """What is actually installed, for the doctor command. Reported, never assumed."""
     out = {}
-    for mod, label in (("pypdf", "pypdf"), ("fitz", "PyMuPDF"), ("mammoth", "mammoth")):
+    for label, load in (("pypdf", lambda: __import__("pypdf")), ("PyMuPDF", _pdfengine.load),
+                        ("mammoth", lambda: __import__("mammoth"))):
         try:
-            __import__(mod)
+            load()
             out[label] = True
         except Exception:
             out[label] = False
@@ -101,7 +103,7 @@ def _form_values_fitz(path):
     is the absence of an answer.
     """
     try:
-        import fitz
+        fitz = _pdfengine.load()
     except Exception:
         return ""
     try:
@@ -310,7 +312,7 @@ def read_pdf(path, cache_dir=None):
 
     alt = ""
     try:
-        import fitz
+        fitz = _pdfengine.load()
     except ImportError:
         pass
     else:
@@ -347,7 +349,7 @@ def read_pdf(path, cache_dir=None):
             os.close(fd)
             try:
                 fix_broken_pdf(path, tmp)
-                d2 = __import__("fitz").open(tmp)
+                d2 = _pdfengine.load().open(tmp)
                 text = "\n".join(pg.get_text() for pg in d2)
                 d2.close()
             finally:
@@ -521,7 +523,7 @@ def _page_count(path):
     except Exception:
         pass
     try:
-        import fitz
+        fitz = _pdfengine.load()
         d = fitz.open(path)
         n = d.page_count
         d.close()

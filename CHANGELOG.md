@@ -10,6 +10,64 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.16.0] - 2026-11-23
+
+A packaging release; the checker itself is unchanged. Two defects that needed no code change to
+appear were measured on 2026-11-23: `pip install "krokai[all]"` - the line INSTALL.md recommends -
+installed **krokai 0.8.6** instead of the current release on Python 3.15 and printed "Successfully
+installed"; and CI on `main` had gone red because GitHub's `ubuntu-latest` became Ubuntu 26.04, for
+which there is no Python 3.9.
+
+### Changed
+- **Python 3.11 or newer.** 3.9 and 3.10 are end-of-life (2025-10-31 and 2026-10-01); GitHub's
+  current Ubuntu image cannot install 3.9; PyMuPDF 2.x and current onnxruntime start at 3.11; and
+  pip on 3.9 cannot use the Windows certificate store, so behind a TLS-inspecting antivirus it
+  installs nothing at all. On an older Python, pip skips this release and installs 0.15.0, the last
+  one for it - a working tool that gets no more fixes.
+- **`[all]` is now `[pdf]` + `[docx]` + `[fetch]`, and the `[ocr]` extra is gone.** Since 0.9.0
+  both named onnxruntime, which ships wheels only - no sdist - and only for the Pythons and
+  platforms it has built. Where it had none, pip did not fail: it walked back to the newest krokai
+  whose `[all]` it could satisfy, 0.8.6. Resolved against the live index for 0.15.0, that was every
+  platform on Python 3.15, macOS on 3.14 (onnxruntime dropped Intel Macs, and its Apple Silicon
+  wheels need macOS 14) and Windows on ARM below 3.11. An environment marker cannot close the
+  class - there is no marker for musl, an old glibc, a macOS release or a free-threaded build - so
+  OCR is now its own command, `pip install rapidocr onnxruntime`. It names no krokai: where there
+  is no wheel it fails loudly and leaves krokai alone. `pip install "krokai[ocr]"` still installs
+  this release, with pip's warning that the extra no longer exists; `doctor` prints the OCR command
+  and says why it is separate.
+- **PyMuPDF is imported as `pymupdf`.** Since PyMuPDF 2.0, `import fitz` raises a FutureWarning
+  ("The `fitz` API is deprecated and will be removed in future"). When it is removed, every
+  `import fitz` would read as "PyMuPDF is not installed": doctor saying MISSING on a machine that
+  has it, and the two-engine cross-check dropping to one engine without a word. One loader,
+  `krokai/_pdfengine.py`, tries `pymupdf` and falls back to `fitz` only for installs older than
+  1.24.3. A self-test hides the old name and requires PyMuPDF still to count and still to read a
+  PDF.
+
+### CI and release
+- The matrix runs Python 3.11 to 3.15 on Ubuntu and 3.15 on Windows. A new job, `installed-all`,
+  installs the BUILT wheel with `[all]` exactly as a user would - a local wheel file cannot be
+  backtracked, so an extra that stops resolving turns CI red - on 3.11, 3.14, 3.15 and Windows
+  3.15; it checks that the installed krokai is the one just built, runs the suite and `doctor`, and
+  fails if anything still imports PyMuPDF as `fitz`. It replaces the job that installed three
+  libraries by name, which is why CI never saw the downgrade.
+- `publish.yml` runs the whole self-test workflow before anything else and uploads only from a
+  `v*` tag, which must name the version being built; a manual run is a rehearsal that stops before
+  the upload. Before this, a tag published after one Python passed while the full matrix ran in a
+  workflow nothing waited for.
+- `pypa/gh-action-pypi-publish` is pinned to the commit of v1.14.3 instead of the moving
+  `release/v1` branch; `actions/checkout` is v7 in every job (three still ran v4, forced onto
+  Node 24 with a warning); actionlint is pinned to a release instead of `:latest`.
+- The self-test reads the Python floor back from `pyproject.toml`, `INSTALL.md`,
+  `INSTALL-FOR-AI.md`, the version classifiers and the CI matrix, so the five cannot drift apart.
+- `.gitignore` also names a maintainer's local assistant files (`CLAUDE.local.md`, `.claude/`,
+  `.mcp.json`, `private/`): the file that keeps them out today is not cloned.
+
+### Known, not changed here
+- PyMuPDF 2.0 and later require onnxruntime themselves, so the PDF engine pip picks now depends
+  on the Python: 2.1 on 3.11-3.14 on Windows, Linux and Apple Silicon; 1.28.2 on 3.15 and wherever
+  onnxruntime has no wheel. Both pass the suite; their extraction on real filings has not yet been
+  compared.
+
 ## [0.15.0] - 2026-09-01
 
 The petition layer. Two commands that turn the bank into a filing and turn a downloaded precedent

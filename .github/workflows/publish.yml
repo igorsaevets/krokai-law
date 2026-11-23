@@ -24,6 +24,15 @@
 # installed it points at `site-packages` and finds nothing, silently. The clone suite passed
 # 421/421 the whole time. Only running the wheel could see it, so that is what runs here.
 #
+# 🔴 WHY THE WHOLE selftest.yml RUNS FIRST (K003, 2026-11-23). This file used to start from a tag
+# with nothing but its own one-Python check in front of the upload, while the full matrix ran
+# beside it in another workflow that nothing waited for. When ubuntu-latest moved and the matrix
+# went red, a tag would still have published. Now `tests` is that matrix, every job here `needs`
+# it, and a red leg stops the upload.
+#
+# A manual run (`workflow_dispatch`) is a rehearsal: tests, build, the installed-wheel check -
+# everything except the upload, which happens only for a `v*` tag.
+#
 # A PyPI version number can never be reused, even after `yank`. Publishing a broken 0.7.4 means
 # the next attempt is 0.7.5 and 0.7.4 stays in the index forever as a trap for anyone who pins.
 
@@ -38,10 +47,14 @@ permissions:
   contents: read
 
 jobs:
+  tests:
+    uses: ./.github/workflows/selftest.yml
+
   build:
+    needs: tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -54,6 +67,15 @@ jobs:
       - name: Check the metadata PyPI will reject on
         run: python -m twine check dist/*
 
+      # The tag is only the trigger; the version that ships is the one in krokai/__init__.py. If
+      # the two disagree, PyPI would get a release nobody tagged.
+      - name: The tag names the version being built
+        if: github.ref_type == 'tag'
+        run: |
+          whl="$(ls dist/*.whl)"
+          [ "$whl" = "dist/krokai-${GITHUB_REF_NAME#v}-py3-none-any.whl" ] || {
+            echo "tag ${GITHUB_REF_NAME} does not match the built ${whl}"; exit 1; }
+
       # The wheel is installed and RUN, not merely built. A wheel that builds is not a wheel that
       # works: this project's data used to live outside the package, and every local check passed
       # while the installed copy could not find it.
@@ -62,7 +84,7 @@ jobs:
           python -m venv /tmp/probe
           /tmp/probe/bin/python -m pip install --quiet dist/*.whl
           cd /tmp
-          /tmp/probe/bin/krokai selftest      # 397 of 421; 24 repo-hygiene tests skip aloud
+          /tmp/probe/bin/krokai selftest      # the repo-hygiene suites skip aloud: no tree to scan
 
       - uses: actions/upload-artifact@v7
         with:
@@ -71,6 +93,7 @@ jobs:
 
   publish:
     needs: build
+    if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -80,4 +103,7 @@ jobs:
         with:
           name: dist
           path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      # Pinned to a commit, not the moving `release/v1` branch: this is the one step that holds
+      # a token able to publish under this project's name (the action's README recommends a
+      # tag or a full commit SHA over a branch pointer). Bump deliberately.
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3

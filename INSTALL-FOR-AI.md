@@ -38,9 +38,9 @@ you ran, in this turn.
 ## Step 1 — check the environment
 
 ```bash
-python --version          # 3.9 or newer
+python --version          # 3.11 or newer
 python -c "import pypdf" 2>&1 | tail -1
-python -c "import fitz"  2>&1 | tail -1
+python -c "import pymupdf" 2>&1 | tail -1
 python -c "import mammoth" 2>&1 | tail -1
 ```
 
@@ -53,7 +53,7 @@ reads as empty:
 
 | missing | consequence |
 |---|---|
-| both `pypdf` **and** `fitz` (PyMuPDF) | every PDF is invisible; every quotation from one comes back `NOT_FOUND` |
+| both `pypdf` **and** `pymupdf` (PyMuPDF) | every PDF is invisible; every quotation from one comes back `NOT_FOUND` |
 | only one of the two | the cross-check that catches a word-splitting extraction cannot run — measured, one engine inflated a controlling opinion by 51 % in broken tokens |
 | `mammoth` | `.docx` reads through the raw-XML pass only |
 

@@ -15,6 +15,14 @@ answers/
 # from being published.
 .playwright-mcp/
 
+# A maintainer's local assistant layer: personal instructions, session transcripts, MCP configs
+# that can carry tokens. Kept out by .git/info/exclude on the machine where it lives - but that
+# file is not cloned, and one fresh clone plus `git add -A` would publish it. So it is named here.
+/CLAUDE.local.md
+/.claude/
+/.mcp.json
+/private/
+
 # Local state written by the hooks
 .krokai/
 *.backup-*

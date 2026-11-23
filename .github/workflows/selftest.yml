@@ -4,13 +4,21 @@
 # by rule, and "run the suite before you push" is a rule. It was obeyed while the task was about the
 # suite and would not have been obeyed while the task was about something else.
 #
-# Two claims are under test here that no local run can make:
+# Three claims are under test here that no local run can make:
 #
-#   * "Python 3.9 or newer" - INSTALL.md states a floor and nothing verified it. A stated minimum
-#     version is a number in prose, and this release exists mostly because of what those turn into.
+#   * The Python floor. pyproject.toml enforces it and INSTALL.md states it; the matrix below starts
+#     AT the floor and ends at the newest CPython, and the suite reads all three back (suite_docs),
+#     so they cannot drift apart. A stated minimum version is a number in prose: 3.9 stayed promised
+#     after GitHub's ubuntu-latest stopped offering a 3.9 to test it on, and this workflow went red
+#     with no code change (K003, 2026-11-23).
 #   * "no network, no credentials, no configuration" - the suite says so in its own output. Here it
 #     runs on a machine that has none of the author's setup, and on a runner with no PDF or .docx
 #     library installed, which is the state a locked-down work laptop is actually in.
+#   * `pip install "krokai[all]"` - the command INSTALL.md recommends - installs THIS release on
+#     every supported Python (job `installed-all`).
+#
+# publish.yml runs this whole file (`workflow_call`) before it uploads anything, so a release can no
+# longer leave from a red pipeline.
 #
 # Nothing here needs a secret. If this workflow ever needs one, something has gone wrong upstream.
 name: selftest
@@ -18,9 +26,9 @@ name: selftest
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -32,12 +40,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python: ['3.9', '3.11', '3.13']
+        python: ['3.11', '3.12', '3.13', '3.14', '3.15']
         include:
           # Developed on Windows, and the hooks force UTF-8 on stderr because without it the
-          # warning arrives as mojibake exactly where it matters. Worth one runner.
+          # warning arrives as mojibake exactly where it matters. Worth one runner - on the newest
+          # Python, because that is what a fresh python.org install on a new laptop is.
           - os: windows-latest
-            python: '3.13'
+            python: '3.15'
 
     steps:
       - uses: actions/checkout@v7
@@ -86,19 +95,6 @@ jobs:
           done
           exit $bad
 
-  with-optional-libraries:
-    # The same suite with the PDF and .docx engines present. Both states are supported and they
-    # exercise different code, so both are tested rather than assumed to be the same.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.13'
-      - run: pip install --quiet pypdf pymupdf mammoth
-      - run: python -m krokai selftest
-      - run: python -m krokai doctor || true
-
   # 🔴 THE SUITE ABOVE RUNS FROM THE CHECKOUT, AND THAT IS THE ONE LAYOUT WHERE THE BUG COULD NOT
   # APPEAR. This package's data lives at the repository root; the code reached it by walking one
   # level up out of the package, which resolves in a clone and points at `site-packages` once
@@ -107,10 +103,10 @@ jobs:
   installed:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.9"
+          python-version: '3.11'
       - name: Build and install the wheel
         run: |
           python -m pip install --upgrade build
@@ -132,12 +128,72 @@ jobs:
           print('installed copy sees packs=%s and finds %s' % (packs, REGISTRY_NAME))
           "
 
+  # 🔴 THE COMMAND INSTALL.md RECOMMENDS WAS NEVER RUN BY CI, AND FOR THREE MONTHS IT INSTALLED THE
+  # WRONG RELEASE. 0.9.0 put onnxruntime (wheels only, no sdist) into `[all]`; on a Python it had
+  # no wheel for, pip did not fail - it walked back through older krokai releases until one's
+  # `[all]` resolved and printed "Successfully installed krokai-0.8.6" (measured on 3.15, K001).
+  # The job that installed "the optional libraries" named three of them by hand, so it could not
+  # see it. This one installs the BUILT wheel with `[all]` exactly as a user would: a local wheel
+  # file cannot be backtracked, so an extra that stops resolving turns this job red instead of
+  # turning a user's install seven releases old. It also replaces that hand-named job: the same
+  # suite, with the PDF and .docx engines present, from the installed copy.
+  installed-all:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ['3.11', '3.14', '3.15']
+        include:
+          - os: windows-latest
+            python: '3.15'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Build the wheel
+        shell: bash
+        run: |
+          python -m pip install --quiet --upgrade build
+          python -m build --wheel
+      - name: Install the BUILT wheel with [all] into a clean venv
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/probe"
+          py="$RUNNER_TEMP/probe/bin/python"; [ -x "$py" ] || py="$RUNNER_TEMP/probe/Scripts/python.exe"
+          echo "PROBE_PY=$py" >> "$GITHUB_ENV"
+          whl="$(ls dist/*.whl)"
+          "$py" -m pip install --quiet "${whl}[all]"
+          "$py" -m pip check
+          want="$(basename "$whl" | cut -d- -f2)"
+          got="$("$py" -c 'import krokai; print(krokai.__version__)')"
+          echo "built $want, installed $got"
+          [ "$want" = "$got" ] || { echo "the installed krokai is not the one just built"; exit 1; }
+          "$py" -m pip list | grep -i -E '^(krokai|pymupdf|pypdf|mammoth|requests|onnxruntime) ' || true
+      - name: The suite and doctor from the installed copy, in an unrelated folder
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          rc=0; "$PROBE_PY" -m krokai selftest 2> selftest.err || rc=$?
+          cat selftest.err
+          [ "$rc" = 0 ] || { echo "selftest exit $rc"; exit 1; }
+          # PyMuPDF 2.x warns that `fitz` "will be removed"; once it is, a leftover `import fitz`
+          # reads as "PyMuPDF not installed" and the second PDF engine drops out silently.
+          if grep -F 'The `fitz` API is deprecated' selftest.err; then
+            echo "a code path still imports PyMuPDF under its deprecated name"; exit 1
+          fi
+          out="$("$PROBE_PY" -m krokai doctor || true)"; echo "$out"
+          echo "$out" | grep -q -E '^ +pypdf +installed' || { echo "[all] left pypdf out"; exit 1; }
+          echo "$out" | grep -q -E '^ +PyMuPDF +installed' || { echo "[all] left PyMuPDF out"; exit 1; }
+
   # The check that would have caught 2026-08-04: a workflow with a YAML syntax error is still
-  # listed 'active', still accepts its cron, notifies nobody, and never runs.
+  # listed 'active', still accepts its cron, notifies nobody, and never runs. Pinned to a release:
+  # `:latest` is a reference that moves under a green pipeline, which is how ubuntu-latest broke it.
   actionlint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker://rhysd/actionlint:latest
+      - uses: actions/checkout@v7
+      - uses: docker://rhysd/actionlint:1.7.12
         with:
           args: -color

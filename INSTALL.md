@@ -3,7 +3,9 @@
 Five ways, in order of how much you are allowed to install on the machine. **All five end up at the
 same place**; none needs an account, an API key, or a network connection at run time.
 
-Requirements: **Python 3.9 or newer.** That is the only hard one.
+Requirements: **Python 3.11 or newer.** That is the only hard one. On an older Python pip does not
+fail: it installs the last release that still supported it, which works but gets no fixes - so
+install a current Python from python.org first.
 
 ---
 
@@ -12,6 +14,7 @@ Requirements: **Python 3.9 or newer.** That is the only hard one.
 ```bash
 pip install krokai                       # working tool, no optional readers
 pip install "krokai[all]"                # + pypdf, pymupdf, mammoth, requests — recommended
+pip install rapidocr onnxruntime         # optional: OCR for broken-font PDFs, see the table below
 cd /path/to/your/matter
 krokai init .
 krokai doctor        # ends with STATUS: READY
@@ -21,8 +24,11 @@ The `krokai` command lands on your PATH; the `python /path/…` forms below are 
 cannot pip-install and are running from a folder they copied in place. `krokai --version` prints
 the installed version; `pip show krokai` prints the folder pip put it in.
 
-Behind the scenes: `krokai[all]` is the same list of libraries the "optional libraries" table
-lower on this page enumerates — installing the extra adds each one and no more.
+Behind the scenes: `krokai[all]` is `[pdf]` + `[docx]` + `[fetch]` — the readers in the "optional
+libraries" table lower on this page, plus `requests` for downloading sources. Those libraries bring
+their own dependencies, which pip chooses, not krokai: PyMuPDF 2.x, for one, pulls in onnxruntime
+where onnxruntime has a wheel for your Python. OCR is deliberately **not** in `[all]` - the table
+says why.
 
 ---
 
@@ -98,6 +104,7 @@ pip install pypdf pymupdf mammoth
 | `pypdf` **or** `pymupdf` | at least one is needed or **every PDF is invisible** |
 | both | 🔴 the cross-check that catches a word-splitting extraction cannot run. Measured on a real corpus: one engine reported **51 % more** alphabetic tokens than the other on a controlling opinion, because it split words apart — and that degrades a verbatim quotation into a flagged one for reasons that look like the quotation's fault |
 | `mammoth` | `.docx` is read through the raw-XML pass only. Usable, but the popular alternative drops **tables silently** — measured at −10 % of the text — so the XML pass is the safety net, not the primary reader |
+| `rapidocr` + `onnxruntime` | a PDF saved through a broken printer driver (Type 3 fonts with no Unicode map) stays garbage instead of being repaired by OCR. Installed by its own command, never as an extra: onnxruntime ships wheels only, and for a new Python months late. When an extra cannot be satisfied, pip does not fail — it installs an **older krokai** whose extra can be, and says "Successfully installed" (measured: Python 3.15 got a release seven versions old). As its own command it fails loudly where there is no wheel, and leaves krokai alone |
 
 `python -m krokai doctor` prints exactly which are present and what each absence means.
 
