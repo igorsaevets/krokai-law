@@ -384,7 +384,7 @@ class Corpus(object):
         i = self.hjoined.find(needle)
         return None if i < 0 else self.paths[bisect.bisect_right(self.hstarts, i) - 1]
 
-    def all_in_order(self, parts):
+    def all_in_order(self, parts, restrict_to=None):
         """Is there ONE file holding every fragment, in order, without overlap?
 
         Three defects lived in the obvious version of this function:
@@ -405,11 +405,16 @@ class Corpus(object):
 
         Returns `(path, [offsets])`, choosing the placement with the smallest total gap so that
         "what the ellipsis hides" describes the passage actually meant.
+
+        ``restrict_to``: only these paths - the address layer re-asks this question inside the files
+        at the CITED address (K012), because an elided quotation is never contained whole.
         """
         best = (None, None, None)
         if not parts:
             return None, None
         for path, txt in zip(self.paths, self.texts):
+            if restrict_to is not None and path not in restrict_to:
+                continue
             start = -1
             for _ in range(200):
                 s0 = txt.find(parts[0], start + 1)

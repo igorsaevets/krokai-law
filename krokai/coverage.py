@@ -125,26 +125,37 @@ INA_TO_USC = {v.lower(): k for k, v in USC_TO_INA.items()}
 # CFR: 8 CFR 214.2(f)(8)(i). The section number and the parenthetical tail are optional; the
 # extractor captures whatever depth the drafter wrote. Alternates for "C.F.R." with dots and
 # without, and the section symbol.
+#
+# K012: the marker between title and number may be the WORD - «8 C.F.R. Section 204.5(h)(3)»,
+# «Sec.», «8 C.F.R. Part 214» - and the part keeps its letter («274a.12» is part 274a, Control of
+# Employment of Aliens; cut to 274 it names Seizure and Forfeiture of Conveyances). Measured in a
+# filed petition: 52 CFR, 10 U.S.C. and 49 INA references written with the word were invisible here
+# and to the packs; 7 of the CFR ones were part 274a. Kept in step with `packs/us-federal.json`.
 _CFR_RX = re.compile(
-    r"\b(\d{1,2})\s*C\.?\s?F\.?\s?R\.?\s*(?:§+\s*)?"
-    r"(\d{1,4})(?:\.(\d+[A-Za-z]?))?"
+    r"\b(\d{1,2})\s*C\.?\s?F\.?\s?R\.?\s*(?:§+\s*|[Ss]ections?\s+|[Ss]ecs?\.\s*|[Pp]arts?\s+)?"
+    r"(\d{1,4}[A-Za-z]?)(?:\.(\d+[A-Za-z]?))?"
     r"((?:\(\s*[^()\s]{1,8}\s*\))*)")
 
 # USC: 8 U.S.C. § 1255(k)(1). Same subitem-optional shape.
 _USC_RX = re.compile(
-    r"\b(\d{1,2})\s*U\.?\s?S\.?\s?C\.?\s*(?:§+\s*)?"
+    r"\b(\d{1,2})\s*U\.?\s?S\.?\s?C\.?\s*(?:§+\s*|[Ss]ections?\s+|[Ss]ecs?\.\s*)?"
     r"(\d+[A-Za-z]?)"
     r"((?:\(\s*[^()\s]{1,8}\s*\))*)")
 
 # INA in its explicit forms: `INA § 245(k)` and `section 245(k) of the Act`. The bare form
 # `section 245(k)` is deliberately NOT accepted here - without the qualifier the same words
 # could be a state or regulatory section. The design canon (R79 study §6.4) names both explicit
-# forms as the ones that must reduce to an INA key.
+# forms as the ones that must reduce to an INA key. K012 adds `INA Section 245(k)` and the Act
+# named after the number (`section 245(k) of the INA`), the same forms the packs accept.
 _INA_EXPLICIT_RX = re.compile(
-    r"\bINA\b\s*(?:§+\s*)?(\d+[A-Za-z]?)((?:\(\s*[^()\s]{1,8}\s*\))*)")
+    r"\bINA\b\s*(?:§+\s*|[Ss]ections?\s+|[Ss]ecs?\.\s*)?(\d+[A-Za-z]?)"
+    r"((?:\(\s*[^()\s]{1,8}\s*\))*)")
 _ACT_SECTION_RX = re.compile(
     r"\bsections?\s+(\d+[A-Za-z]?)((?:\(\s*[^()\s]{1,8}\s*\))*)\s+of\s+the\s+Act\b",
     re.I)
+_INA_NAMED_AFTER_RX = re.compile(
+    r"(?:\bsections?\s+|\bsecs?\.\s*|§+\s*)(\d+[A-Za-z]?)((?:\(\s*[^()\s]{1,8}\s*\))*),?\s+of\s+"
+    r"the\s+(?:INA\b|Immigration\s+and\s+Nationality\s+Act\b)", re.I)
 
 # Public Law and Federal Register - fine keys are the same as the coarse keys, no subitems.
 _PL_RX = re.compile(
@@ -290,6 +301,9 @@ def parse_addresses(text):
         for k in _ina_keys(m.group(1), m.group(2) or ""):
             out.append((k, _label(k), m.start()))
     for m in _ACT_SECTION_RX.finditer(text):
+        for k in _ina_keys(m.group(1), m.group(2) or ""):
+            out.append((k, _label(k), m.start()))
+    for m in _INA_NAMED_AFTER_RX.finditer(text):
         for k in _ina_keys(m.group(1), m.group(2) or ""):
             out.append((k, _label(k), m.start()))
     for m in _PL_RX.finditer(text):
@@ -709,6 +723,15 @@ def controls_pass(printer=print):
         printer("coverage control POS: section 245(k) of the Act did not fold to %r"
                 % (want_ina,))
         passed = False
+
+    # Positive (K012): the word in place of «§» - a filed petition wrote 111 references this way.
+    got = {k for k, _l, _p in parse_addresses("INA Section 245(k) and 8 C.F.R. Section "
+                                                "274a.12(c)(9) and 8 U.S.C. Sec. 1255(k)")}
+    for want in (want_ina, ("cfr", "8", "274a", "12", "c", "9"), ("usc", "8", "1255", "k")):
+        if want not in got:
+            printer("coverage control POS: the section-word form did not parse as %r (got %r)"
+                    % (want, sorted(got)[:4]))
+            passed = False
 
     # Negative: a tab-label parent must NOT match a specific child via `related`.
     parent = ("cfr", "8", "214", "2", "f")

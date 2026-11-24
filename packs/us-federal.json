@@ -12,8 +12,9 @@
   "shapes": [
     {
       "_what": "8 CFR 214.2(f)(6)(i)(D) — title + part is the address; the subsection tail rides along for display but is not part of the key, because a file holding part 214 holds every subsection of it.",
+      "_what_k012": "The marker between title and number may be a word: «8 C.F.R. Section 204.5(h)(3)», «Sec.», «8 C.F.R. Part 214». Measured in a filed petition: 52 CFR references written with the word were invisible to the address layer while their «§» twins were checked. The part KEEPS its letter: «274a.12» is part 274a (Control of Employment of Aliens), and cutting it to 274 names part 274 (Seizure and Forfeiture of Conveyances) - a wrong address, which accuses a correct quotation; 7 of those 52 references were 274a. The sister project paid for the same cut (a FOUND_ELSEWHERE beside a correctly named address).",
       "sample": "see 8 CFR 214.2(f)(6) for the rule",
-      "regex": "\\b(\\d{1,2})\\s*C\\.?\\s?F\\.?\\s?R\\.?\\s*(?:§+\\s*)?(\\d{1,4})(?:\\.\\d+)?(?:\\([^()\\s]{1,8}\\))*",
+      "regex": "\\b(\\d{1,2})\\s*C\\.?\\s?F\\.?\\s?R\\.?\\s*(?:§+\\s*|Sections?\\s+|Secs?\\.\\s*|Parts?\\s+)?(\\d{1,4}[a-z]?)(?:\\.\\d+)?(?:\\([^()\\s]{1,8}\\))*",
       "address": {
         "kind": "cfr",
         "groups": [1, 2],
@@ -39,9 +40,9 @@
       }
     },
     {
-      "_what": "8 U.S.C. § 1255(k). Accepts U.S.C., USC, U. S. C.",
+      "_what": "8 U.S.C. § 1255(k). Accepts U.S.C., USC, U. S. C., and the word in place of the sign: «8 U.S.C. Section 1255(k)», «Sec.» (K012: 10 such references in one filed petition were invisible).",
       "sample": "under 8 U.S.C. § 1255(k) the count runs",
-      "regex": "\\b(\\d{1,2})\\s*U\\.?\\s?S\\.?\\s?C\\.?\\s*(?:§+\\s*)?(\\d+[A-Za-z]?)(?:\\([^()\\s]{1,8}\\))*",
+      "regex": "\\b(\\d{1,2})\\s*U\\.?\\s?S\\.?\\s?C\\.?\\s*(?:§+\\s*|Sections?\\s+|Secs?\\.\\s*)?(\\d+[A-Za-z]?)(?:\\([^()\\s]{1,8}\\))*",
       "address": {
         "kind": "usc",
         "groups": [1, 2],

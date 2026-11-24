@@ -10,6 +10,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.19.0] - 2026-11-24
+
+A citation written with the WORD - «INA Section 245(k)», «8 C.F.R. Section 204.5(h)(3)», «8 U.S.C.
+Section 1255(k)» - now reaches the same address as its «§» twin. Measured on a copy of a filed
+petition: 111 references written that way had no address, so the quotations beside them were never
+checked against the provision they cite.
+
+### Added
+- **The word in place of «§».** The packs read «INA Section N», «INA Sec. N», «N C.F.R. Section N»,
+  «N C.F.R. Part N», «N U.S.C. Section N», and the Act named after the number («Section 245(k) of the
+  INA», «§ 203(b)(2) of the Immigration and Nationality Act»). `check`'s address layer, its NOT_FOUND
+  triage, `bank add`, `quote`, `library --suggest-fetches` and `coverage` (its own parser, and its
+  built-in controls now include the word form) all see them. On the filed petition: 18 quotations moved
+  from «no nearby citation» to an address confirmed at the cited statute.
+- 🔴 **«of the Act» still binds to nothing in `check`.** «The Act» is whatever the document defined,
+  and statutes that amend the INA number their own sections in the same range (the REAL ID Act's
+  subsection 101(a) amends INA § 208(b)(1)); reading «section 101(a)(3) of the Act» as INA § 101 would
+  accuse a correct quotation. A bare «Section N» binds to nothing, as before.
+
+### Fixed
+- **A CFR part keeps its letter.** «8 CFR § 274a.12» was keyed as part 274 - Seizure and Forfeiture of
+  Conveyances - instead of part 274a, Control of Employment of Aliens; in a corpus holding part 274 a
+  correct quotation read FOUND_ELSEWHERE. Same in `coverage`.
+- **An INA section number has three digits.** «INA 2450» no longer mints the key of section 245.
+- **The address repair reads every file behind a key, strongest containment first.** It read the
+  first ten, sorted by name; 8 U.S.C. § 1101 resolved to 36 files of that petition's corpus and the
+  statute was the 14th, so a correct citation of § 1101(a)(13)(A) was reported FOUND_ELSEWHERE.
+- **An elided quotation is re-checked at the cited address.** The repair tested the whole quotation,
+  ellipsis included, which no file contains; an ASSEMBLED quotation met first in the enacting public
+  law was reported FOUND_ELSEWHERE beside a correct 8 U.S.C. § 1225(a). It now asks `check`'s own
+  question - one file holding every fragment, in order, and what the gaps hide - inside the files at
+  the address (`verify.elision_verdict`, one definition for both).
+
+On the filed petition, old vs new: the same 129 quotations, the same exit codes (`--strict` 1,
+`--strict-address` 5), no new FOUND_ELSEWHERE; one VERIFIED became PUNCTUATION (at the cited statute
+the quotation differs only in its quotation marks).
+
 ## [0.18.0] - 2026-11-24
 
 A clean `krokai check` meant «what was examined is clean» and was read as «everything is clean». A

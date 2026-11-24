@@ -543,6 +543,31 @@ def wrong_speaker(quote_n, corpus):
 
 
 # ------------------------------------------------------------------------------------------------
+def elision_verdict(one, parts, offs, corpus, short=()):
+    """The verdict once ONE file holds every fragment of an elided quotation, in order: ELLIPSIS_HIDES
+    when a gap carries a narrowing word or is too wide to be shortening a phrase, else ASSEMBLED
+    with what the gaps hide. Returns ``(verdict, detail)``.
+
+    🔴 One definition for two callers: ``_check_inner`` (the global search) and ``address.fold``,
+    which re-asks the question inside the files at the CITED address (K012). Two copies of a
+    threshold drift apart; this one moved out of ``_check_inner`` unchanged.
+    """
+    gaps = corpus.gaps(one, parts, offs)
+    material = [g for g in gaps if g and NARROWER_RE.search(g)]
+    widest = max([len(g) for g in gaps] or [0])
+    if material or widest > 800:
+        why = ("the ellipsis hides: «%s»"
+               % " ⟂ ".join(g[:160] for g in material[:2]) if material else "")
+        if widest > 800:
+            why = (why + "; " if why else "") + (
+                "%d characters elided - that is not shortening a phrase" % widest)
+        return "ELLIPSIS_HIDES", why
+    note = ("; %d short fragment(s) checked for position only" % len(short)) if short else ""
+    if gaps:
+        return "ASSEMBLED", ("hidden: «%s»" % " ⟂ ".join(g[:90] for g in gaps[:2])) + note
+    return "ASSEMBLED", note.lstrip("; ")
+
+
 def _check_inner(quote, corpus, keep_tags=False):
     """Return `(verdict, path_or_None, detail)`.
 
@@ -594,21 +619,8 @@ def _check_inner(quote, corpus, keep_tags=False):
     if (ELLIPSIS_RE.search(n) or ELLIPSIS_RE.search(quote or "")) and len(parts) > 1:
         one, offs = corpus.all_in_order(parts)
         if one:
-            gaps = corpus.gaps(one, parts, offs)
-            material = [g for g in gaps if g and NARROWER_RE.search(g)]
-            widest = max([len(g) for g in gaps] or [0])
-            if material or widest > 800:
-                why = ("the ellipsis hides: «%s»"
-                       % " ⟂ ".join(g[:160] for g in material[:2]) if material else "")
-                if widest > 800:
-                    why = (why + "; " if why else "") + (
-                        "%d characters elided - that is not shortening a phrase" % widest)
-                return "ELLIPSIS_HIDES", one, why
-            note = ("; %d short fragment(s) checked for position only" % len(short)) if short else ""
-            if gaps:
-                return "ASSEMBLED", one, ("hidden: «%s»"
-                                          % " ⟂ ".join(g[:90] for g in gaps[:2])) + note
-            return "ASSEMBLED", one, note.lstrip("; ")
+            v, why = elision_verdict(one, parts, offs, corpus, short)
+            return v, one, why
         hits = [corpus.find(p) for p in parts]
         if all(hits):
             return "SPLICED", hits[0], "the fragments exist, but no one document holds them in order"

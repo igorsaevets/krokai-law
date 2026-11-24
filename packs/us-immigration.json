@@ -28,9 +28,15 @@
 
   "shapes": [
     {
-      "_what": "INA § 245(k) — mapped to 8 U.S.C. above.",
+      "_what": "INA § 245(k) — mapped to 8 U.S.C. above. K012: also «INA Section 245(k)», «INA Sec. 245» - 49 references in one filed petition were written that way and none reached the address layer. An INA section number has three digits: a fourth means it is not one (a reviewer in the sister project showed «INA 2450» minting the key of section 245).",
       "sample": "under INA § 245(k) the applicant",
-      "regex": "\\bINA\\b\\s*§*\\s*(\\d{3}[a-c]?)(?:\\([^()\\s]{1,8}\\))*",
+      "regex": "\\bINA\\b\\s*(?:§+\\s*|Sections?\\s+|Secs?\\.\\s*)?(\\d{3}[a-c]?)(?![0-9])(?:\\([^()\\s]{1,8}\\))*",
+      "address": {"kind": "ina", "groups": [1], "label": "INA § %s"}
+    },
+    {
+      "_what": "«Section 245(k) of the INA», «§ 245(k) of the Immigration and Nationality Act» - the Act named AFTER the number (K012). 🔴 «of the Act» is deliberately NOT accepted: «the Act» is whatever the document defined, and statutes that amend the INA number their own sections in the same range - the REAL ID Act's subsection 101(a) amends INA § 208(b)(1) - so «section 101(a)(3) of the Act» in an asylum brief can be the REAL ID Act, and reading it as INA § 101 (8 U.S.C. § 1101) would accuse a correct quotation. Measured: one «of the Act» reference in a filed petition against 49 «INA Section»; it stays a neighbour (the bare-section shape), never an address.",
+      "sample": "relief under Section 245(k) of the INA is available",
+      "regex": "(?:\\bSections?\\s+|\\bSecs?\\.\\s*|§+\\s*)(\\d{3}[a-c]?)(?![0-9])(?:\\([^()\\s]{1,8}\\))*,?\\s+of\\s+the\\s+(?:INA\\b|Immigration\\s+and\\s+Nationality\\s+Act\\b)",
       "address": {"kind": "ina", "groups": [1], "label": "INA § %s"}
     },
     {

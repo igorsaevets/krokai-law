@@ -5343,6 +5343,140 @@ def suite_k023_not_examined(tmp):
        "## Not examined" in rep and '"%s" - 8 C.F.R. § 204.5(h)(3)' % short_q in rep, "")
 
 
+def suite_k012_section_form(tmp):
+    """K012 (2026-11-24): a citation written with the WORD - «INA Section 245(k)», «8 C.F.R. Section
+    204.5(h)(3)», «8 U.S.C. Section 1255(k)», «Section 245(k) of the INA» - binds to the same address
+    as its «§» twin; «of the Act» and a bare «Section N» bind to nothing.
+
+    Measured on a copy of a filed petition: 111 references written with the word reached no address,
+    and once they did, two CORRECT citations turned into FOUND_ELSEWHERE - the repair read only the
+    first ten files behind a key (8 U.S.C. § 1101 had 36, the statute 14th) and tested an elided
+    quotation whole (never contained anywhere). The fixture below rebuilds both traps and the
+    274a / 274 pair (a part cut to its number names a different part).
+    """
+    import json
+    import subprocess as _sp
+    from krokai.citations import load_packs
+    from krokai.coverage import parse_addresses, controls_pass
+
+    packs = load_packs(["us-federal", "us-immigration"])
+    cases = [
+        ("Under INA Section 245(k), the applicant may adjust.", ("usc", "8", "1255")),
+        ("as INA section 203(b)(2) provides", ("usc", "8", "1153")),
+        ("INA Sec. 212(a)(9)(B) bars", ("usc", "8", "1182")),
+        ("relief under Section 245(k) of the INA is available", ("usc", "8", "1255")),
+        ("§ 203(b)(2) of the Immigration and Nationality Act covers", ("usc", "8", "1153")),
+        ("see 8 C.F.R. Section 204.5(h)(3) for the criteria", ("cfr", "8", "204")),
+        ("see 8 CFR Sec. 214.2(f) here", ("cfr", "8", "214")),
+        ("the whole of 8 C.F.R. Part 214 governs", ("cfr", "8", "214")),
+        ("8 C.F.R. Section 274a.12(c)(9) lists", ("cfr", "8", "274a")),
+        ("8 CFR § 274a.12(c)(9) lists", ("cfr", "8", "274a")),
+        ("under 8 U.S.C. Section 1255(k) the count", ("usc", "8", "1255")),
+        ("Section 203(b)(2) of the Act covers advanced degrees.", None),
+        ("section 101(a)(3) of the Act, as the REAL ID Act amended it", None),
+        ("Under Section 245(k), the applicant may adjust.", None),
+        ("Section 2 of this memorandum explains", None),
+        ("Section 106 of the REAL ID Act governs review", None),
+        ("the INA 2450 typo", None),
+    ]
+    for s, want in cases:
+        keys = packs.keys([c for c, _p in packs.find_positions(s)])
+        if want:
+            ok("k012: «%s» binds to %s (find -> keys, the scanner's path)" % (s[:40], "/".join(want)),
+               want in keys and ("cfr", "8", "274") not in keys, str(sorted(keys)))
+        else:
+            ok("k012: «%s» binds to NO address" % s[:40], not keys, str(sorted(keys)))
+
+    got = {k for k, _l, _p in parse_addresses("INA Section 245(k); 8 C.F.R. Section 274a.12(c)(9); "
+                                                "Section 203(b)(2) of the INA")}
+    for want in (("ina", "245", "k"), ("usc", "8", "1255", "k"), ("cfr", "8", "274a", "12", "c", "9"),
+                 ("ina", "203", "b", "2")):
+        ok("k012: coverage parses the word form as %s" % "/".join(want), want in got, str(sorted(got)))
+    ok("k012: coverage's own controls pass (they now include the word form)",
+       controls_pass(printer=lambda *_a: None))
+
+    # --- end to end through `check`, the path a user runs -----------------------------------
+    matter = os.path.join(tmp, "k012-matter")
+    out = os.path.join(tmp, "k012-out")
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    run = lambda *a: _sp.run([sys.executable, "-m", "krokai"] + list(a), cwd=root, env=env,  # noqa: E731
+                             capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             timeout=240)
+    r = run("init", matter)
+    if r.returncode != 0:
+        ok("k012: init failed - the end-to-end pins were skipped", False, r.stderr[-200:])
+        return
+    cf = os.path.join(matter, "casefile.json")
+    cfg_json = json.load(io.open(cf, encoding="utf-8"))
+    cfg_json["citation_packs"] = ["us-federal", "us-immigration"]
+    io.open(cf, "w", encoding="utf-8").write(json.dumps(cfg_json, indent=1))
+    law = os.path.join(matter, "law")
+
+    def put(name, text):
+        io.open(os.path.join(law, name), "w", encoding="utf-8").write(text)
+
+    # Trap 1: twelve files behind 8 U.S.C. § 1101, the statute LAST; a policy chapter quotes it first.
+    adm = ("The term admission means the lawful entry of the alien into the United States after "
+           "inspection and authorization by an immigration officer.")
+    # (named «amended», not «note»: a NOTES name is a derived file the corpus leaves out on purpose)
+    for i in range(1, 12):
+        put("8USC-1101-amended-%02d.md" % i, "Amendment %d to 8 U.S.C. 1101 and its definitions." % i)
+    put("z-8USC-1101-definitions.md", "SEC. 1101. Definitions. (13)(A) " + adm)
+    put("a-policy-chapter.md", "Policy chapter. The statute reads: " + adm + " End of chapter.")
+    # Trap 2: an elided quotation met first in the enacting public law, then in the statute.
+    insp = ("All aliens (including alien crewmen) who are applicants for admission or otherwise "
+            "seeking admission or readmission to or transit through the United States shall be "
+            "inspected by immigration officers.")
+    put("1-public-law-104-208.md", "SEC. 302. Inspection. " + insp)
+    put("z-8USC-1225-inspection.md", "SEC. 1225. Inspection by immigration officers. (a)(3) " + insp)
+    # Trap 3: part 274a and part 274 side by side.
+    ead = "An alien who has filed an application for adjustment of status to lawful permanent " \
+          "residence may apply for employment authorization."
+    put("8CFR-part-274a.md", "PART 274a - CONTROL OF EMPLOYMENT OF ALIENS. 274a.1 x. 274a.2 y. "
+                             "274a.12 (c)(9) " + ead)
+    put("8CFR-part-274.md", "PART 274 - SEIZURE AND FORFEITURE OF CONVEYANCES. 274.1 a. 274.2 b. "
+                            "274.3 c.")
+    # «of the Act»: a 1255 file is on disk, the quotation is not in it - binding would accuse.
+    act = "The applicant bears the burden of showing statutory eligibility for the benefit sought."
+    put("8USC-1255-adjustment.md", "SEC. 1255. Adjustment of status. Section 1255 text.")
+    put("b-practice-guide.md", "Guide. " + act)
+    gap = "This paragraph is our own prose; it keeps each citation out of its neighbours' rings. " * 2
+    io.open(os.path.join(matter, "case", "draft.md"), "w", encoding="utf-8").write(
+        "Under INA Section 101(a)(13)(A), \"%s\"\n\n%s\n\n"
+        "INA Section 235(a)(3) says \"All aliens (including alien crewmen)... who are applicants "
+        "for admission... shall be inspected by immigration officers.\"\n\n%s\n\n"
+        "Under 8 C.F.R. Section 274a.12(c)(9), \"%s\"\n\n%s\n\n"
+        "As section 245(k) of the Act puts it, \"%s\"\n" % (adm, gap, gap, ead, gap, act))
+    r = run("check", "--dir", matter, "--out", out)
+    try:
+        rows = json.load(io.open(os.path.join(out, "result.json"), encoding="utf-8"))["rows"]
+    except (OSError, ValueError) as exc:
+        ok("k012: check wrote no result.json - the end-to-end pins were skipped", False,
+           "%s %s" % (type(exc).__name__, (r.stderr or r.stdout)[-300:]))
+        return
+    by = {}
+    for row in rows:
+        for key, head in (("adm", "The term admission"), ("insp", "All aliens"), ("ead", "An alien who"),
+                          ("act", "The applicant bears")):
+            if row["quote"].startswith(head):
+                by[key] = (row["verdict"], (row.get("address") or {}).get("status"),
+                           "; ".join((row.get("address") or {}).get("keys") or []))
+    ok("k012: a correct «INA Section 101(a)(13)(A)» with the statute 12th behind its key: VERIFIED + "
+       "MATCHED (the repair reads every file, not the first ten)",
+       by.get("adm", ("",))[:2] == ("VERIFIED", "MATCHED"), str(by.get("adm")))
+    ok("k012: an elided quotation met first in the public law: ASSEMBLED + MATCHED at the cited "
+       "statute (fragments re-checked at the address)",
+       by.get("insp", ("",))[:2] == ("ASSEMBLED", "MATCHED"), str(by.get("insp")))
+    ok("k012: «8 C.F.R. Section 274a.12» binds to part 274a, not 274 (VERIFIED + MATCHED)",
+       by.get("ead", ("",))[:2] == ("VERIFIED", "MATCHED") and "274a" in by.get("ead", ("", "", ""))[2],
+       str(by.get("ead")))
+    ok("k012: «section 245(k) of the Act» binds to nothing (NO_NEARBY_CITATION, never an accusation)",
+       by.get("act", ("",))[:2] == ("VERIFIED", "NO_NEARBY_CITATION"), str(by.get("act")))
+    ok("k012: the fixture produced no FOUND_ELSEWHERE at all",
+       len(by) == 4 and not any(v[0] == "FOUND_ELSEWHERE" for v in by.values()), str(by))
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if root not in sys.path:
@@ -5368,6 +5502,7 @@ def main():
         suite_r79_phase4(tmp)
         suite_k004_kit_contract(tmp, corpus)
         suite_k023_not_examined(tmp)
+        suite_k012_section_form(tmp)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)

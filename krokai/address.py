@@ -37,9 +37,9 @@ from __future__ import annotations
 import os
 import sys                                # R77 minor: address rule failures print to stderr.
 
-from .normalize import normalise, alnum, dehyph
+from .normalize import normalise, alnum, dehyph, ellipsis_parts, prepare_quote
 from .verdicts import CLEAN
-from .verify import leading_cut, truncated_condition
+from .verify import elision_verdict, leading_cut, truncated_condition
 
 __all__ = ["KeyMap", "address_check", "repair_anchor_miss", "fold", "ADDRESS_CLEAN"]
 
@@ -155,22 +155,53 @@ def repair_anchor_miss(quote, addr, corpus, min_len=60):
     substring of the cited file» supports VERIFIED; an alphanumeric-only containment supports
     at most PUNCTUATION - and the old single-boolean form let ``fold`` print VERIFIED over an
     alnum coincidence (probe CRIT2, named independently by 12 of 17 panel channels).
+
+    🔴 K012: EVERY file at the address is read, the strongest containment first across all of
+    them. It used to read only the first ten, sorted by name - and soft address matching puts
+    dozens of files behind one key: in a filed petition's corpus 8 U.S.C. § 1101 resolved to 36
+    files and the statute itself was the 14th, so a quotation of § 1101(a)(13)(A) that the global
+    search met first in a policy manual chapter was accused of standing at the wrong address
+    (FOUND_ELSEWHERE) beside a correct citation. Per-file order also let an alnum hit in an early
+    file shadow an exact hit in a later one.
     """
     n = normalise(quote)
     if len(n) < min_len:
         return None, None
-    for path in (addr.get("expected_files") or [])[:10]:
+    texts = []
+    for path in addr.get("expected_files") or []:
         try:
-            t = corpus.text_of(path)
+            texts.append((path, corpus.text_of(path)))
         except (KeyError, ValueError):
             continue
-        if n in t:
-            return path, "exact"
-        if dehyph(n) in dehyph(t):
-            return path, "dehyph"
-        if alnum(n) in alnum(t):
-            return path, "alnum"
+    for tier, fold_text in (("exact", None), ("dehyph", dehyph), ("alnum", alnum)):
+        needle = n if fold_text is None else fold_text(n)
+        for path, t in texts:
+            if needle in (t if fold_text is None else fold_text(t)):
+                return path, tier
     return None, None
+
+
+def _assembled_at_address(quote, addr, corpus, min_len=60):
+    """An ELIDED quotation re-checked inside the files at the cited address: ``check()``'s own
+    question (one file holding every fragment, in order) and its own verdict on what the gaps
+    hide (``verify.elision_verdict``). Returns ``(path, verdict, detail)`` or ``(None, None, None)``.
+
+    🔴 K012: `repair_anchor_miss` tests the WHOLE quotation, and a quotation with an ellipsis is
+    never contained whole anywhere - so every ASSEMBLED quotation the global search met first in
+    another document was accused (FOUND_ELSEWHERE) even when its fragments stand in order in the
+    cited statute. Measured in a filed petition: «All aliens... who are applicants for
+    admission...» beside a correct 8 U.S.C. § 1225(a), found first in the enacting public law.
+    The 60-character floor is the repair's own (a short stock phrase can occur by coincidence).
+    """
+    n = normalise(prepare_quote(quote))
+    parts = ellipsis_parts(n, 10)
+    if len(n) < min_len or len(parts) < 2:
+        return None, None, None
+    one, offs = corpus.all_in_order(parts, restrict_to=set(addr.get("expected_files") or []))
+    if not one:
+        return None, None, None
+    v, why = elision_verdict(one, parts, offs, corpus, [p for p in parts if len(p) < 25])
+    return one, v, why
 
 
 def fold(quote, verdict, path, detail, near_cites, corpus, keymap, packs):
@@ -273,6 +304,18 @@ def fold(quote, verdict, path, detail, near_cites, corpus, keymap, packs):
                          os.path.basename(repaired), tier, os.path.basename(path), verdict))
         return candidate, repaired, detail, matched
 
+    if verdict == "ASSEMBLED":
+        # K012: the elided quotation re-checked AT the cited address - see `_assembled_at_address`.
+        one, v2, why = _assembled_at_address(quote, addr, corpus)
+        if one:
+            matched = {"status": "MATCHED", "matched": "after binding", "keys": addr["keys"]}
+            if getattr(corpus, "is_superseded", None) and corpus.is_superseded(one):
+                return ("SUPERSEDED_EDITION", one,
+                        "the cited address resolves to «%s», which the law register marks as "
+                        "SUPERSEDED - see the revision report" % os.path.basename(one), matched)
+            note = ("the fragments stand in order at the cited address «%s»; the global anchor "
+                    "pointed at «%s»" % (os.path.basename(one), os.path.basename(path)))
+            return v2, one, (why + " · " if why else "") + note, matched
     if verdict in ADDRESS_CLEAN:
         detail = ("found verbatim in «%s», but the address printed beside it (%s) points at %s - "
                   "and the string is NOT there%s"
