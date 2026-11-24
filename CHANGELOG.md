@@ -10,6 +10,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [Unreleased]
+
+The self-test's publish check «no undocumented identifier or secret literal anywhere in the tree»
+read every file under the folder, including a maintainer's notes that git ignores and never
+publishes. In the maintainer's own working folder it therefore failed on every run while a fresh
+clone passed, so every verdict on the code needed a copy of the tree - and a line that is always
+red is the line a reader learns to skip. Nothing a user installs from PyPI changes: an installed
+copy skips this check and says so.
+
+### Fixed
+- **The publish check reads what git would publish.** It leaves out only the paths git itself
+  lists as untracked AND ignored (`git ls-files --others --ignored --exclude-standard`) and prints
+  them; a tracked file is read even when an ignore pattern matches it, so ignoring a file cannot
+  hide one that is already on its way out. With no git, or in a folder inside a larger working
+  tree, every file is read as before.
+- **The scope is proved in the same run.** A throwaway repository holds the same planted value in
+  an untracked file, a force-added ignored file, an ignored folder, an `info/exclude` entry, a
+  nested `.gitignore` and a folder with a non-ASCII name; the check must report exactly the first
+  two, read everything once git is gone, and remove the repository afterwards (git writes its
+  objects read-only, which a plain `shutil.rmtree` silently leaves behind on Windows).
+- **Its git calls ignore a hook's variables.** Every git call of the check clears the variables
+  git hands to a hook (`git rev-parse --local-env-vars`). Measured: during a partial commit git
+  gives its hook `GIT_INDEX_FILE` as an absolute path, and the proof's `git add` would otherwise
+  have staged its planted files into the commit being made; the proof itself runs with such a
+  variable set and fails if anything is written there. Not yet true of `krokai upgrade`,
+  whose git calls still inherit them - one of its self-test checks fails when the suite runs
+  from a hook.
+
 ## [0.17.0] - 2026-11-23
 
 `krokai review` through ai-second-opinion (the review harness) exited 1 on a round in which nothing

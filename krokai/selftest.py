@@ -2620,6 +2620,190 @@ def suite_review_r21(tmp):
        any("log(find_config()" in l for l in code) and any("stderr.write" in l for l in code))
 
 
+# What git exports to a hook so that git commands run inside it find the hook's repository: the
+# list `git rev-parse --local-env-vars` prints (git 2.53).
+_GIT_LOCAL_ENV = ("GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS",
+                  "GIT_CONFIG_COUNT", "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE",
+                  "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE", "GIT_INDEX_FILE",
+                  "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_PREFIX",
+                  "GIT_SHALLOW_FILE", "GIT_COMMON_DIR")
+
+
+def _git(folder, *args, opts=()):
+    """Run git about the repository at `folder`, never about the one an outer hook points at.
+
+    🔴 This self-test may run from a git hook (a local pre-commit guard), and git hands every hook
+    these variables "so that Git commands run by the hook can correctly locate the repository" -
+    githooks(5), which tells a hook that works on another repository to clear them. Measured, git
+    2.53: a partial commit (`git commit <path>`) gives its hook GIT_INDEX_FILE as an ABSOLUTE path
+    to the commit's temporary index. `git add` honours that variable, so the scope proof's `git
+    add` in its throwaway repository would have staged the planted files into the commit being
+    made - in a public repository.
+    """
+    import subprocess
+    env = {k: v for k, v in os.environ.items() if k.upper() not in _GIT_LOCAL_ENV}
+    return subprocess.run(["git"] + list(opts) + ["-C", folder] + list(args),
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, timeout=60)
+
+
+def _first_line(raw):
+    """The first non-empty line of a subprocess stream, short enough for a one-line note."""
+    lines = [ln.strip() for ln in raw.decode("utf-8", "replace").splitlines() if ln.strip()]
+    return lines[0][:120] if lines else "no message"
+
+
+def _git_never_published(root, opts=()):
+    """What git lists under `root` as untracked AND ignored: `(paths, None)`, or `(None, why)`.
+
+    Paths are root-relative with '/'; a folder ignored whole is one entry ending in '/'. A TRACKED
+    file is never among them: `--others` lists untracked paths only, and git opens an ignored
+    folder that holds a tracked file and lists its untracked files one by one - so an ignore
+    pattern cannot hide a file git already publishes. `-z` prints each name verbatim; without it
+    a non-ASCII name comes back octal-quoted and matches nothing on disk (the false BLOCKED on
+    Cyrillic paths in the publish audit's `--respect-gitignore`). `None` whenever git cannot
+    answer for exactly this folder: no git, not a working tree, or a folder inside a larger
+    working tree, whose ignore rules belong to somebody else.
+    """
+    import subprocess
+    try:
+        r = _git(root, "rev-parse", "--is-inside-work-tree", "--show-prefix", opts=opts)
+        lines = r.stdout.decode("utf-8").splitlines()
+        if r.returncode != 0 or not lines or lines[0] != "true":
+            return None, "not a git working tree: %s" % _first_line(r.stderr)
+        if len(lines) > 1 and lines[1]:
+            return None, "a folder inside a larger git working tree (%s)" % lines[1]
+        r = _git(root, "ls-files", "-z", "--others", "--ignored", "--exclude-standard",
+                 "--directory", opts=opts)
+        if r.returncode != 0:
+            return None, "git ls-files failed: %s" % _first_line(r.stderr)
+        return {p for p in r.stdout.decode("utf-8").split("\0") if p}, None
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        return None, "git did not answer (%s)" % type(exc).__name__
+
+
+def _publish_tree_scan(root, offenders, opts=()):
+    """Read what git would publish under `root`: `(scanned, findings, left_out, why)`.
+
+    The walk is the one this check always made; only the paths git itself lists as untracked AND
+    ignored are left out. When git cannot answer for this folder `left_out` is None and every
+    file is read - the failure direction is a red line, never a file that went unread.
+    """
+    left_out, why = _git_never_published(root, opts)
+    skip = left_out or set()
+    scanned, findings = [], []
+    for dirpath, dirnames, filenames in os.walk(root):
+        rel_dir = os.path.relpath(dirpath, root).replace("\\", "/")
+        rel_dir = "" if rel_dir == "." else rel_dir + "/"
+        dirnames[:] = [d for d in dirnames
+                       if d not in (".git", "__pycache__", ".pytest_cache", ".venv", "runs")
+                       and rel_dir + d + "/" not in skip]
+        for fn in sorted(filenames):
+            rel = rel_dir + fn
+            if rel in skip:
+                continue
+            try:
+                with io.open(os.path.join(dirpath, fn), encoding="utf-8") as fh:
+                    text = fh.read()
+            except (UnicodeDecodeError, OSError, ValueError):
+                continue                      # binary or unreadable: not a place a literal hides
+            scanned.append(rel)
+            for kind, lineno, dig in offenders(text):
+                findings.append((kind, rel, lineno, dig))
+    return scanned, findings, left_out, why
+
+
+def _rmtree_writable(path):
+    """`shutil.rmtree` that also removes read-only files.
+
+    🔴 git writes its object files read-only. On Windows `shutil.rmtree(..., ignore_errors=True)`
+    then keeps the whole throwaway repository and says nothing - measured in K006: the two objects
+    of one `git add` kept the folder. Clear the bit first, then remove.
+    """
+    import stat
+    for dirpath, _dirs, files in os.walk(path):
+        for fn in files:
+            try:
+                os.chmod(os.path.join(dirpath, fn), stat.S_IREAD | stat.S_IWRITE)
+            except OSError:
+                pass
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def _publish_scope_proof(offenders):
+    """Prove the scope of the publish scan on a throwaway repository, through the same walk.
+
+    Every planted file carries the same planted identifier, so WHICH files the scan reports is the
+    scope. The machine's own git configuration must not move the answer: a global ignore file
+    that matched `published.md` would turn this proof red on one machine only, so the proof points
+    `core.excludesFile` at a file that does not exist; `core.fsmonitor=` (empty: off), because a
+    monitor daemon would hold the folder open and the clean-up would fail on Windows.
+    """
+    planted = "receipt EAC" + "1234567890 on the notice"      # assembled: see (3) in the suite
+    cyr = "архив"                          # a non-ASCII folder name
+    base = tempfile.mkdtemp(prefix="krokai-scope-")
+    opts = ("-c", "core.excludesFile=" + os.path.join(base, "no-such-ignore-file"),
+            "-c", "core.fsmonitor=")
+    # The proof runs as if from a hook: an absolute GIT_INDEX_FILE that every git call here must
+    # ignore (see `_git`). Asserted on the output - nothing may appear at that path.
+    poison = base + "-hook-index"
+    saved = os.environ.get("GIT_INDEX_FILE")
+    os.environ["GIT_INDEX_FILE"] = poison
+    try:
+        try:
+            _git(base, "version")
+        except OSError:
+            print("note: git was not found - the publish-scope proof was skipped, and the tree "
+                  "scan reads every file")
+            return
+        tree = {".gitignore": "/private/\n*.log\n%s/\n" % cyr, "sub/.gitignore": "secret.txt\n",
+                "published.md": planted, "forced.log": planted, "private/notes.md": planted,
+                "local.md": planted, cyr + "/notes.md": planted, "sub/secret.txt": planted}
+        for rel, text in tree.items():
+            path = os.path.join(base, *rel.split("/"))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with io.open(path, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(text + "\n")
+        made = [_git(base, "init", "-q", opts=opts)]
+        os.makedirs(os.path.join(base, ".git", "info"), exist_ok=True)
+        with io.open(os.path.join(base, ".git", "info", "exclude"), "a", encoding="utf-8") as fh:
+            fh.write("/local.md\n")
+        made.append(_git(base, "add", ".gitignore", "published.md", opts=opts))
+        made.append(_git(base, "add", "-f", "forced.log", opts=opts))
+        bad = [_first_line(m.stderr) for m in made if m.returncode != 0]
+        ok("publish scope: the proof built its throwaway repository", not bad, "; ".join(bad))
+
+        _s, found, left, why = _publish_tree_scan(base, offenders, opts)
+        read = sorted({rel for _k, rel, _l, _d in found})
+        ok("publish scope: read - an untracked file git would add, and a TRACKED file an ignore "
+           "pattern matches", read == ["forced.log", "published.md"], "%s %s" % (read, why))
+        want = sorted(["private/", "local.md", "sub/secret.txt", cyr + "/"])
+        ok("publish scope: left out - an ignored folder, .git/info/exclude, a nested .gitignore, "
+           "a non-ASCII name", sorted(left or ()) == want, "%s %s" % (sorted(left or ()), why))
+
+        _s, found, left, why = _publish_tree_scan(os.path.join(base, "sub"), offenders, opts)
+        ok("publish scope: a folder inside a larger working tree is read whole",
+           left is None and [rel for _k, rel, _l, _d in found] == ["secret.txt"],
+           "%s %s" % (why, found))
+
+        _rmtree_writable(os.path.join(base, ".git"))
+        _s, found, left, why = _publish_tree_scan(base, offenders, opts)
+        read = sorted({rel for _k, rel, _l, _d in found})
+        ok("publish scope: with no git every file is read, the ignored ones included",
+           left is None and len(read) == 6, "%s %s" % (why, read))
+    finally:
+        if saved is None:
+            os.environ.pop("GIT_INDEX_FILE", None)
+        else:
+            os.environ["GIT_INDEX_FILE"] = saved
+        _rmtree_writable(base)
+    ok("publish scope: the proof removed its throwaway repository", not os.path.exists(base),
+       base)
+    ok("publish scope: a hook's GIT_INDEX_FILE was not written to", not os.path.exists(poison),
+       poison)
+    if os.path.exists(poison):
+        os.remove(poison)
+
+
 def suite_no_real_identifiers(root):
     """No identifier-shaped literal exists in this tree except the documented fictional ones.
 
@@ -2629,7 +2813,7 @@ def suite_no_real_identifiers(root):
     `ALIEN_NUMBER` - so the detector fired on them, the suite went green, and the green run is what
     kept the values in the file. **A passing test was evidence for the leak.**
 
-    Three design choices, each of them a rule this project already paid for:
+    Four design choices, each of them a rule this project already paid for:
 
     1. **The allow-list is a set of VALUES, never a set of filenames.** `redact.py` legitimately
        contains identifier shapes; exempting `redact.py` would have exempted the two real numbers
@@ -2640,6 +2824,15 @@ def suite_no_real_identifiers(root):
        actually opened the four files that have historically carried a value.
     3. **The scanner is proved to work by planting one.** A control string is scanned in the same
        call, and the suite fails if the scan does not flag it.
+    4. **The tree is what git would publish.** The walk leaves out only what git itself lists as
+       untracked AND ignored; a tracked file is read even when an ignore pattern matches it, and
+       where git cannot answer for this folder every file is read, as before. K006 (2026-11-24):
+       a maintainer's working folder keeps a private layer that git ignores, and this check
+       failed there on every run while a fresh clone passed - so every verdict on the code
+       needed a copy of the tree, and a line that is always red is the line a reader learns to
+       skip. Exempting file names inside this check would have been choice 1's mistake; the scope
+       follows the rule that decides what is published instead, and no ignore pattern can take
+       a tracked file out of it. The scope is proved on a throwaway repository in the same call.
 
     The value is never printed - not in a pass, not in a failure. A failure names kind, file, line
     and a SHA-256 prefix, which is enough to find it with `grep -n` and not enough to publish it.
@@ -2681,21 +2874,19 @@ def suite_no_real_identifiers(root):
        not offenders("the notice shows %s and receipt %s today"
                      % (FICTIONAL["ALIEN_NUMBER"], FICTIONAL["USCIS_RECEIPT"])))
 
-    scanned, findings = [], []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames
-                       if d not in (".git", "__pycache__", ".pytest_cache", ".venv", "runs")]
-        for fn in sorted(filenames):
-            path = os.path.join(dirpath, fn)
-            rel = os.path.relpath(path, root).replace("\\", "/")
-            try:
-                with io.open(path, encoding="utf-8") as fh:
-                    text = fh.read()
-            except (UnicodeDecodeError, OSError, ValueError):
-                continue                      # binary or unreadable: not a place a literal hides
-            scanned.append(rel)
-            for kind, lineno, dig in offenders(text):
-                findings.append("%s %s:%d sha=%s" % (kind, rel, lineno, dig))
+    # (4) the scope - what git would publish. Proved first on a throwaway repository through the
+    # same walk, then applied to this tree; what was left out is printed, never dropped silently.
+    _publish_scope_proof(offenders)
+    scanned, found, left_out, why = _publish_tree_scan(root, offenders)
+    findings = ["%s %s:%d sha=%s" % f for f in found]
+    if left_out:
+        names = sorted(left_out)
+        print("note: the identifier scan left out %d path(s) git never publishes (untracked and "
+              "ignored): %s%s" % (len(names), ", ".join(names[:8]),
+                                  ", ..." if len(names) > 8 else ""))
+    elif why and os.path.exists(os.path.join(root, ".git")):
+        print("note: the identifier scan reads every file here, the ignored ones included - %s"
+              % why)
 
     # (2) coverage, asserted rather than hoped for
     MUST_SEE = ("krokai/redact.py", "krokai/selftest.py", "CHANGELOG.md", "FEATURES.md")
