@@ -10,6 +10,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.20.0] - 2026-11-24
+
+Gap and conflict markers. A model drafting from incomplete evidence fills the hole with fluent prose,
+and when two exhibits disagree it picks one without saying so. The assistant block now tells the
+drafter to write a fixed marker instead; `check` lists every open marker and names each one that
+vanished, with the sentence now standing in its place; `close` refuses while a filed document carries
+one.
+
+### Added
+- **Markers.** `[MISSING: what is missing]` where the evidence runs out, `[CONFLICT: Exhibit 8 vs
+  Exhibit 11 - what differs]` where two exhibits disagree; `[НУЖЕН ДОКУМЕНТ: …]` and `[КОНФЛИКТ: …]`
+  read the same. A fixed vocabulary, because legal text is full of brackets: measured on a copy of a
+  filed petition, its version chain, a draft archive and the law corpus, no bracket opened with these
+  words - `[sic]`, `[emphasis added]`, `[filing date]` and alteration brackets are never markers.
+- **`check` lists them per file** (filed and guide drafts one line each, research notes one line)
+  beside the «NOT examined» block, in REPORT.md and in `result.json` (`markers`). They never reach
+  `check`'s exit code: a draft mid-work is supposed to carry markers, and punishing them teaches the
+  drafter to stop writing them.
+- **A marker that vanished is named, with the sentence now in its place** - replaced, deleted,
+  reworded, or «its place cannot be found». `check` remembers each marker in `.krokai/markers.json`
+  inside the matter: the marker note itself and hashes of the six words around it, no surrounding
+  prose. The same six words are looked for in the other filed and guide drafts, so a version copy
+  (Final16 → Final17) that wrote a marker over is named too; an older copy that never had a marker
+  added later is not. Each vanished marker is named once.
+- **`close` [7].** Open markers in a filed (tier A) document make the round 🔴; guide and research
+  markers are listed, never gated; a marker gone since the last `check` is 🔴 until a `check` has
+  named it. `close` still writes nothing. On the filed petition this changed nothing: its filed tier
+  held no marker.
+
+### Fixed
+- **`close` could never say ALL CLEAR in a matter made by `init`**: the library check counted
+  `law/INDEX.md` itself as an unindexed source. No test had ever asked for a clear round.
+
 ## [0.19.0] - 2026-11-24
 
 A citation written with the WORD - «INA Section 245(k)», «8 C.F.R. Section 204.5(h)(3)», «8 U.S.C.

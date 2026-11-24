@@ -35,8 +35,8 @@ from .readers import read_any
 from .verdicts import ORDER, DANGEROUS, CLEAN, UNCHECKABLE, MEANING, MARK, label, meaning
 from .verify import check
 
-__all__ = ["scan_matter", "write_report", "print_not_examined", "SENTINEL", "SENTINELS",
-           "SENTINEL_HEAD"]
+__all__ = ["scan_matter", "write_report", "print_not_examined", "print_markers", "draft_docs",
+           "SENTINEL", "SENTINELS", "SENTINEL_HEAD"]
 
 SENTINEL = "KROKAI-TOOL-OUTPUT"
 
@@ -113,6 +113,7 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
     uniq = {}
     per_file = []
     unexamined = []
+    docs = []                                   # K027: every draft as read, for the marker pass
     for tier, tlabel, root in cfg.draft_tiers:
         for p in walk([root], TARGET_EXT, set(cfg["skip_dirs"])):
             if only and only.lower() not in p.lower():
@@ -128,6 +129,7 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
             qs = extract_quotes(body, cfg["min_quote_length"], cfg["drop_cyrillic_quotes"])
             rel = os.path.relpath(p, cfg.root)
             per_file.append((t, rel, len(qs)))
+            docs.append((t, rel, body, _mtime(p)))
             # K023: what the extractor left out of THIS file - counted beside the verdicts, never
             # folded into them (see extract.not_examined for the incident and the exit-code rule).
             ne = not_examined(body, qs, packs, cfg["min_quote_length"],
@@ -187,12 +189,20 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
     rank = {s: i for i, s in enumerate(ORDER)}
     rows.sort(key=lambda r: (rank.get(r["verdict"], 99), -len(r["sites"])))
 
+    # K027: open gap / conflict markers and the ones that vanished since the last check. The state is
+    # READ here and only `cmd_check` writes it back - `mutate` also calls this function and must not.
+    from .markers import analyse, load_state
+    prev, perr = load_state(cfg.root)
+    marks = analyse(docs, prev, tiers, only)
+    marks["state_error"] = perr
+    marks["prev"] = prev
+
     grid = {t: {s: 0 for s in ORDER} for t in "ABCD"}
     for r in rows:
         grid[_tier_of(r)][r["verdict"]] += 1
 
     return {"rows": rows, "grid": grid, "per_file": per_file, "corpus": corpus,
-            "not_examined": unexamined, "min_len": cfg["min_quote_length"],
+            "not_examined": unexamined, "min_len": cfg["min_quote_length"], "markers": marks,
             "drop_cyrillic": bool(cfg["drop_cyrillic_quotes"]),
             "packs": packs, "mixed": mixed_provisions(rows, packs),
             "seconds": round(time.time() - t0, 1),
@@ -305,6 +315,89 @@ def print_not_examined(res, printer=print, limit=20):
                    _pl(tot[2], "Cyrillic phrase", "Cyrillic phrases"),
                    _pl(tot[3], "paragraph citing the law without a quotation",
                        "paragraphs citing the law without a quotation")))
+
+
+def _mtime(p):
+    try:
+        return os.path.getmtime(p)
+    except OSError:
+        return None
+
+
+def draft_docs(cfg):
+    """(tier, relative path, text, mtime) for every draft `check` reads, tool output as tier D.
+    `close` reads the drafts through this to judge markers without running the whole check."""
+    out = []
+    for tier, _l, root in cfg.draft_tiers:
+        for p in walk([root], TARGET_EXT, set(cfg["skip_dirs"])):
+            try:
+                body = read_any(p, cfg.cache)
+            except Exception:                                      # noqa: BLE001
+                continue
+            out.append((TIER_D[0] if _is_tool_output(p) else tier, os.path.relpath(p, cfg.root),
+                        body, _mtime(p)))
+    return out
+
+
+def print_markers(res, printer=print, limit=20):
+    """K027: open gap / conflict markers per file, then every marker that vanished since the last check
+    with the sentence now in its place. Returns nothing: markers never reach `check`'s exit code - a
+    draft mid-work is SUPPOSED to carry them, and punishing them teaches the drafter to stop writing
+    them (krokai/markers.py). `close` is the gate."""
+    from .markers import count_line, gone_line
+    mk = res.get("markers") or {}
+    op, gone = mk.get("open") or [], mk.get("gone") or []
+    if op:
+        ab = [o for o in op if o["tier"] in ("A", "B")]
+        rest = [o for o in op if o["tier"] not in ("A", "B")]
+        printer("\nMarkers - gaps and conflicts the drafter flagged; a person closes each one, and "
+                "`close` refuses while a filed (tier A) document carries one:")
+        for o in ab[:limit]:
+            printer("  %s %s: %s" % (o["tier"], o["file"], count_line(o)))
+        if len(ab) > limit:
+            printer("  ... and %s in tiers A+B" % _pl(len(ab) - limit, "more file", "more files"))
+        if rest:
+            printer("  tier C, %s: %s" % (_pl(len(rest), "file", "files"),
+                                          _pl(sum(o["gap"] + o["conflict"] for o in rest),
+                                              "open marker", "open markers")))
+    if gone:
+        printer("🔴 Markers GONE since the last check - read each: closed with evidence, or written "
+                "over?")
+        for g in gone:
+            printer("  " + gone_line(g))
+
+
+def _markers_md(res):
+    from .markers import gone_line
+    mk = res.get("markers") or {}
+    op, gone = mk.get("open") or [], mk.get("gone") or []
+    if not (op or gone):
+        return []
+    md = ["## Markers - gaps and conflicts flagged in the drafts", "",
+          "`[MISSING: ...]` is the drafter saying the evidence runs out here; `[CONFLICT: ...]`, that "
+          "two exhibits disagree. An open marker is not a defect of the draft - it is the honest "
+          "alternative to fluent prose over a gap. A person closes each one; `krokai close` refuses "
+          "while a filed (tier A) document carries one. These counts never change the exit code of "
+          "`check`.", ""]
+    if op:
+        md += ["| tier | file | gaps | conflicts | open since |", "|---|---|---|---|---|"]
+        for o in sorted(op, key=lambda o: (o["tier"], o["file"])):
+            md.append("| %s | `%s` | %d | %d | %s |"
+                      % (o["tier"], o["file"], o["gap"], o["conflict"], o["since"]))
+        md.append("")
+        for o in sorted(op, key=lambda o: (o["tier"], o["file"])):
+            if o["tier"] in ("A", "B"):
+                md += ["### %s · `%s`" % (o["tier"], o["file"]), ""]
+                md += ["* %s" % t for t in o["markers"][:40]]
+                if len(o["markers"]) > 40:
+                    md.append("* ... and %d more" % (len(o["markers"]) - 40))
+                md.append("")
+    if gone:
+        md += ["### 🔴 Gone since the last check", "",
+               "Each line is a marker that is no longer there, with what stands in its place now. "
+               "Read each: was the gap closed with evidence, or written over?", ""]
+        md += ["* %s" % gone_line(g) for g in gone] + [""]
+    return md
 
 
 def _not_examined_md(res):
@@ -437,6 +530,7 @@ def write_report(res, cfg, out_dir, lang="en"):
                      meaning(s, lang)))
     md.append("")
     md += _not_examined_md(res)
+    md += _markers_md(res)
 
     if c.excluded_derived:
         md += ["## Excluded from the corpus as our own derived text", "",
@@ -503,6 +597,7 @@ def write_report(res, cfg, out_dir, lang="en"):
                         for r in res["rows"]],
                "grid": grid, "per_file": res["per_file"],
                "not_examined": res.get("not_examined") or [],
+               "markers": {k: (res.get("markers") or {}).get(k) or [] for k in ("open", "gone")},
                "corpus_files": len(c.paths),
                "corpus_derived": [os.path.relpath(p, cfg.root) for p in c.excluded_derived],
                "corpus_no_text_layer": [os.path.relpath(p, cfg.root) for p in c.excluded_stub],

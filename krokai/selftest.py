@@ -5477,6 +5477,180 @@ def suite_k012_section_form(tmp):
        len(by) == 4 and not any(v[0] == "FOUND_ELSEWHERE" for v in by.values()), str(by))
 
 
+def suite_k027_markers(tmp):
+    """K027 (2026-11-24): gap and conflict markers. The drafter writes `[MISSING: ...]` /
+    `[CONFLICT: ...]` where the evidence runs out; `check` lists them and names every marker that
+    vanished with the sentence now in its place; `close` refuses while a filed document carries one;
+    nothing about markers reaches `check`'s exit code (punish markers and they stop being written).
+    The vocabulary was measured on a filed petition and the law corpus before it was fixed."""
+    import json
+    import time as _time
+    import subprocess as _sp
+    from krokai.markers import find_markers, analyse
+
+    def kinds(t):
+        return [m["kind"] for m in find_markers(t)]
+
+    gaps = ["[MISSING: the lease]", "[missing: the lease]", "[MISSING EVIDENCE: x]",
+            "[Missing_Evidence: x]", "[НУЖЕН ДОКУМЕНТ: диплом]", "[MISSING]"]
+    cons = ["[CONFLICT: Ex. 8 vs Ex. 11]", "[КОНФЛИКТ: 8 / 11]", "[CONFLICT - dates]", "[КОНФЛИКТ]"]
+    ok("k027: every gap spelling reads as a gap", all(kinds(t) == ["gap"] for t in gaps),
+       str([kinds(t) for t in gaps]))
+    ok("k027: every conflict spelling reads as a conflict",
+       all(kinds(t) == ["conflict"] for t in cons), str([kinds(t) for t in cons]))
+    neg = ["[sic]", "[emphasis added]", "the [a]lien", "[Exhibit 12]", "[filing date]", "[...]",
+           "[MISSINGS: x]", "[CONFLICTING evidence]", "MISSING: no bracket", "[TODO: x]",
+           "[MISSING: one paragraph\n\nand another]"]
+    ok("k027: legal brackets, placeholders, look-alikes and a note across a blank line are not "
+       "markers", not any(find_markers(t) for t in neg),
+       str([t for t in neg if find_markers(t)]))
+    nest = find_markers("Dated [MISSING: the date on [Exhibit 12] and the signature] here.")
+    ok("k027: a note holding a bracket of its own still counts (cut at its first closing bracket)",
+       len(nest) == 1 and nest[0]["text"] == "[MISSING: the date on [Exhibit 12]", str(nest))
+    snip = io.open(os.path.join(data_dir("templates"), "CLAUDE.md.snippet"), encoding="utf-8").read()
+    sk = kinds(snip)
+    ok("k027: the assistant block teaches the markers the code reads - both kinds, both languages",
+       sk.count("gap") >= 2 and sk.count("conflict") >= 2 and "{KROKAI} close" in snip
+       and "never write one away" in snip, str(sk))
+
+    base = ("The beneficiary joined the Northwind Atelier in Rivertown as lead designer and worked "
+            "there from %s until the end of the contract. The second sentence stays as it was.\n")
+    mk = "[MISSING: the employer letter with the start date]"
+    filled = base % "March 2019 (Exhibit 14)"
+    first = analyse([("A", "case/d.md", base % mk)], {}, today="2026-11-01")
+    st = first["state"]
+    blob = json.dumps(st, ensure_ascii=False).lower()
+    ok("k027: the record keeps the marker note and none of the prose around it (hashes only)",
+       mk.lower() in blob and "atelier" not in blob and "contract" not in blob, blob[:200])
+
+    def gone(docs, only=None):
+        return analyse(docs, st, "ABCD", only, today="2026-11-02")
+
+    g = gone([("A", "case/d.md", filled)])["gone"]
+    ok("k027: a marker written over is named with the whole sentence now in its place",
+       len(g) == 1 and g[0]["how"] == "replaced" and g[0]["now"] == filled.split(" The second")[0],
+       str(g))
+    hows = [gone([("A", "case/d.md", t)])["gone"][0]["how"] for t in
+            (base % "", "Nothing of the old paragraph is left here at all.\n",
+             base % "[MISSING: the signed employer letter]")]
+    ok("k027: deleted, rewritten beyond recognition and reworded are told apart",
+       hows == ["deleted", "lost", "reworded"], str(hows))
+    r = gone([("A", "case/e.md", base % mk)])
+    ok("k027: a marker that moved with its file (renamed) is still open, not gone",
+       not r["gone"] and r["open"][0]["since"] == "2026-11-01", str(r["gone"]))
+    r = gone([("A", "case/e.md", filled)])["gone"]
+    ok("k027: a gone file's marker is looked for in the other drafts and named where it was written "
+       "over", len(r) == 1 and r[0].get("was_in") == "case/d.md" and r[0]["how"] == "replaced",
+       str(r))
+    r = gone([("A", "case/e.md", "Unrelated text with no anchor of the old one in it.\n")])["gone"]
+    ok("k027: a gone file whose markers are nowhere is reported as such",
+       [x["how"] for x in r] == ["file gone"], str(r))
+    r = gone([("A", "case/e.md", "Unrelated.\n")], only="e.md")
+    ok("k027: a file outside this run (--only) keeps its record and is not called gone",
+       not r["gone"] and "case/d.md" in r["state"]["files"], str(r["gone"]))
+    newer = analyse([("A", "case/v1.md", base % mk, 100.0), ("A", "case/v2.md", filled, 200.0)])
+    older = analyse([("A", "case/v1.md", base % mk, 100.0), ("A", "case/v2.md", filled, 50.0)])
+    ok("k027: a NEWER copy that wrote the marker over is named; an OLDER copy without it is not "
+       "(the marker was added later, nothing was erased)",
+       [x.get("open_in") for x in newer["gone"]] == ["case/v1.md"] and not older["gone"],
+       "%s / %s" % (newer["gone"], older["gone"]))
+    tiers = analyse([("D", "case/r.md", base % mk), ("C", "research/n.md", base % mk)])
+    ok("k027: tool output (tier D) is never read for markers; tier C is listed but not remembered",
+       [o["tier"] for o in tiers["open"]] == ["C"] and not tiers["state"]["files"],
+       str(tiers["open"]))
+
+    # --- through the real CLI: check never gates, close does, close writes nothing ---------------
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    matter = os.path.join(tmp, "k027m")
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+
+    def run(*args):
+        p = _sp.run([sys.executable, "-m", "krokai"] + list(args), cwd=root, env=env,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+    def w(rel, text, mt=None):
+        p = os.path.join(matter, rel)
+        io.open(p, "w", encoding="utf-8", newline="\n").write(text)
+        if mt:
+            os.utime(p, (mt, mt))
+
+    rc, out = run("init", matter)
+    if rc != 0:
+        ok("k027: init failed - the CLI pins were skipped", False, out[-200:])
+        return
+    w(os.path.join("law", "8USC-1255.md"), "SEC. 1255. No application for adjustment of status "
+      "shall be approved unless the applicant establishes eligibility at filing.")
+    idx = io.open(os.path.join(matter, "law", "INDEX.md"), encoding="utf-8").read()
+    w(os.path.join("law", "INDEX.md"), idx + "\n| 8 U.S.C. § 1255 | adjustment | `8USC-1255.md` | "
+      "2026 | |\n")
+    state_p = os.path.join(matter, ".krokai", "markers.json")
+    t0 = _time.time() - 3600
+    conflict = (" The value was confirmed [CONFLICT: Exhibit 8 vs Exhibit 11 - the amount] by both of "
+                "the sources on file.")
+    w(os.path.join("case", "draft.md"), filled, t0)
+    rc1, out1 = run("check", "--dir", matter, "--out", os.path.join(tmp, "k027o1"))
+    rc2, out2 = run("close", "--dir", matter)
+    ok("k027: a matter with no marker gets no record file and no Markers block",
+       rc1 == 0 and "Markers" not in out1 and not os.path.exists(state_p), out1[-300:])
+    ok("k027: a fresh matter with its law indexed closes ALL CLEAR - `law/INDEX.md` is not an "
+       "unindexed source of its own (close could never come back clear before)",
+       rc2 == 0 and "[2] library index: 0 unindexed" in out2
+       and "[7] markers in filed documents (tier A): 0 open" in out2, out2[-400:])
+
+    w(os.path.join("case", "draft.md"), base % mk + conflict + "\n", t0)
+    w(os.path.join("research", "note.md"), "Open question for the team [КОНФЛИКТ] here.\n")
+    rc, out = run("check", "--dir", matter, "--strict", "--out", os.path.join(tmp, "k027o2"))
+    rel = "case/draft.md"
+    ok("k027: check lists the open markers per filed file and tier C on one line",
+       "  A %s: 2 open (1 gap · 1 conflict)" % rel in out and "tier C, 1 file: 1 open marker" in out,
+       out[-500:])
+    ok("k027: the markers never reach check's exit code (--strict, two open markers in tier A)",
+       rc == 0, "rc=%s" % rc)
+    ok("k027: the Markers block comes before the verdicts, which stay the last lines",
+       0 <= out.find("Markers - gaps") < out.find("needs a human"), "")
+    rep = io.open(os.path.join(tmp, "k027o2", "REPORT.md"), encoding="utf-8").read()
+    res = json.load(io.open(os.path.join(tmp, "k027o2", "result.json"), encoding="utf-8"))
+    ok("k027: REPORT.md and result.json carry the markers",
+       "## Markers" in rep and mk in rep
+       and [o["file"] for o in res["markers"]["open"] if o["tier"] == "A"] == [rel],
+       str(res.get("markers"))[:200])
+    ok("k027: check keeps the record inside the matter, beside the law registry",
+       os.path.isfile(state_p), state_p)
+    rc, out = run("close", "--dir", matter)
+    ok("k027: close refuses while a filed document carries markers - and names them",
+       rc == 1 and "[7] markers in filed documents (tier A): 2 open in 1 file(s)" in out
+       and mk in out, out[-500:])
+
+    w(os.path.join("case", "draft.md"), filled.rstrip("\n") + conflict + "\n", t0 + 10)
+    w(os.path.join("case", "v2.md"), filled.rstrip("\n") + conflict.replace(
+        " [CONFLICT: Exhibit 8 vs Exhibit 11 - the amount]", "") + "\n", t0 + 100)
+    def state_bytes():
+        return io.open(state_p, "rb").read() if os.path.exists(state_p) else None
+
+    before = state_bytes()
+    rc, out = run("close", "--dir", matter)
+    ok("k027: close refuses while a marker vanished that no check has named yet - and writes "
+       "nothing", rc == 1 and "gone since the last `krokai check`" in out
+       and before is not None and state_bytes() == before, out[-500:])
+    rc, out = run("check", "--dir", matter, "--out", os.path.join(tmp, "k027o3"))
+    line = "  A %s: %s → now: «%s»" % (rel, mk, filled.split(" The second")[0])
+    ok("k027: check names the marker that vanished, with the sentence now in its place",
+       line in out, out[-700:])
+    ok("k027: a newer copy that dropped a marker still open in the original is named there",
+       "A case/v2.md: [CONFLICT: Exhibit 8 vs Exhibit 11 - the amount] (still open in %s) → "
+       "deleted" % rel in out, out[-700:])
+    rc, out = run("check", "--dir", matter, "--out", os.path.join(tmp, "k027o4"))
+    ok("k027: a vanished marker is named once, not on every run", "GONE" not in out, out[-300:])
+    w(os.path.join("case", "draft.md"), filled, t0 + 20)
+    run("check", "--dir", matter, "--out", os.path.join(tmp, "k027o5"))
+    rc, out = run("close", "--dir", matter)
+    ok("k027: once a person has closed every filed marker and a check has named it, close is clear "
+       "again (tier C notes are listed, never gated)",
+       rc == 0 and "tiers B+C: 1 open in 1 file(s)" in out and "ALL CLEAR" in out, out[-400:])
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if root not in sys.path:
@@ -5503,6 +5677,7 @@ def main():
         suite_k004_kit_contract(tmp, corpus)
         suite_k023_not_examined(tmp)
         suite_k012_section_form(tmp)
+        suite_k027_markers(tmp)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)

@@ -224,7 +224,7 @@ Next:
 # --------------------------------------------------------------------------------- check
 def cmd_check(a):
     from .config import load
-    from .run import scan_matter, print_summary, write_report, print_not_examined
+    from .run import scan_matter, print_summary, write_report, print_not_examined, print_markers
 
     cfg = load(a.dir)
     for kind, p in cfg.missing_paths():
@@ -234,11 +234,14 @@ def cmd_check(a):
         return 2
     # K023: what was NOT examined, before the verdicts - informational, never in the exit code.
     print_not_examined(res)
+    # K027: gap / conflict markers and the ones that vanished - never in this exit code either.
+    print_markers(res)
     bad, unknown = print_summary(res, cfg["language"])
     out = a.out or os.path.join(cfg.root, "reports",
                                 "check-" + __import__("time").strftime("%Y-%m-%d-%H%M"))
     path = write_report(res, cfg, out, cfg["language"])
     print("\nreport -> %s" % path)
+    _keep_markers(cfg, res)
     print("took %.0f s" % res["seconds"])
     # 🔴 `--strict` fails on EITHER, and with distinct codes so a hook can tell them apart:
     # 1 = read these, 4 = you cannot check these until you download something. The exit code used
@@ -955,6 +958,27 @@ def cmd_keys(a):
     return 0
 
 
+def _keep_markers(cfg, res):
+    """K027: remember this run's markers so the next check can name the ones that vanish. Written only
+    when the record changes - a matter that never carries a marker never gets the file."""
+    from .markers import save_state, STATE
+    mk = res.get("markers") or {}
+    if mk.get("state_error"):
+        print("⚠️ %s could not be read (%s): every marker counts as new this run."
+              % (STATE, mk["state_error"]))
+    st, prev = mk.get("state"), mk.get("prev") or {}
+    if not st or (not prev and not st["files"] and not st["reported"]):
+        return
+    if ({k: prev.get(k) for k in ("files", "reported")}
+            == {k: st.get(k) for k in ("files", "reported")}):
+        return
+    try:
+        save_state(cfg.root, st)
+    except OSError as exc:
+        print("⚠️ the markers could not be recorded for the next run (%s): a marker that vanishes "
+              "before the next successful check will not be named." % exc)
+
+
 # --------------------------------------------------------------------------------- close
 def cmd_close(a):
     """Mechanical end-of-round checks. Changes nothing; prints. The decision stays human."""
@@ -1058,6 +1082,49 @@ def cmd_close(a):
         # decisions depend on the other five. `SystemExit` handled the same as any Exception
         # because it is this codebase's fatal-user-message idiom (`_configured_surnames`).
         pass
+
+    # [7] K027: gap and conflict markers. A filed document must not carry one - that is a fact about
+    # the text, not a guess, so it gates. Measured before it was allowed to (audit rule: no new exit-code
+    # signal without a measurement on the real matter): the filed petition's tier A held 0 markers, so
+    # this check changes nothing for it. B and C are listed, never gated - working notes are where
+    # markers belong. A marker gone since the last `check` gates too, until a check has named it with
+    # the sentence now in its place: otherwise deleting a marker would be the fastest way to a green
+    # close. Read-only, like every check here.
+    try:
+        from .markers import analyse, load_state, gone_line
+        from .run import draft_docs
+        prev, perr = load_state(cfg.root)
+        mk = analyse(draft_docs(cfg), prev)
+        a_open = [o for o in mk["open"] if o["tier"] == "A"]
+        rest = [o for o in mk["open"] if o["tier"] != "A"]
+        n_a = sum(o["gap"] + o["conflict"] for o in a_open)
+        print("\n[7] markers in filed documents (tier A): %d open in %d file(s)  %s"
+              % (n_a, len(a_open), "OK" if not n_a else "🔴 a filed document must not carry them"))
+        for o in a_open[:8]:
+            for t in o["markers"][:3]:
+                print("      • %s: %s  (open since %s)" % (o["file"], t, o["since"]))
+        if n_a:
+            print("      A person closes a marker: get the document or decide the conflict, then")
+            print("      replace the marker by hand. Never write one away - `krokai check` names every")
+            print("      marker that vanishes, with the sentence now standing in its place.")
+            ok = False
+        if rest:
+            print("      tiers B+C: %d open in %d file(s) - not gated: working notes may carry them"
+                  % (sum(o["gap"] + o["conflict"] for o in rest), len(rest)))
+        if perr:
+            print("      ⚠️ the marker record could not be read (%s): vanished markers are not named"
+                  % perr)
+        gone = [g for g in mk["gone"] if g["how"] != "reworded"]
+        if gone:
+            print("      🔴 %d marker(s) gone since the last `krokai check` - run it: it names each one"
+                  % len(gone))
+            for g in gone[:8]:
+                print("      • " + gone_line(g))
+            ok = False
+    except (SystemExit, Exception) as exc:                            # noqa: BLE001
+        # Not a pass: a marker check that could not run says nothing about the filed documents.
+        print("\n[7] markers: could not be checked (%s)  🔴" % type(exc).__name__)
+        ok = False
 
     print("\n%s" % ("ALL CLEAR" if ok else "🔴 there are things to decide - see above"))
     return 0 if ok else 1

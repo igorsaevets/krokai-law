@@ -195,7 +195,13 @@ def orphans(source_dirs, index_path, exts=None, skip_dirs=()):
         exts = DEFAULT_EXT
     listed = index_entries(index_path)
     on_disk = {}
+    # K027: the index lives in `law/` and is not a source it must list. Counted as one, every matter
+    # made by `init` had «1 unindexed file» for ever, so `krokai close` could never say ALL CLEAR -
+    # found when a pin first asked close to come back clear, and a gate that is always red gates nothing.
+    me = os.path.normcase(os.path.abspath(index_path))
     for p in walk(source_dirs, exts, skip_dirs):
+        if os.path.normcase(os.path.abspath(p)) == me:
+            continue
         on_disk[os.path.normcase(os.path.basename(p))] = p
     listed_names = {os.path.normcase(os.path.basename(x)) for x in listed}
     unindexed = sorted(v for k, v in on_disk.items()
