@@ -5228,6 +5228,121 @@ def suite_k004_kit_contract(tmp, corpus):
        "rc=%s tail=%s" % (rs.returncode, (rs.stdout or "")[-300:]))
 
 
+def suite_k023_not_examined(tmp):
+    """K023 (2026-11-24): `check` says, per file, what it did NOT examine - and nothing else moves.
+
+    The extractor skips a quoted phrase under `min_quote_length` and, when the matter says so, a
+    Cyrillic one; a paragraph that cites the law without quoting it was never counted. All of it
+    was silent, so a green report read as «all clean». These pins hold the three counts, the two
+    layout rules measured on this fixture, and the promise that the exit code ignores them."""
+    import json
+    import subprocess as _sp
+    from krokai.extract import extract_quotes, not_examined, DEFAULT_MIN_LEN
+    from krokai.citations import load_packs
+
+    packs = load_packs(["us-federal", "us-immigration"])
+    short_q = "sustained national or international acclaim"
+    long_q = ("Documentation of the alien's receipt of lesser nationally or internationally "
+              "recognized prizes or awards for excellence in the field of endeavor")
+    # Nine six-letter Cyrillic words, built from code points: mostly Cyrillic, over the minimum.
+    cyr = " ".join("".join(chr(0x430 + (7 * i + j) % 32) for j in range(6)) for i in range(9))
+    doc = ("# Brief\n\n"
+           "Under 8 C.F.R. § 204.5(h)(3), the beneficiary must show \"%s\" in the field.\n\n"
+           "The regulation lists the evidence:\n\n> \"%s\"\n> 8 C.F.R. § 204.5(h)(3)(i)\n\n"
+           "Under 8 C.F.R. § 103.2(b)(1), the petitioner must establish eligibility at filing.\n\n"
+           "Our note: «%s».\n\nA defined \"term\" alone is not a quotation.\n"
+           % (short_q, long_q, cyr))
+    ok("k023: the fixture's short quotation really is under the extractor's minimum",
+       len(short_q) < DEFAULT_MIN_LEN, "%d" % len(short_q))
+    qs = extract_quotes(doc, DEFAULT_MIN_LEN, True)
+    ne = not_examined(doc, qs, packs, DEFAULT_MIN_LEN, True)
+    ok("k023: only the long quotation is examined", qs == [long_q], str(qs))
+    ok("k023: the short quotation is counted, with the citation beside it",
+       [x["text"] for x in ne["short"]] == [short_q]
+       and "8 C.F.R. § 204.5(h)(3)" in ne["short"][0]["cites"], str(ne["short"]))
+    ok("k023: a Cyrillic quotation skipped by drop_cyrillic_quotes is counted",
+       ne["cyrillic"] == [cyr], str(ne["cyrillic"]))
+    ok("k023: the two paragraphs that cite the law without an examined quotation are counted",
+       [x["cites"] for x in ne["cited"]] == [["8 C.F.R. § 204.5(h)(3)"],
+                                            ["8 C.F.R. § 103.2(b)(1)"]],
+       str([x["cites"] for x in ne["cited"]]))
+    ok("k023: a quoted single word is not counted", "term" not in str(ne["short"]))
+    qs_off = extract_quotes(doc, DEFAULT_MIN_LEN, False)
+    ne_off = not_examined(doc, qs_off, packs, DEFAULT_MIN_LEN, False)
+    ok("k023 control: with drop_cyrillic_quotes off the Cyrillic span is examined, not counted",
+       cyr in qs_off and not ne_off["cyrillic"], str(ne_off["cyrillic"]))
+
+    lay = ("Under 8 C.F.R. § 204.5(h)(2), the term means:\n\n> \"%s\"\n\n8 C.F.R. § 204.5(h)(2).\n\n"
+           "Under 8 C.F.R. § 103.2(b)(1), the petitioner must establish eligibility at the time "
+           "of filing and continuing through adjudication.\n\n\"%s\" 8 U.S.C. § 1255(a).\n"
+           % (long_q, long_q.replace("Documentation", "Evidence")))
+    got = [x["cites"] for x in not_examined(lay, extract_quotes(lay), packs)["cited"]]
+    ok("k023: a lead-in ending with a colon and a bare citation line after the quotation carry it",
+       not any("204.5(h)(2)" in c for cs in got for c in cs), str(got))
+    ok("k023: a paraphrase right BEFORE a quotation is still counted (a plain 140-character ring "
+       "called it covered - measured)", got == [["8 C.F.R. § 103.2(b)(1)"]], str(got))
+
+    # --- through the real CLI: per-file line, REPORT.md, result.json, and the exit code --------
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    matter = os.path.join(tmp, "k023m")
+    out = os.path.join(tmp, "k023out")
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+
+    def run(*args):
+        return _sp.run([sys.executable, "-m", "krokai"] + list(args), cwd=root, env=env,
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       timeout=240)
+
+    r = run("init", matter)
+    if r.returncode != 0:
+        ok("k023: init failed - the CLI pins were skipped", False, r.stderr[-200:])
+        return
+    cf = os.path.join(matter, "casefile.json")
+    cfg_json = json.load(io.open(cf, encoding="utf-8"))
+    cfg_json["drop_cyrillic_quotes"] = True
+    io.open(cf, "w", encoding="utf-8").write(json.dumps(cfg_json, ensure_ascii=False, indent=1))
+    provision = ("No application for adjustment of status shall be approved unless the "
+                 "applicant establishes clear eligibility for the benefit sought at filing.")
+    io.open(os.path.join(matter, "law", "8USC-1255.md"), "w", encoding="utf-8").write(
+        "SEC. 1255. " + provision)
+    spacer = "This paragraph is our own prose and keeps the citations below out of the " \
+             "quotation's address ring, so the verdict on it is the plain corpus verdict. " * 2
+    io.open(os.path.join(matter, "case", "draft.md"), "w", encoding="utf-8").write(
+        "Our filing argues as follows:\n\n> %s\n\n%s\n\n"
+        "Under 8 C.F.R. § 204.5(h)(3), the beneficiary must show \"%s\" in the field.\n\n"
+        "Under 8 C.F.R. § 103.2(b)(1), the petitioner must establish eligibility at filing.\n\n"
+        "Our note: «%s».\n" % (provision, spacer, short_q, cyr))
+    r = run("check", "--dir", matter, "--strict", "--out", out)
+    so = r.stdout or ""
+    rel = os.path.join("case", "draft.md")
+    line = ("A %s: 1 quotation examined · NOT examined: 1 quoted phrase under %d characters "
+            "(1 beside a citation of law) · 1 Cyrillic quoted phrase (drop_cyrillic_quotes is on) "
+            "· 2 paragraphs citing the law with no quotation beside the citation"
+            % (rel, DEFAULT_MIN_LEN))
+    ok("k023: `check` prints, per file, what it did NOT examine and how much", line in so,
+       so[-600:])
+    ok("k023: the NOT-examined block comes BEFORE the verdicts, which stay the last lines",
+       0 <= so.find("NOT examined") < so.find("needs a human"), "")
+    ok("k023: the not-examined counts never reach the exit code (--strict, clean quotation)",
+       r.returncode == 0, "rc=%s" % r.returncode)
+    try:
+        data = json.load(io.open(os.path.join(out, "result.json"), encoding="utf-8"))
+        rep = io.open(os.path.join(out, "REPORT.md"), encoding="utf-8").read()
+    except (OSError, ValueError) as exc:
+        ok("k023: the report files were written", False, repr(exc))
+        return
+    rec = [x for x in data.get("not_examined", []) if x["file"] == rel]
+    ok("k023: result.json carries the per-file record",
+       len(rec) == 1 and rec[0]["examined"] == 1 and len(rec[0]["short"]) == 1
+       and len(rec[0]["cyrillic"]) == 1 and len(rec[0]["cited"]) == 2, str(rec)[:300])
+    ok("k023: the verdict on the examined quotation is the plain one (VERIFIED)",
+       [x["verdict"] for x in data["rows"]] == ["VERIFIED"],
+       str([x["verdict"] for x in data["rows"]]))
+    ok("k023: REPORT.md lists the short quotation with the citation beside it",
+       "## Not examined" in rep and '"%s" - 8 C.F.R. § 204.5(h)(3)' % short_q in rep, "")
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if root not in sys.path:
@@ -5252,6 +5367,7 @@ def main():
         suite_r79_phase3(tmp)
         suite_r79_phase4(tmp)
         suite_k004_kit_contract(tmp, corpus)
+        suite_k023_not_examined(tmp)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)

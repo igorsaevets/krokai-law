@@ -10,8 +10,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
-## [Unreleased]
+## [0.18.0] - 2026-11-24
 
+A clean `krokai check` meant «what was examined is clean» and was read as «everything is clean». A
+quoted phrase under the extractor's minimum length (`min_quote_length`; «sustained national or
+international acclaim» is 43 characters against 45), a Cyrillic phrase skipped on request, and a
+paragraph that cites the law without quoting it were never examined - and never mentioned. The
+report now says, file by file, what it did not look at. No verdict changes and no exit code
+changes: shown by running the previous release and this one on the same matter, which give
+identical verdict rows.
+
+### Added
+- **`check` says what it did NOT examine, file by file.** Before the verdict table: for each file
+  in tiers A and B (one total line for tiers C and D), how many quotations were examined; how many
+  quoted phrases of two or more words were shorter than `min_quote_length`, and how many of those
+  stand beside a citation of law; how many Cyrillic phrases `drop_cyrillic_quotes` skipped; and how
+  many paragraphs cite the law while carrying no examined quotation. A heading, a line ending with
+  a colon or a bare citation right before a quotation, and a bare citation line right after one,
+  count as carrying it - a plain 140-character ring was tried first and miscounted paraphrases
+  both ways. `REPORT.md` lists the phrases and paragraphs (the short phrases beside a citation
+  first: check those with `krokai quote` and confirm the file it names is the provision you cite),
+  and `result.json` carries them under `not_examined`.
+- **These counts never reach the exit code.** A short quoted term and a paraphrase are ordinary
+  legal writing; a gate on them would reward deleting citations, the one thing that makes a claim
+  checkable. They are a reading list, not a finding.
+
+### Fixed
 The self-test's publish check «no undocumented identifier or secret literal anywhere in the tree»
 read every file under the folder, including a maintainer's notes that git ignores and never
 publishes. In the maintainer's own working folder it therefore failed on every run while a fresh
@@ -19,7 +43,6 @@ clone passed, so every verdict on the code needed a copy of the tree - and a lin
 red is the line a reader learns to skip. Nothing a user installs from PyPI changes: an installed
 copy skips this check and says so.
 
-### Fixed
 - **The publish check reads what git would publish.** It leaves out only the paths git itself
   lists as untracked AND ignored (`git ls-files --others --ignored --exclude-standard`) and prints
   them; a tracked file is read even when an ignore pattern matches it, so ignoring a file cannot

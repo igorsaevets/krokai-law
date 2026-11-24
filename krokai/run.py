@@ -30,12 +30,13 @@ import time
 from . import address as addr_mod
 from .citations import load_packs
 from .corpus import Corpus, walk
-from .extract import extract_quotes, citation_window
+from .extract import extract_quotes, citation_window, not_examined
 from .readers import read_any
 from .verdicts import ORDER, DANGEROUS, CLEAN, UNCHECKABLE, MEANING, MARK, label, meaning
 from .verify import check
 
-__all__ = ["scan_matter", "write_report", "SENTINEL", "SENTINELS", "SENTINEL_HEAD"]
+__all__ = ["scan_matter", "write_report", "print_not_examined", "SENTINEL", "SENTINELS",
+           "SENTINEL_HEAD"]
 
 SENTINEL = "KROKAI-TOOL-OUTPUT"
 
@@ -111,6 +112,7 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
     # --- collect every quotation from our own writing ----------------------------------------
     uniq = {}
     per_file = []
+    unexamined = []
     for tier, tlabel, root in cfg.draft_tiers:
         for p in walk([root], TARGET_EXT, set(cfg["skip_dirs"])):
             if only and only.lower() not in p.lower():
@@ -126,6 +128,13 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
             qs = extract_quotes(body, cfg["min_quote_length"], cfg["drop_cyrillic_quotes"])
             rel = os.path.relpath(p, cfg.root)
             per_file.append((t, rel, len(qs)))
+            # K023: what the extractor left out of THIS file - counted beside the verdicts, never
+            # folded into them (see extract.not_examined for the incident and the exit-code rule).
+            ne = not_examined(body, qs, packs, cfg["min_quote_length"],
+                              cfg["drop_cyrillic_quotes"])
+            unexamined.append({"tier": t, "file": rel, "examined": len(qs),
+                               "short": ne["short"], "cyrillic": ne["cyrillic"],
+                               "cited": ne["cited"]})
             for q in qs:
                 key = q.strip().lower()
                 rec = uniq.setdefault(key, {"quote": q, "sites": []})
@@ -183,6 +192,8 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
         grid[_tier_of(r)][r["verdict"]] += 1
 
     return {"rows": rows, "grid": grid, "per_file": per_file, "corpus": corpus,
+            "not_examined": unexamined, "min_len": cfg["min_quote_length"],
+            "drop_cyrillic": bool(cfg["drop_cyrillic_quotes"]),
             "packs": packs, "mixed": mixed_provisions(rows, packs),
             "seconds": round(time.time() - t0, 1),
             "tier_labels": {t: l for t, l, _p in cfg.draft_tiers}}
@@ -235,6 +246,120 @@ def _tier_of(row):
         if t in ts:
             return t
     return "?"
+
+
+def _pl(n, one, many):
+    return "%d %s" % (n, one if n == 1 else many)
+
+
+def _ne_counts(rec):
+    """(short phrases, of them beside a citation, Cyrillic phrases, citing paragraphs)."""
+    return (len(rec["short"]), sum(1 for s in rec["short"] if s["cites"]),
+            len(rec["cyrillic"]), len(rec["cited"]))
+
+
+def _ne_line(rec, min_len):
+    s, sb, c, p = _ne_counts(rec)
+    parts = []
+    if s:
+        parts.append("%s under %d characters (%d beside a citation of law)"
+                     % (_pl(s, "quoted phrase", "quoted phrases"), min_len, sb))
+    if c:
+        parts.append("%s (drop_cyrillic_quotes is on)"
+                     % _pl(c, "Cyrillic quoted phrase", "Cyrillic quoted phrases"))
+    if p:
+        parts.append("%s citing the law with no quotation beside the citation"
+                     % _pl(p, "paragraph", "paragraphs"))
+    return "%s examined · %s" % (_pl(rec["examined"], "quotation", "quotations"),
+                                 ("NOT examined: " + " · ".join(parts)) if parts
+                                 else "nothing skipped")
+
+
+def print_not_examined(res, printer=print, limit=20):
+    """Per file: how many quotations were examined and what was NOT (K023).
+
+    Printed BEFORE the verdict table, so the verdicts and the «needs a human» count stay the last
+    lines on screen. Tiers A and B file by file - what gets filed is where a silent gap costs -
+    and tiers C and D as one line; REPORT.md carries every file. Returns nothing: these counts
+    never reach the exit code (extract.not_examined says why)."""
+    recs = res.get("not_examined") or []
+    if not recs:
+        return
+    n = res.get("min_len") or 0
+    ab = sorted((r for r in recs if r["tier"] in ("A", "B")),
+                key=lambda r: (r["tier"], -(len(r["short"]) + len(r["cyrillic"])
+                                            + len(r["cited"])), r["file"]))
+    cd = [r for r in recs if r["tier"] not in ("A", "B")]
+    printer("\nNOT examined - a clean verdict below says nothing about these "
+            "(per file; the phrases and paragraphs are listed in REPORT.md):")
+    for r in ab[:limit]:
+        printer("  %s %s: %s" % (r["tier"], r["file"], _ne_line(r, n)))
+    if len(ab) > limit:
+        printer("  ... and %s in tiers A+B" % _pl(len(ab) - limit, "more file", "more files"))
+    if cd:
+        tot = [sum(_ne_counts(r)[i] for r in cd) for i in range(4)]
+        printer("  tiers C+D, %s: %s examined · NOT examined: %s, %s, %s"
+                % (_pl(len(cd), "file", "files"),
+                   _pl(sum(r["examined"] for r in cd), "quotation", "quotations"),
+                   _pl(tot[0], "short phrase", "short phrases"),
+                   _pl(tot[2], "Cyrillic phrase", "Cyrillic phrases"),
+                   _pl(tot[3], "paragraph citing the law without a quotation",
+                       "paragraphs citing the law without a quotation")))
+
+
+def _not_examined_md(res):
+    recs = res.get("not_examined") or []
+    if not recs:
+        return []
+    n = res.get("min_len") or 0
+    md = ["## Not examined - what the verdicts in this report do not cover", "",
+          "The verdicts are about the quotations of %d+ characters the extractor examined. A quoted "
+          "phrase of two or more words under that length%s, and a paragraph that cites the law "
+          "and carries no examined quotation (a heading, a line ending with a colon or a bare "
+          "citation right before a quotation, and a bare citation line right after one, count "
+          "as carrying it), were NOT examined: a clean "
+          "verdict says nothing about them. These counts are "
+          "a reading list, not a finding - they never change the exit code. A quoted single word "
+          "is not counted." % (n, ", a Cyrillic phrase (drop_cyrillic_quotes is on)"
+                               if res.get("drop_cyrillic") else ""), "",
+          "| tier | file | examined | short phrases (beside a citation) | Cyrillic phrases | "
+          "paragraphs citing the law, no quotation |", "|---|---|---|---|---|---|"]
+    recs = sorted(recs, key=lambda r: (r["tier"], r["file"]))
+    for r in recs:
+        s, sb, c, p = _ne_counts(r)
+        md.append("| %s | `%s` | %d | %d (%d) | %d | %d |"
+                  % (r["tier"], r["file"], r["examined"], s, sb, c, p))
+    md.append("")
+
+    def capped(items, cap):
+        return items[:cap] + (["* ... and %d more" % (len(items) - cap)]
+                              if len(items) > cap else [])
+
+    for r in recs:
+        if r["tier"] not in ("A", "B") or not (r["short"] or r["cyrillic"] or r["cited"]):
+            continue
+        md += ["### %s · `%s`" % (r["tier"], r["file"]), ""]
+        bes = [x for x in r["short"] if x["cites"]]
+        oth = [x for x in r["short"] if not x["cites"]]
+        if bes:
+            md += ["Short quoted phrases BESIDE a citation of law - check each by hand: "
+                   "`krokai quote \"<phrase>\"`, then confirm the file it names is the provision "
+                   "you cite:", ""]
+            md += capped(['* "%s" - %s' % (x["text"], "; ".join(x["cites"])) for x in bes], 25)
+            md.append("")
+        if oth:
+            md += ["Other short quoted phrases:", ""]
+            md += capped(['* "%s"' % x["text"] for x in oth], 15) + [""]
+        if r["cyrillic"]:
+            md += ["Cyrillic quoted phrases (skipped because drop_cyrillic_quotes is on):", ""]
+            md += capped(["* «%s»" % x for x in r["cyrillic"]], 10) + [""]
+        if r["cited"]:
+            md += ["Paragraphs citing the law with no examined quotation beside the citation - "
+                   "what they say about the law rests on the reader, not on this check:", ""]
+            md += capped(["* %s - %s" % ("; ".join(x["cites"]), x["excerpt"])
+                          for x in r["cited"]], 25)
+            md.append("")
+    return md
 
 
 def print_summary(res, lang="en", printer=print):
@@ -311,6 +436,7 @@ def write_report(res, cfg, out_dir, lang="en"):
                   % (label(s, lang), grid["A"][s], grid["B"][s], grid["C"][s], grid["D"][s],
                      meaning(s, lang)))
     md.append("")
+    md += _not_examined_md(res)
 
     if c.excluded_derived:
         md += ["## Excluded from the corpus as our own derived text", "",
@@ -376,6 +502,7 @@ def write_report(res, cfg, out_dir, lang="en"):
                "rows": [{k: v for k, v in r.items() if k not in ("where_abs",)}
                         for r in res["rows"]],
                "grid": grid, "per_file": res["per_file"],
+               "not_examined": res.get("not_examined") or [],
                "corpus_files": len(c.paths),
                "corpus_derived": [os.path.relpath(p, cfg.root) for p in c.excluded_derived],
                "corpus_no_text_layer": [os.path.relpath(p, cfg.root) for p in c.excluded_stub],

@@ -224,7 +224,7 @@ Next:
 # --------------------------------------------------------------------------------- check
 def cmd_check(a):
     from .config import load
-    from .run import scan_matter, print_summary, write_report
+    from .run import scan_matter, print_summary, write_report, print_not_examined
 
     cfg = load(a.dir)
     for kind, p in cfg.missing_paths():
@@ -232,6 +232,8 @@ def cmd_check(a):
     res = scan_matter(cfg, only=a.only, tiers=a.tiers, quiet=a.quiet)
     if res is None:
         return 2
+    # K023: what was NOT examined, before the verdicts - informational, never in the exit code.
+    print_not_examined(res)
     bad, unknown = print_summary(res, cfg["language"])
     out = a.out or os.path.join(cfg.root, "reports",
                                 "check-" + __import__("time").strftime("%Y-%m-%d-%H%M"))
