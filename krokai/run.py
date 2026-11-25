@@ -31,12 +31,12 @@ from . import address as addr_mod
 from .citations import load_packs
 from .corpus import Corpus, walk
 from .extract import extract_quotes, citation_window, not_examined
-from .readers import read_any
+from .readers import read_any, OCR_CHECK, ocr_pages_cell, ocr_label
 from .verdicts import ORDER, DANGEROUS, CLEAN, UNCHECKABLE, MEANING, MARK, label, meaning
 from .verify import check
 
 __all__ = ["scan_matter", "write_report", "print_not_examined", "print_markers", "draft_docs",
-           "print_editions", "editions",
+           "print_editions", "editions", "ocr_counts",
            "SENTINEL", "SENTINELS", "SENTINEL_HEAD"]
 
 SENTINEL = "KROKAI-TOOL-OUTPUT"
@@ -162,6 +162,7 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
             rec["quote"], verdict, where, detail, near_legal, corpus, keymap, packs)
 
         kind = ""
+        ocr_cited = []
         if verdict == "NOT_FOUND":
             far_legal = [c for c in far if packs.is_primary(c)]
             if not far_legal:
@@ -175,6 +176,14 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
             # key RESOLVE to a file on this disk?
             elif any(keymap.resolve(k) for k in packs.keys(far_legal)):
                 kind = "🔴 legal, and the source IS on this disk"
+                # K024: a cited source whose text is an OCR layer puts cause 3 (an OCR misread)
+                # ahead of fabrication - one wrong digit there hides a correct quotation.
+                ocr_cited = sorted({os.path.relpath(p, cfg.root)
+                                    for k in packs.keys(far_legal)
+                                    for p in (keymap.resolve(k) or ()) if corpus.ocr_layer(p)})
+                if ocr_cited:
+                    kind += (" - but its text is an OCR layer (%s): rule out cause 3, an OCR "
+                             "misread, first - %s" % ("; ".join(ocr_cited), OCR_CHECK))
             else:
                 kind = "🟡 legal, but the cited authority is not in the corpus at all - probably a "\
                        "gap in the library, not a fabrication"
@@ -183,7 +192,9 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
                      "where": os.path.relpath(where, cfg.root) if where else "",
                      "where_abs": where or "",
                      "cites": near or far, "near": near, "sites": rec["sites"],
-                     "address": address})
+                     "address": address,
+                     # K024: the source text this verdict was read from is an OCR layer
+                     "ocr_layer": corpus.ocr_layer(where), "ocr_cited": ocr_cited})
         if not quiet and i % 200 == 0:
             printer("   ...%d/%d (%.0f s)" % (i, len(uniq), time.time() - t1))
 
@@ -551,6 +562,58 @@ def _not_examined_md(res):
     return md
 
 
+def ocr_counts(res):
+    """K024: tier A+B rows read from an OCR text layer - clean, flagged, and NOT_FOUND whose cited
+    source is one. One function, so the console line and REPORT.md cannot disagree."""
+    out = {"clean": 0, "flagged": 0, "not_found": 0, "rows": [], "files": 0}
+    files = set()
+    for r in res["rows"]:
+        if _tier_of(r) not in ("A", "B"):
+            continue
+        if r.get("ocr_layer"):
+            files.add(r["where"])
+            out["rows"].append(r)
+            out["clean" if r["verdict"] in CLEAN else "flagged"] += 1
+        elif r.get("ocr_cited"):
+            out["rows"].append(r)
+            out["not_found"] += 1
+    out["files"] = len(files)
+    return out
+
+
+def _ocr_md(res, root, cap=60):
+    o = ocr_counts(res)
+    c = res["corpus"]
+    ocr_files = c.ocr_files() if hasattr(c, "ocr_files") else []
+    if not (o["rows"] or ocr_files):
+        return []
+    md = ["## Read from an OCR text layer - tiers A+B: %d clean, %d flagged, %d NOT FOUND"
+          % (o["clean"], o["flagged"], o["not_found"]), "",
+          "These verdicts were read from text an OCR engine produced from a scanned page, not from "
+          "typeset text. A misread digit or name in that layer makes a wrong quotation verify and a "
+          "right one fail. For each: %s. A flagged one may be the OCR's misread, not the drafter's "
+          "- do not change the quotation to match the layer. (Advisory: the verdicts and the exit "
+          "code are unchanged.)" % OCR_CHECK, ""]
+    for r in o["rows"][:cap]:
+        f = r["where"] or "; ".join(r.get("ocr_cited") or [])
+        lay = r.get("ocr_layer")
+        md += ["* **[%s] %s** · %s · `%s`%s" % (_tier_of(r), r["verdict"],
+                                                "; ".join(r["cites"]) if r["cites"] else "no citation",
+                                                f, " (%s)" % ocr_pages_cell(lay) if lay else ""),
+               "  > %s" % r["quote"][:200].replace("\n", " "), ""]
+    if len(o["rows"]) > cap:
+        md += ["* … and %d more - `result.json` rows carry `ocr_layer` / `ocr_cited`"
+               % (len(o["rows"]) - cap), ""]
+    if ocr_files:
+        md += ["Sources in the corpus whose text is an OCR layer - %d:" % len(ocr_files), ""]
+        md += ["* `%s` (%s)" % (os.path.relpath(p, root), ocr_pages_cell(f))
+               for p, f in ocr_files[:cap]]
+        if len(ocr_files) > cap:
+            md += ["* … and %d more (`krokai library`)" % (len(ocr_files) - cap)]
+        md += [""]
+    return md
+
+
 def print_summary(res, lang="en", printer=print):
     grid = res["grid"]
     printer("\n%-25s %7s %7s %7s %7s" % ("verdict", "A filed", "B guides", "C research", "D tool"))
@@ -576,6 +639,20 @@ def print_summary(res, lang="en", printer=print):
         printer("? NOT CHECKED in tiers A+B: %d - the address beside them names sources you have "
                 "not downloaded. This is neither a pass nor an accusation; get the sources and "
                 "run again. `krokai library` lists what is missing." % ab_unknown)
+
+    # K024: advisory, never in the returned counts (the exit code): which verdicts were read from
+    # an OCR layer - a clean one may rest on a misread digit, a flagged one may BE the misread.
+    o = ocr_counts(res)
+    if o["clean"]:
+        printer("🟡 OCR TEXT LAYER, tiers A+B: %d clean quotation(s) matched what an OCR engine read "
+                "(%d file(s)) - %s. REPORT.md lists them." % (o["clean"], o["files"], OCR_CHECK))
+    if o["flagged"]:
+        printer("🟡 OCR TEXT LAYER, tiers A+B: %d flagged quotation(s) were compared with an OCR "
+                "layer - the difference may be the OCR's misread, not the drafter's: compare with "
+                "the page image before changing the quotation." % o["flagged"])
+    if o["not_found"]:
+        printer("🟡 OCR TEXT LAYER, tiers A+B: %d NOT FOUND cite a source whose text is an OCR layer "
+                "- rule out cause 3 (an OCR misread) before fabrication." % o["not_found"])
 
     for lbl, clean, flagged in res.get("mixed") or []:
         printer("🔴 %s is quoted both CLEAN (%d) and FLAGGED (%d) in this matter - the flagged "
@@ -628,6 +705,7 @@ def write_report(res, cfg, out_dir, lang="en"):
     md += _not_examined_md(res)
     md += _markers_md(res)
     md += _editions_md(res)
+    md += _ocr_md(res, cfg.root)                                  # K024
 
     if c.excluded_derived:
         md += ["## Excluded from the corpus as our own derived text", "",
@@ -684,6 +762,9 @@ def write_report(res, cfg, out_dir, lang="en"):
                 md += ["* … and %d more" % (len(r["sites"]) - 12)]
             if r["where"]:
                 md += ["", "Found in: `%s`" % r["where"]]
+                if r.get("ocr_layer"):
+                    md += ["", "🟡 %s. The difference may be the OCR's misread, not the drafter's."
+                           % ocr_label(r["ocr_layer"])]
             md += [""]
 
     report_md = os.path.join(out_dir, "REPORT.md")
@@ -699,6 +780,8 @@ def write_report(res, cfg, out_dir, lang="en"):
                "corpus_files": len(c.paths),
                "corpus_derived": [os.path.relpath(p, cfg.root) for p in c.excluded_derived],
                "corpus_no_text_layer": [os.path.relpath(p, cfg.root) for p in c.excluded_stub],
+               "ocr_layers": [dict(f, file=os.path.relpath(p, cfg.root))
+                              for p, f in (c.ocr_files() if hasattr(c, "ocr_files") else [])],
                "seconds": res["seconds"]}
     json.dump(payload, io.open(os.path.join(out_dir, "result.json"), "w", encoding="utf-8"),
               ensure_ascii=False, indent=1)

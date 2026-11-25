@@ -27,7 +27,7 @@ import os
 import re
 
 from .normalize import alnum, dehyph
-from .readers import corpus_text, no_text_layer, MIN_TEXT_LAYER
+from .readers import corpus_text, no_text_layer, MIN_TEXT_LAYER, text_layer
 
 __all__ = ["Corpus", "walk"]
 
@@ -189,6 +189,9 @@ class Corpus(object):
         self.excluded_derived, self.excluded_stub, self.unreadable = [], [], []
         self.excluded_empty, self.short_sources = [], []
         self.excluded_placeholder = []
+        # K024: per indexed PDF, what drew its text (readers.text_layer) - an OCR layer is what an
+        # OCR engine read, and every surface that shows a match there says so (ocr_layer below).
+        self.layers = {}
         # Paths the law register knows to have been replaced by a newer edition of the same
         # provision. They stay INDEXED on purpose - the words really are in a source on this
         # disk, and pretending otherwise would produce a NOT_FOUND, which in this tool's
@@ -283,6 +286,11 @@ class Corpus(object):
                     self.short_sources.remove(p)
                 continue
             at, ht = alnum(t), dehyph(t)
+            if p.lower().endswith(".pdf"):
+                try:
+                    self.layers[p] = text_layer(p, cache_dir)
+                except Exception:                                   # noqa: BLE001 - advisory
+                    self.layers[p] = None
             self.paths.append(p)
             self.starts.append(pos)
             self.astarts.append(apos)
@@ -348,6 +356,19 @@ class Corpus(object):
                   "It IS searchable either way; open it and decide." % MIN_TEXT_LAYER)
         for p, err in self.unreadable:
             print("  !! unreadable: %s (%s)" % (p, err))
+        n_ocr = len(self.ocr_files())
+        if n_ocr:
+            print("  OCR text layer - %d indexed file(s): a match there is what an OCR engine read "
+                  "(`krokai library` lists them)" % n_ocr)
+
+    def ocr_layer(self, path):
+        """K024: the layer facts when `path` is an indexed PDF whose text is wholly or partly an
+        OCR layer; None for typeset text, a non-PDF, or a file whose layer could not be read."""
+        lay = self.layers.get(path) if path else None
+        return lay if lay and lay.get("class") in ("ocr", "mixed") else None
+
+    def ocr_files(self):
+        return [(p, self.layers[p]) for p in self.paths if self.ocr_layer(p)]
 
     def is_superseded(self, path):
         return bool(path) and os.path.normcase(os.path.abspath(path)) in self.superseded

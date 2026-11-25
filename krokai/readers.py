@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import html
 import io
+import json
 import os
 import re
 
@@ -31,7 +32,8 @@ class MissingReader(RuntimeError):
 
 __all__ = ["MissingReader", "read_any", "read_pdf", "read_docx", "no_text_layer", "engines_available",
            "_choose_extraction", "_form_values", "EXTRACTOR_VERSION", "MIN_CHARS_PER_PAGE",
-           "is_broken_type3"]
+           "is_broken_type3", "text_layer", "ocr_label", "ocr_pages_cell", "OCR_PAGE_SHARE",
+           "OCR_CHECK", "LAYER_VERSION"]
 
 _PAGE_MARK = re.compile(r"\[\[Page\s+[\w.-]+\]\]")
 _MD_FOOTNOTE = re.compile(r"\[\\?\[[^\]]*\\?\]\]\([^)]*\)")
@@ -56,6 +58,233 @@ PAGES_BEFORE_RATE_APPLIES = 3
 # the reader got better - the fix would ship, the suite would pass, and every sidecar already on
 # disk would stay exactly as wrong as before.
 EXTRACTOR_VERSION = "3"
+
+# 🔴 K024: AN OCR TEXT LAYER IS NOT TYPESET TEXT - AND UNTIL 0.22.0 NOTHING SAID SO.
+#
+# 38 of the 100 text PDFs in a real matter's law library are a scan with an invisible text layer
+# drawn over it (504 pages; census of a copy, 2026-11-25). The words krokai compares there are what
+# an OCR engine READ, not what the page says: two OCR copies of one decision disagreed on 11.7-13.8 %
+# of their number tokens (audit 2026-11-23). A misread digit makes a wrong quotation verify and a
+# right one fail - and the verdict looked exactly like a verdict on typeset text.
+#
+# How it is told apart, measured on that copy: OCR engines draw their text in render mode 3
+# (neither filled nor stroked). Every OCR page there was 100 % invisible characters and every
+# typeset page under 8 %, nothing in between, so OCR_PAGE_SHARE sits in an empty gap. pypdf (`Tr`
+# tracked through q / Q on the operands of the text-showing operators) and PyMuPDF (get_texttrace
+# span type 3) agreed on 1 539 of 1 539 pages. The pypdf count rides on the extraction that runs
+# anyway: +3 % of its time, and the text came out byte-identical on 101 of 101 files.
+#
+# NOT seen by this test - stated so it is not mistaken for coverage: an OCR engine that draws its
+# text VISIBLY (ABBYY «text over the page image», Acrobat ClearScan) makes a page that looks typeset;
+# a typeset page carrying a small OCR'd image (a seal, a letterhead) stays under the page share by
+# design. The Producer field is no substitute: «Paper Capture» named 3 typeset files and was absent
+# from 30 of the 38 OCR files.
+LAYER_VERSION = "1"
+OCR_PAGE_SHARE = 0.5          # a page whose characters are at least half invisible is an OCR page
+_LAYER_MIN_CHARS = 20         # fewer counted characters: a page with no text to judge
+_INVISIBLE_TR = (3, 7)        # render modes that paint no glyph (7 only adds it to the clip path)
+OCR_CHECK = "check every number, date and name against the page image"
+_LAYER_MEMO = {}
+
+
+class _TrCounter(object):
+    """Characters a page draws visible / invisible, counted on the operands of the text-showing
+    operators while the text render mode is tracked through `q` / `Q` and a form XObject (`Do`).
+
+    🔴 It rides on the pypdf extraction that produces the corpus text, so it never raises: an
+    exception inside pypdf's visitor would cost that page its text."""
+
+    def __init__(self):
+        self.pages = []
+        self.start()
+
+    def start(self):
+        self.tr, self.stack, self.vis, self.inv = 0, [], 0, 0
+
+    def stop(self):
+        self.pages.append((self.vis, self.inv))
+
+    def before(self, op, args, cm, tm):
+        try:
+            if op in (b"q", b"Do"):
+                self.stack.append(self.tr)
+            elif op == b"Q":
+                if self.stack:
+                    self.tr = self.stack.pop()
+            elif op == b"Tr":
+                self.tr = int(args[0])
+            elif op == b"TJ":
+                self._add(sum(len(x) for x in (args[0] if args else ())
+                              if isinstance(x, (str, bytes))))
+            elif op in (b"Tj", b"'", b'"'):
+                s = args[-1] if args else ""
+                self._add(len(s) if isinstance(s, (str, bytes)) else 0)
+        except Exception:                                   # noqa: BLE001 - see the docstring
+            pass
+
+    def after(self, op, args, cm, tm):
+        try:
+            if op == b"Do" and self.stack:
+                self.tr = self.stack.pop()
+        except Exception:                                   # noqa: BLE001
+            pass
+
+    def _add(self, n):
+        if self.tr in _INVISIBLE_TR:
+            self.inv += n
+        else:
+            self.vis += n
+
+
+def _trace_counts(page):
+    """The same count from PyMuPDF: a `get_texttrace()` span of type 3 is invisible text."""
+    vis = inv = 0
+    for sp in page.get_texttrace():
+        n = len(sp.get("chars") or ())
+        if sp.get("type") == 3:
+            inv += n
+        else:
+            vis += n
+    return vis, inv
+
+
+def _ranges(nums):
+    out, i = [], 0
+    while i < len(nums):
+        j = i
+        while j + 1 < len(nums) and nums[j + 1] == nums[j] + 1:
+            j += 1
+        out.append(str(nums[i]) if i == j else "%d-%d" % (nums[i], nums[j]))
+        i = j + 1
+    return ", ".join(out)
+
+
+def _classify(counts, engine):
+    text = [k + 1 for k, (v, i) in enumerate(counts) if v + i >= _LAYER_MIN_CHARS]
+    ocr = [k + 1 for k, (v, i) in enumerate(counts)
+           if v + i >= _LAYER_MIN_CHARS and i >= OCR_PAGE_SHARE * (v + i)]
+    cls = ("none" if not text else "typeset" if not ocr else
+           "ocr" if len(ocr) == len(text) else "mixed")
+    return {"v": LAYER_VERSION, "class": cls, "pages": len(counts), "text_pages": len(text),
+            "ocr_pages": _ranges(ocr), "engine": engine,
+            "source": "invisible text (render mode 3)" if ocr else ""}
+
+
+def _repaired(pages):
+    # The in-memory repair below replaces a broken Type 3 file's cipher with RapidOCR's reading:
+    # the text the corpus then holds is OCR text whatever the original file's render modes say.
+    return {"v": LAYER_VERSION, "class": "ocr", "pages": pages, "text_pages": pages,
+            "ocr_pages": _ranges(list(range(1, pages + 1))), "engine": "RapidOCR",
+            "source": "krokai's own OCR repair of a broken Type 3 file"}
+
+
+def _layer_key(path):
+    st = os.stat(path)
+    return "%s|%d|%d" % (os.path.abspath(path).lower(), st.st_size, int(st.st_mtime))
+
+
+def _layer_file(path, cache_dir):
+    return _cache_path(path, cache_dir)[:-4] + ".layer.json"
+
+
+def _write_layer(lp, facts):
+    try:
+        os.makedirs(os.path.dirname(lp), exist_ok=True)
+        with io.open(lp, "w", encoding="utf-8") as fh:
+            json.dump(facts, fh)
+    except OSError:
+        pass
+
+
+def _measure_layer(path):
+    """The count for a file whose text came from the cache (written by an older version) or was
+    never read in this run. PyMuPDF first - 4.7 s against pypdf's 30 s on the measured 101 files."""
+    facts = None
+    try:
+        fitz = _pdfengine.load()
+    except ImportError:
+        fitz = None
+    if fitz is not None:
+        try:
+            d = fitz.open(path)
+            try:
+                facts = _classify([_trace_counts(pg) for pg in d], "PyMuPDF")
+            finally:
+                d.close()
+        except Exception:                                   # noqa: BLE001
+            facts = None
+    if facts is None:
+        try:
+            import pypdf
+            trc = _TrCounter()
+            for pg in pypdf.PdfReader(path).pages:
+                trc.start()
+                pg.extract_text(visitor_operand_before=trc.before,
+                                visitor_operand_after=trc.after)
+                trc.stop()
+            facts = _classify(trc.pages, "pypdf")
+        except Exception:                                   # noqa: BLE001
+            return None
+    # A cached text of a broken Type 3 file can only be the repair's output: `read_pdf` never
+    # caches the cipher (a failed repair skips the write).
+    if facts["class"] in ("typeset", "none") and is_broken_type3(path):
+        facts = _repaired(facts["pages"])
+    return facts
+
+
+def text_layer(path, cache_dir=None):
+    """What drew a PDF's text: typeset glyphs, an OCR layer, or a mix - and which pages.
+
+    Returns a dict (`class` typeset / ocr / mixed / none, `pages`, `text_pages`, `ocr_pages`,
+    `engine`, `source`), or None for a non-PDF, an unreadable file or a machine with no PDF
+    engine. Kept beside the text cache under the same key, and in memory for the run; `read_pdf`
+    fills both as a side effect of the extraction it does anyway (K024)."""
+    if not path.lower().endswith(".pdf"):
+        return None
+    try:
+        key = _layer_key(path)
+    except OSError:
+        return None
+    got = _LAYER_MEMO.get(key)
+    if got is not None:
+        return got
+    lp = _layer_file(path, cache_dir) if cache_dir else None
+    if lp and os.path.exists(lp):
+        try:
+            with io.open(lp, encoding="utf-8") as fh:
+                got = json.load(fh)
+        except (OSError, ValueError):
+            got = None
+        if isinstance(got, dict) and got.get("v") == LAYER_VERSION:
+            _LAYER_MEMO[key] = got
+            return got
+    got = _measure_layer(path)
+    if got is None:
+        return None
+    _LAYER_MEMO[key] = got
+    if lp:
+        _write_layer(lp, got)
+    return got
+
+
+def ocr_pages_cell(facts):
+    """`all 41 pages` / `pages 2-3 of 3` - the short form for lists."""
+    if facts.get("class") == "mixed":
+        return "pages %s of %d" % (facts.get("ocr_pages"), facts.get("pages") or 0)
+    return "all %d pages" % (facts.get("pages") or 0)
+
+
+def ocr_label(facts):
+    """The one wording every surface prints beside a match in an OCR text layer; None otherwise."""
+    if not facts or facts.get("class") not in ("ocr", "mixed"):
+        return None
+    who = ("krokai's own OCR repair" if "repair" in (facts.get("source") or "")
+           else "an OCR engine")
+    if facts["class"] == "mixed":
+        return ("OCR TEXT LAYER on %s: a match there is what %s read from a scanned image, not "
+                "typeset text - %s" % (ocr_pages_cell(facts), who, OCR_CHECK))
+    return ("OCR TEXT LAYER (%s): the words matched what %s read from a scanned image, not "
+            "typeset text - %s" % (ocr_pages_cell(facts), who, OCR_CHECK))
 
 
 def engines_available():
@@ -298,6 +527,7 @@ def read_pdf(path, cache_dir=None):
     have_engine = False
 
     primary = ""
+    counts = engine = None
     try:
         import pypdf
     except ImportError:
@@ -306,7 +536,16 @@ def read_pdf(path, cache_dir=None):
         have_engine = True
         try:
             r = pypdf.PdfReader(path)
-            primary = "\n".join((p.extract_text() or "") for p in r.pages)
+            # K024: the render-mode count rides on this pass (see _TrCounter).
+            trc = _TrCounter()
+            parts = []
+            for p in r.pages:
+                trc.start()
+                parts.append(p.extract_text(visitor_operand_before=trc.before,
+                                            visitor_operand_after=trc.after) or "")
+                trc.stop()
+            primary = "\n".join(parts)
+            counts, engine = trc.pages, "pypdf"
         except Exception:
             primary = ""
 
@@ -320,6 +559,11 @@ def read_pdf(path, cache_dir=None):
         try:
             d = fitz.open(path)
             alt = "\n".join(pg.get_text() for pg in d)
+            if counts is None:              # K024: no pypdf count - the same one from PyMuPDF
+                try:
+                    counts, engine = [_trace_counts(pg) for pg in d], "PyMuPDF"
+                except Exception:           # noqa: BLE001
+                    counts = None
             d.close()
         except Exception:
             alt = ""
@@ -341,6 +585,7 @@ def read_pdf(path, cache_dir=None):
     # image, runs OCR, and overlays a clean text layer. The repaired copy is cached so the next
     # read is fast.
     repair_failed = False
+    repaired_pages = None
     if text and is_broken_type3(path):
         try:
             from .repair import fix_broken_pdf
@@ -351,6 +596,7 @@ def read_pdf(path, cache_dir=None):
                 fix_broken_pdf(path, tmp)
                 d2 = _pdfengine.load().open(tmp)
                 text = "\n".join(pg.get_text() for pg in d2)
+                repaired_pages = d2.page_count
                 d2.close()
             finally:
                 try:
@@ -386,12 +632,21 @@ def read_pdf(path, cache_dir=None):
     if fields:
         text = (text or "") + "\n\n" + fields
 
+    facts = (_repaired(repaired_pages) if repaired_pages is not None and not repair_failed
+             else _classify(counts, engine) if counts is not None else None)
+    if facts is not None:
+        try:
+            _LAYER_MEMO[_layer_key(path)] = facts
+        except OSError:
+            pass
     if cache_dir and not repair_failed and len(text.strip()) >= MIN_TEXT_LAYER:
         os.makedirs(cache_dir, exist_ok=True)
         try:
             io.open(_cache_path(path, cache_dir), "w", encoding="utf-8").write(text)
         except OSError:
             pass
+        if facts is not None:
+            _write_layer(_layer_file(path, cache_dir), facts)
     return text
 
 

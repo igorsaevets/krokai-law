@@ -10,6 +10,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.22.0] - 2026-11-25
+
+A match in an OCR text layer says so. Many law PDFs are scans with an invisible text layer drawn
+over the image by an OCR engine; krokai compared quotations with that layer and printed VERIFIED
+exactly as it does for typeset text - but the words are what the OCR engine READ, and a misread
+digit or name makes a wrong quotation verify and a right one fail. Measured on a copy of a real
+matter's law library: 38 of 100 text PDFs were such layers (504 pages), and two OCR copies of one
+decision disagreed on 11.7-13.8 % of their number tokens.
+
+### Added
+- What drew a PDF's text - typeset glyphs, an OCR layer, or a mix (with the OCR pages) - is read
+  from the text render mode (3 = invisible), counted on the extraction pass pypdf already runs, or
+  by PyMuPDF when pypdf is absent. Kept beside the text cache; a cache from an older version gets
+  its layer measured once. Text produced by krokai's own OCR repair of a broken Type 3 file
+  carries the same label.
+- `check`: a console line per kind (clean / flagged / NOT FOUND in tiers A+B read from an OCR
+  layer), a REPORT.md section listing those rows and the OCR sources, `ocr_layer` / `ocr_cited`
+  on every `result.json` row and an `ocr_layers` list. A flagged row in an OCR layer says the
+  difference may be the OCR's misread, not the drafter's.
+- `quote`: a match in an OCR layer is labelled, with the instruction to check numbers, dates and
+  names against the page image; a NOT FOUND whose cited source is an OCR layer names the file.
+- `library`: lists the sources whose text is an OCR layer, with their pages.
+- The NOT_FOUND ladder (cause 3) and the assistant block name an OCR misread.
+
+Advisory only: no verdict and no exit code changes. Not detected: an OCR engine that draws its
+text visibly (the page then looks typeset), and a small OCR'd image (a seal, a letterhead) on a
+typeset page. A mixed file names its OCR pages, not the page a quotation matched on.
+
 ## [0.21.0] - 2026-11-25
 
 Superseded editions look superseded. When a new edition of a provision arrives, the old file keeps

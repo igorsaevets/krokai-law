@@ -5837,6 +5837,253 @@ def suite_k028_editions(tmp):
        "Editions - 1 provision with an OLDER edition" in out and "## Editions" in md, out[-500:])
 
 
+def suite_k024_ocr_layer(tmp):
+    """K024 (2026-11-25): a verdict read from an OCR text layer says so - `check` (console,
+    REPORT.md, result.json), `quote`, `library` - and the NOT_FOUND ladder names an OCR misread.
+    The layer is told by the text render mode (3 = invisible), counted by pypdf on the extraction
+    pass or by PyMuPDF; advisory: the exit code never moves. On the measured corpus 38 of 100 law
+    PDFs were OCR layers, and nothing in the output said so."""
+    import builtins
+    import json
+    import shutil
+    import subprocess as _sp
+    from krokai import readers as R
+    from krokai import repair as RP
+    from krokai.config import load as load_cfg
+    from krokai.corpus import Corpus
+    from krokai.run import scan_matter, ocr_counts, print_summary
+    from krokai.verdicts import SIX_CAUSES, CLEAN
+
+    ok("k024: NOT_FOUND cause 3 names an OCR text layer's misread and where those files are listed",
+       "OCR TEXT LAYER" in SIX_CAUSES[2] and "krokai library" in SIX_CAUSES[2]
+       and "page image" in SIX_CAUSES[2], SIX_CAUSES[2][:160])
+    snip = io.open(os.path.join(data_dir("templates"), "CLAUDE.md.snippet"), encoding="utf-8").read()
+    rung3 = re.search(r"(?m)^3\.\s+(.+(?:\n\s{3,}.+)*)",
+                      snip.split("`NOT_FOUND` is not `INVENTED`", 1)[-1])
+    ok("k024: the assistant block's rung 3 carries the OCR misread too",
+       bool(rung3) and "OCR text layer" in rung3.group(1) and "{KROKAI} library" in rung3.group(1),
+       rung3.group(1)[:200] if rung3 else "no rung 3")
+    c = R._TrCounter()
+    for op, args in ((b"BT", []), (b"q", []), (b"Tr", [3]), (b"Tj", ["abcd"]), (b"Q", []),
+                     (b"Tr", ["x"]), (b"Tj", ["xy"]), (b"Do", []), (b"Tr", [3]),
+                     (b"TJ", [["ef", -120, "g"]])):
+        c.before(op, args, None, None)
+    c.after(b"Do", [], None, None)
+    c.before(b"'", ["hij"], None, None)
+    c.stop()
+    ok("k024: the render-mode count follows q / Q and a form XObject (Do), and a bad operand never "
+       "raises", c.pages == [(5, 7)], str(c.pages))
+    cl = R._classify
+    ok("k024: page classes - all invisible = ocr; a typeset page 4 % invisible stays typeset; one of "
+       "each = mixed, naming the OCR page; nothing to judge = none",
+       cl([(0, 500), (0, 480)], "t")["class"] == "ocr" and cl([(480, 20)], "t")["class"] == "typeset"
+       and cl([(500, 0), (0, 500)], "t")["class"] == "mixed"
+       and cl([(500, 0), (0, 500)], "t")["ocr_pages"] == "2" and cl([(10, 0)], "t")["class"] == "none")
+    ok("k024: OCR pages print as a reader writes them", R._ranges([1, 2, 3, 7, 9, 10]) == "1-3, 7, 9-10")
+
+    try:
+        from krokai import _pdfengine
+        fz = _pdfengine.load()
+    except ImportError:
+        fz = None
+    if fz is None:
+        print("note: k024 OCR-layer fixture pins skipped - PyMuPDF builds the fixtures and is not "
+              "installed here")
+        return
+    try:
+        import pypdf  # noqa: F401
+        have_pypdf = True
+    except ImportError:
+        have_pypdf = False
+
+    root = os.path.join(tmp, "k024m")
+    law, case = os.path.join(root, "law"), os.path.join(root, "case")
+    os.makedirs(law)
+    os.makedirs(case)
+    io.open(os.path.join(root, "casefile.json"), "w", encoding="utf-8").write(json.dumps({
+        "bank": "QUOTE-BANK.md", "queue": "QUOTE-QUEUE.md", "library_index": "law/INDEX.md",
+        "sources": ["law"], "drafts": [{"tier": "A", "label": "filed", "path": "case"}],
+        "citation_packs": ["us-immigration", "us-federal"]}))
+
+    def make(path, pages):
+        d = fz.open()
+        for mode, lines in pages:
+            pg = d.new_page()
+            for i, ln in enumerate(lines):
+                pg.insert_text((50, 60 + 14 * i), ln, fontsize=9, render_mode=mode)
+        d.save(path)
+        d.close()
+
+    fill = ["Line %d of this synthetic part keeps every page above the floor of the reader." % i
+            for i in range(6)]
+    OCR_S = "The applicant shall submit the completed form within 30 days of the notice."
+    TYP_S = "The officer shall record each decision in the file before the case is closed."
+    MIX_S = "A request for evidence shall state the reason and the deadline for a response."
+    NF_S = "The applicant may ask the officer for a second interview at any time."
+    ocr_pdf, typ_pdf, mix_pdf = (os.path.join(law, n)
+                                 for n in ("8CFR-299.pdf", "8CFR-298.pdf", "8CFR-297.pdf"))
+    make(ocr_pdf, [(3, ["Sec. 299.1 Fixture rule.", OCR_S] + fill)] + [(3, fill)] * 2)
+    make(typ_pdf, [(0, ["Sec. 298.1 Fixture rule.", TYP_S] + fill)] + [(0, fill)] * 2)
+    make(mix_pdf, [(0, ["Sec. 297.1 Fixture rule."] + fill), (3, [MIX_S] + fill), (3, fill)])
+
+    R._LAYER_MEMO.clear()
+    got = [(R.text_layer(p) or {}) for p in (ocr_pdf, typ_pdf, mix_pdf)]
+    ok("k024: text_layer tells an OCR layer, typeset text and a mix apart, naming the OCR pages",
+       [g.get("class") for g in got] == ["ocr", "typeset", "mixed"]
+       and got[2].get("ocr_pages") == "2-3", str(got))
+
+    real_import = builtins.__import__
+
+    def hider(names):
+        def imp(name, *a, **k):
+            if name.split(".")[0] in names:
+                raise ImportError("hidden by the k024 selftest: %s" % name)
+            return real_import(name, *a, **k)
+        return imp
+
+    for hidden, eng in (({"fitz", "pymupdf"}, "pypdf"), ({"pypdf"}, "PyMuPDF")):
+        if eng == "pypdf" and not have_pypdf:
+            print("note: k024 pypdf-alone pin skipped - pypdf is not installed here")
+            continue
+        R._LAYER_MEMO.clear()
+        builtins.__import__ = hider(hidden)
+        try:
+            alone = [(R.text_layer(p) or {}) for p in (ocr_pdf, typ_pdf, mix_pdf)]
+        finally:
+            builtins.__import__ = real_import
+        ok("k024: with %s alone the same three classes come back" % eng,
+           [a.get("class") for a in alone] == ["ocr", "typeset", "mixed"]
+           and all(a.get("engine") == eng for a in alone), str(alone))
+
+    R._LAYER_MEMO.clear()
+    cache = os.path.join(tmp, "k024cache")
+    R.read_pdf(ocr_pdf, cache)
+    lp = R._layer_file(ocr_pdf, cache)
+    on_disk = json.load(io.open(lp, encoding="utf-8")) if os.path.exists(lp) else {}
+    ok("k024: read_pdf writes the layer beside the text cache, counted on the extraction it runs",
+       on_disk.get("class") == "ocr" and on_disk.get("engine") == ("pypdf" if have_pypdf else "PyMuPDF"),
+       str(on_disk))
+    if os.path.exists(lp):
+        os.remove(lp)
+    R._LAYER_MEMO.clear()
+    again = R.text_layer(ocr_pdf, cache) or {}
+    ok("k024: a text cache from an older version (no layer file) gets its layer measured and kept",
+       again.get("class") == "ocr" and os.path.exists(lp), str(again))
+
+    rep = os.path.join(tmp, "k024rep")
+    os.makedirs(rep)
+    broken = os.path.join(rep, "broken-type3.pdf")
+    shutil.copyfile(typ_pdf, broken)
+    rcache = os.path.join(tmp, "k024repcache")
+    real_b, real_fix = R.is_broken_type3, RP.fix_broken_pdf
+    R.is_broken_type3 = lambda p: os.path.basename(p) == "broken-type3.pdf"
+    RP.fix_broken_pdf = lambda src, dest, **k: (shutil.copyfile(ocr_pdf, dest), (3, 0))[1]
+    try:
+        R._LAYER_MEMO.clear()
+        txt = R.read_pdf(broken, rcache)
+        lay1 = R.text_layer(broken, rcache) or {}
+        R._LAYER_MEMO.clear()
+        if os.path.exists(R._layer_file(broken, rcache)):
+            os.remove(R._layer_file(broken, rcache))
+        lay2 = R.text_layer(broken, rcache) or {}
+    finally:
+        R.is_broken_type3, RP.fix_broken_pdf = real_b, real_fix
+    ok("k024: text from krokai's own OCR repair of a broken Type 3 file is an OCR layer - on the read "
+       "and from a cache written before the layer file existed",
+       "completed form" in txt and lay1.get("class") == "ocr" and "repair" in lay1.get("source", "")
+       and lay2.get("class") == "ocr" and "repair" in lay2.get("source", ""), str((lay1, lay2)))
+
+    R._LAYER_MEMO.clear()
+    corp = Corpus([law], quiet=True)
+    ok("k024: the corpus keeps the layer per indexed PDF - the OCR and the mixed file, never the "
+       "typeset one", bool(corp.ocr_layer(ocr_pdf)) and bool(corp.ocr_layer(mix_pdf))
+       and corp.ocr_layer(typ_pdf) is None and len(corp.ocr_files()) == 2,
+       str([(os.path.basename(p), f.get("class")) for p, f in corp.ocr_files()]))
+
+    ALT = OCR_S.replace("30 days", "60 days")
+    io.open(os.path.join(case, "petition.md"), "w", encoding="utf-8").write(
+        'Under 8 C.F.R. § 299.1, "%s"\n\nUnder 8 C.F.R. § 298.1, "%s"\n\n'
+        'Under 8 C.F.R. § 299.1, "%s"\n\nUnder 8 C.F.R. § 299.1, "%s"\n\n'
+        'Under 8 C.F.R. § 297.1, "%s"\n' % (OCR_S, TYP_S, NF_S, ALT, MIX_S))
+    cfg = load_cfg(root)
+    res = scan_matter(cfg, quiet=True, printer=lambda *a: None) or {"rows": []}
+
+    def row(marker):
+        return next((r for r in res["rows"] if marker in r["quote"]), {})
+    r_ocr, r_typ, r_mix = row("within 30 days"), row("record each decision"), row("request for evidence")
+    r_alt, r_nf = row("within 60 days"), row("second interview")
+    ok("k024: a VERIFIED row read from an OCR layer carries it; the typeset row does not",
+       r_ocr.get("verdict") in CLEAN and (r_ocr.get("ocr_layer") or {}).get("class") == "ocr"
+       and r_typ.get("verdict") in CLEAN and r_typ.get("ocr_layer") is None
+       and (r_mix.get("ocr_layer") or {}).get("class") == "mixed",
+       str([(r.get("verdict"), r.get("ocr_layer")) for r in (r_ocr, r_typ, r_mix)]))
+    ok("k024: a FLAGGED row compared with an OCR layer carries it (the difference may be the OCR's)",
+       r_alt.get("verdict") not in CLEAN and (r_alt.get("ocr_layer") or {}).get("class") == "ocr",
+       str((r_alt.get("verdict"), r_alt.get("where"))))
+    ok("k024: a NOT_FOUND citing a source whose text is an OCR layer puts cause 3 first and names it",
+       r_nf.get("verdict") == "NOT_FOUND" and "OCR layer" in r_nf.get("kind", "")
+       and any(f.endswith("8CFR-299.pdf") for f in r_nf.get("ocr_cited") or []),
+       str((r_nf.get("verdict"), r_nf.get("kind"), r_nf.get("ocr_cited"))))
+    oc = ocr_counts(res)
+    lines = []
+    print_summary(res, printer=lines.append)
+    said = "\n".join(lines)
+    ok("k024: the console summary counts them - 2 clean, 1 flagged, 1 NOT FOUND - with the instruction",
+       (oc["clean"], oc["flagged"], oc["not_found"]) == (2, 1, 1)
+       and "2 clean quotation(s) matched what an OCR engine read" in said
+       and "page image" in said, said[-600:])
+
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def cli(*args):
+        p = _sp.run([sys.executable, "-m", "krokai"] + list(args), cwd=repo, env=env,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+    _rc, out = cli("check", "--dir", root, "--out", os.path.join(tmp, "k024o"))
+    rep_md = os.path.join(tmp, "k024o", "REPORT.md")
+    md = io.open(rep_md, encoding="utf-8").read() if os.path.exists(rep_md) else ""
+    sec = md.split("## Read from an OCR text layer", 1)[-1].split("\n## ", 1)[0] if md else ""
+    ok("k024: the real `check` prints the OCR line and REPORT.md lists the OCR-read rows - not the "
+       "typeset one", "OCR TEXT LAYER, tiers A+B" in out and "## Read from an OCR text layer" in md
+       and "within 30 days" in sec and "record each decision" not in sec and "pages 2-3 of 3" in sec,
+       out[-400:] + " || " + sec[:300])
+    rj = os.path.join(tmp, "k024o", "result.json")
+    payload = json.load(io.open(rj, encoding="utf-8")) if os.path.exists(rj) else {}
+    ok("k024: result.json carries the layer on each row and lists the OCR sources",
+       sorted(os.path.basename(f["file"]) for f in payload.get("ocr_layers", []))
+       == ["8CFR-297.pdf", "8CFR-299.pdf"]
+       and any((r.get("ocr_layer") or {}).get("class") == "ocr" for r in payload.get("rows", [])),
+       str(payload.get("ocr_layers")))
+
+    green = os.path.join(tmp, "k024g")
+    shutil.copytree(law, os.path.join(green, "law"))
+    os.makedirs(os.path.join(green, "case"))
+    shutil.copyfile(os.path.join(root, "casefile.json"), os.path.join(green, "casefile.json"))
+    io.open(os.path.join(green, "case", "petition.md"), "w", encoding="utf-8").write(
+        'Under 8 C.F.R. § 299.1, "%s"\n' % OCR_S)
+    rc, out = cli("check", "--strict", "--dir", green, "--out", os.path.join(tmp, "k024go"))
+    ok("k024: the OCR line is advisory - a matter whose only quotation verified in an OCR layer still "
+       "passes `check --strict` (exit 0) and is told about the layer",
+       rc == 0 and "OCR TEXT LAYER, tiers A+B: 1 clean" in out, "exit %s: %s" % (rc, out[-300:]))
+
+    _rc, q1 = cli("quote", "--dir", root, OCR_S)
+    _rc, q2 = cli("quote", "--dir", root, TYP_S)
+    _rc, q3 = cli("quote", "--dir", root, NF_S + " 8 C.F.R. § 299.1")
+    ok("k024: `quote` labels a match in an OCR layer and says what to check - and not a typeset match",
+       "🟡 OCR TEXT LAYER (all 3 pages)" in q1 and "page image" in q1
+       and "🟡 OCR TEXT LAYER" not in q2, q1[:600] + " || " + q2[:300])
+    ok("k024: `quote` names the OCR file when cause 3 is live for a NOT FOUND",
+       "Cause 3 is live here" in q3 and "8CFR-299.pdf" in q3, q3[-400:])
+    _rc, lib = cli("library", "--dir", root)
+    tail = lib.split("OCR text layers:", 1)[-1]
+    ok("k024: `library` lists the sources whose text is an OCR layer, with their pages",
+       "OCR text layers: 2 of 3 PDF(s)" in lib and "8CFR-299.pdf  (all 3 pages)" in tail
+       and "8CFR-297.pdf  (pages 2-3 of 3)" in tail and "8CFR-298.pdf" not in tail, lib[-500:])
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if root not in sys.path:
@@ -5865,6 +6112,7 @@ def main():
         suite_k012_section_form(tmp)
         suite_k027_markers(tmp)
         suite_k028_editions(tmp)
+        suite_k024_ocr_layer(tmp)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)

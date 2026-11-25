@@ -116,7 +116,9 @@ to swallow a page header also swallows a real edit of the same shape.
 checker proves your quotation matches the copy on *your* disk. If the copy itself is suspect —
 an impossible date, a mangled name — a second, independent copy of the same document is the only
 confirmation; an official body's own published copy can carry the typo, and matching it exactly
-just reproduces the typo with confidence.
+just reproduces the typo with confidence. One class of suspect copy is named for you: a scan whose text is an OCR layer
+(`library` lists them; `quote` and `check` mark every match read from one). A digit or a name
+verified there was verified against what the OCR engine read - check it against the page image.
 
 **When you hunt what the string test cannot see, do not filter to the flagged list.** The
 classes a byte comparison structurally misses — a headnote quoted under the opinion's pincite, a

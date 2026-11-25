@@ -297,6 +297,15 @@ def cmd_quote(a):
         print("  found in: %s" % os.path.relpath(where, cfg.root))
     if detail:
         print("  %s" % detail)
+    # K024: a match in an OCR text layer is what an OCR engine read, not what the page says.
+    from .readers import ocr_label
+    from .verdicts import CLEAN
+    olab = ocr_label(corpus.ocr_layer(where)) if where else None
+    if olab:
+        print("  🟡 %s." % olab)
+        if verdict not in CLEAN:
+            print("     The difference may be the OCR's misread, not yours - compare with the page "
+                  "image before changing the quotation.")
 
     # 🔴 Shown for a quotation that PASSED, which is the whole reason it is here. A flagged quotation
     # already sends you to the source; a verified one is the one nobody opens again. The two
@@ -319,6 +328,7 @@ def cmd_quote(a):
         # The one command documented as a new user's first is the worst place for a stale copy.
         import textwrap
         from .verdicts import SIX_CAUSES
+        from .readers import ocr_pages_cell
         print("\n🔴 NOT FOUND is not the same as INVENTED. Rule these out in order - only what"
               "\n   survives all of them is a defect in the quotation:")
         for i, cause in enumerate(SIX_CAUSES, 1):
@@ -338,6 +348,19 @@ def cmd_quote(a):
             cite_keys = packs.keys(packs.find(text))
         except Exception:                                                # noqa: BLE001
             cite_keys = set()
+        # K024: cause 3 is live when a cited source's text is an OCR layer - say which file.
+        try:
+            from .address import KeyMap
+            km = KeyMap(corpus, packs)
+            ocr_hit = sorted({p for k in cite_keys for p in (km.resolve(k) or ())
+                              if corpus.ocr_layer(p)})
+        except Exception:                                                # noqa: BLE001
+            ocr_hit = []
+        for p in ocr_hit:
+            print("\n     🟡 Cause 3 is live here: %s is an OCR text layer (%s) - one misread digit "
+                  "or name\n        makes a correct quotation unfindable. Compare with the page "
+                  "image before rewriting the quotation."
+                  % (os.path.relpath(p, cfg.root), ocr_pages_cell(corpus.ocr_layer(p))))
         printed = 0
         for key in sorted(cite_keys):
             s = suggest_for_key(key)
@@ -553,6 +576,41 @@ def cmd_sidecar(a):
 
 
 # ------------------------------------------------------------------------------- library
+def _print_ocr_layers(cfg):
+    """K024: which sources' text is an OCR layer. Read from the layer cache beside the text cache
+    (`check` fills it); a PDF not seen before is counted here, PyMuPDF first (C speed)."""
+    from .corpus import walk
+    from .readers import text_layer, ocr_pages_cell, engines_available, OCR_CHECK
+    pdfs = sorted(walk(cfg.source_dirs, (".pdf",), set(cfg["skip_dirs"])))
+    if not pdfs:
+        return
+    eng = engines_available()
+    if not (eng.get("pypdf") or eng.get("PyMuPDF")):
+        print("\nOCR text layers: NOT examined - no PDF engine is installed (pip install "
+              "\"krokai[pdf]\"), so %d PDF(s) could not be told apart." % len(pdfs))
+        return
+    found, unknown = [], 0
+    for p in pdfs:
+        try:
+            lay = text_layer(p, cfg.cache)
+        except Exception:                                                # noqa: BLE001
+            lay = None
+        if lay is None:
+            unknown += 1
+        elif lay.get("class") in ("ocr", "mixed"):
+            found.append((p, lay))
+    print("\nOCR text layers: %d of %d PDF(s)%s" % (len(found), len(pdfs),
+                                                     (" (%d could not be read)" % unknown)
+                                                     if unknown else ""))
+    if found:
+        print("  A quotation verified against these matched what an OCR engine read from a scan, "
+              "not typeset text -\n  %s:" % OCR_CHECK)
+        for p, lay in found:
+            print("     %s  (%s)" % (os.path.relpath(p, cfg.root), ocr_pages_cell(lay)))
+        print("  Not detected by this test: an OCR engine that draws its text visibly (the page "
+              "then looks typeset).")
+
+
 def cmd_library(a):
     from .config import load
     from .library import orphans, RECIPES
@@ -576,6 +634,7 @@ def cmd_library(a):
     if unindexed or missing:
         print("\nAn unindexed source gets downloaded again next round, and its absence turns an "
               "honest quotation into a NOT_FOUND that reads like a fabrication.")
+    _print_ocr_layers(cfg)
 
     # --suggest-fetches implies --bank (a suggestion is FOR a missing entry, and the list of
     # missing entries is what --bank produces). The extra print at the end is the whole point.
