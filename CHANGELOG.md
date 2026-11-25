@@ -10,6 +10,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.24.0] - 2026-11-25
+
+The library's front door checks what comes in. Measured with 0.23.0 from PyPI on real law: two
+laws waiting in the inbox and one `intake --address "8 CFR 245"` filed 8 CFR 214.3 as the NEW
+EDITION of part 245 (0.0 % unchanged); the real part 245 was marked superseded, a quotation from it
+came back SUPERSEDED EDITION, and `close` said ALL CLEAR. And `fetch` saved HTTP 200 answers that
+are not documents: GovInfo's «Page Not Found» page (44 KB) and the «Request Access» bot wall that
+federalregister.gov and ecfr.gov serve (10.6 KB).
+
+### Changed
+
+- `intake --address` takes ONE file. With more than one file in the inbox nothing is filed and
+  every file is listed - one citation cannot be the address of two documents.
+- A new edition must keep the current one's text. Under an address that already has a file, a
+  newcomer that keeps less than a quarter of the current edition's text (a different document), or
+  that adds nothing and is under half its size (an empty page around a site menu, a cut download),
+  is refused: nothing is filed and nothing is marked superseded. `--allow-low-overlap` is the
+  user's word, after reading both, that it IS the new edition. Measured on 28 real new editions
+  of the same documents (USCIS Policy Manual, eCFR, re-fetched three months apart): none refused;
+  the most rewritten kept 43 % of its text.
+- `fetch` refuses an HTTP 200 that is not the document: a redirect to the publisher's home page,
+  or a page whose own title is an error or bot-wall title («Page Not Found», «Request Access»).
+  An error word in a law page's body never refuses it.
+- The revision row in `intake` says how much of the old text the new edition kept.
+
 ## [0.23.0] - 2026-11-25
 
 Copies disagree. When one document is on the disk more than once and one copy is an OCR text

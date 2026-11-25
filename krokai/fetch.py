@@ -239,6 +239,10 @@ def fetch_url(url, root, cfg=None, packs=None, allow_unknown=False, timeout=45, 
     if not data:
         printer("🔴 empty body - nothing saved.")
         return None
+    why404 = soft404_reason(url, final, ctype, data)                    # K016
+    if why404:
+        printer("🔴 HTTP 200, but %s. Nothing saved." % why404)
+        return None
 
     inbox = os.path.join(root, INBOX)
     os.makedirs(inbox, exist_ok=True)
@@ -507,14 +511,109 @@ def revision_diff(old_text, new_text):
             "moved": moved}
 
 
+# 🔴 K026: A NEW EDITION KEEPS MOST OF THE OLD ONE'S WORDS. `intake` used to file ANY readable file as
+# the next edition of an address that already had one, and since K028 that also marks the older file
+# SUPERSEDED in the index - so a wrong document taken in there made the real law look old to `check`.
+# Measured with the PyPI build (private record K026): `fetch` 8 CFR 214.3, then `intake --address
+# "8 CFR 245"` -> «REVISION, 0.0% unchanged»; part 245 was marked SUPERSEDED, a quotation from it came
+# back SUPERSEDED EDITION, and `close` still said ALL CLEAR. The share is counted on the CURRENT
+# edition's side: how much of the law already on disk survives in the newcomer. The symmetric
+# «share of the smaller text» is blind to the worst case - a publisher's empty shell is nothing but
+# site chrome, all of it present in the old page, so it scores 100 % while every sentence of the law
+# is gone. The sample is K025's `copy_print` (content-defined 5-word shingles), the instrument the
+# corpus census measured «same document» against «different document» with.
+# Measured 2026-11-25 by re-fetching the AOS shelf through `fetch` + `intake`: 27 real new editions
+# kept 0.429 (USCIS-PM 8.G.12, rewritten since August) to 1.000 of the current text; the foreign law
+# ~0. Simulated empty USCIS shells (the site chrome of each real page) kept 0.054-0.411 - no single
+# floor parts them from a rewrite, so a shell is caught by what it IS: a FRAGMENT that adds nothing
+# (>= 0.981 of its text already in the page) and is small (<= 0.419 of its size), while none of 28
+# real editions did both (each added text; the smallest kept 0.561 of the size).
+REVISION_FLOOR = 0.25
+FRAGMENT_HOLDS, FRAGMENT_SIZE = 0.95, 0.5
+
+
+def edition_overlap(old_text, new_text):
+    """K026: the share of the CURRENT edition's text that the newcomer still holds - sampled shingles
+    when the current edition yields enough of them, normalised sentences otherwise (a short section).
+    Returns `(share, how)`; `share` is None when neither measure has anything to count."""
+    from .corpus import copy_print, _COPY_MIN
+    a = copy_print(old_text)
+    if len(a) >= _COPY_MIN:
+        return len(a & copy_print(new_text)) / float(len(a)), "shingles"
+    old = set(_sentences(old_text))
+    if not old:
+        return None, "nothing to count"
+    return len(old & set(_sentences(new_text))) / float(len(old)), "sentences"
+
+
+def revision_doubt(old_text, new_text, old_name="the current edition", addr=""):
+    """K026: why `new_text` does not look like the next edition of `old_text`, or None."""
+    from .corpus import copy_print, _COPY_MIN
+    share, how = edition_overlap(old_text, new_text)
+    if share is not None and share < REVISION_FLOOR:
+        return ("only %.0f%% of the current edition `%s` (%s) is in this file - a new edition keeps "
+                "most of its words, so this looks like a DIFFERENT document under %s."
+                % (100 * share, old_name, how, addr or "this address"))
+    a, b = copy_print(old_text), copy_print(new_text)
+    if len(a) >= _COPY_MIN and b:
+        holds, size = len(a & b) / float(len(b)), len(b) / float(len(a))
+        if holds >= FRAGMENT_HOLDS and size < FRAGMENT_SIZE:
+            return ("this file is a FRAGMENT of the current edition `%s`: %.0f%% of its text is already "
+                    "there, it adds nothing, and it is %.0f%% of that edition's size - an empty page "
+                    "around the site menu, or a cut download." % (old_name, 100 * holds, 100 * size))
+    return None
+
+
+# 🔴 K016: A SOFT 404 IS AN HTTP 200 THAT IS NOT THE DOCUMENT. The placeholder test above it reads
+# only bodies under 20 000 bytes - a modern publisher's error page carries its whole site menu and is
+# far bigger. Two signals that a law page never gives, checked instead of widening the body test (the
+# 0.7.1 incident: one footer line read as an error word excluded 9 920 characters of 8 U.S.C. 1255):
+# the publisher sent us to its HOME PAGE instead of the address asked for, or the page's own <title>
+# is, segment for segment, an error title. Each measured at the hosts this library fetches from
+# (private record K026).
+# Measured 2026-11-25 on random paths next to real documents at the shelf's publishers: 8 of 11 answered
+# HTTP 404 (refused already); the 3 HTTP 200 answers - govinfo's «Page Not Found | GovInfo» (44 KB,
+# via /error) and federalregister.gov's AND ecfr.gov's «Federal Register :: Request Access» bot wall
+# (10.6 KB, on unblock.federalregister.gov) - all passed the old guard, and a revision of them would
+# have marked real law superseded. The bot wall's title is one of these too.
+_SOFT404_TITLES = {"page not found", "not found", "404", "404 not found", "not found 404", "error 404",
+                   "404 error", "file not found", "document not found", "page not found 404",
+                   "404 page not found", "the page you requested could not be found",
+                   "the requested page could not be found", "sorry, page not found",
+                   "request access", "access denied", "just a moment...", "attention required!"}
+_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title\s*>", re.I | re.S)
+
+
+def soft404_reason(url, final, ctype, data):
+    """K016: why this HTTP 200 answer is not the document asked for, or None."""
+    from urllib.parse import urlparse
+    asked, got = urlparse(url), urlparse(final or url)
+    if got.path in ("", "/") and not got.query and (asked.path not in ("", "/") or asked.query):
+        return ("the publisher answered with its HOME PAGE (%s) instead of the address asked for - the "
+                "document is not there" % (final or url))
+    head = data[:65536].decode("utf-8", "replace")
+    if "html" in (ctype or "").lower() or "<html" in head[:2048].lower():
+        m = _TITLE_RE.search(head)
+        if m:
+            import html as _html
+            title = " ".join(_html.unescape(m.group(1)).split())
+            for seg in re.split(r"\s*[|–—:]\s*|\s+-\s+|\s*\(\s*|\s*\)\s*", title):
+                if seg.strip().lower() in _SOFT404_TITLES or seg.strip(" .!").lower() in _SOFT404_TITLES:
+                    return ("the page's own title is «%s» - an error page or a bot wall served with HTTP "
+                            "200" % title[:120])
+    return None
+
+
 def _address_keys(address, packs):
     return packs.keys(packs.find(address or "")) if packs else set()
 
 
-def intake(root, cfg, packs, address=None, dest_dir=None, allow_unindexed=False, printer=print):
+def intake(root, cfg, packs, address=None, dest_dir=None, allow_unindexed=False, printer=print,
+           allow_low_overlap=False):
     """Move everything in the inbox into the library, keyed by its citation address.
 
-    Returns a list of `(status, filename, note)`.
+    Returns a list of `(status, filename, note)`. `allow_low_overlap` (K026) is the user's word that a
+    newcomer sharing little text with the current edition IS its new edition - after reading both.
     """
     from .readers import read_any
     # K028: first make every older edition the register knows visibly old in the index - this also
@@ -528,6 +627,21 @@ def intake(root, cfg, packs, address=None, dest_dir=None, allow_unindexed=False,
     files = [f for f in sorted(os.listdir(inbox)) if not f.endswith(".meta.json")]
     if not files:
         printer("the inbox is empty. `krokai fetch <url>` puts things in it.")
+        return out
+
+    # 🔴 K026: ONE --address, ONE FILE. The address given on the command line used to be applied to
+    # every file in the inbox, so two laws fetched before one intake were both filed under it - and
+    # the second became the first one's NEW EDITION. Measured with the PyPI build: 8 CFR 214.3 waiting
+    # in the inbox was filed as an edition of 8 CFR 245 (private record K026). The hint `fetch` prints
+    # names one citation; this makes that the rule instead of a hope.
+    if address and len(files) > 1:
+        for fn in files:
+            out.append(("REFUSED", fn,
+                        "the inbox holds %d files and --address names ONE citation - each would be "
+                        "filed under it, and a second law under an address that already has a file "
+                        "becomes its new edition. Nothing was filed: take them in one at a time "
+                        "(move the others out of %s, or fetch -> intake -> fetch -> intake)"
+                        % (len(files), INBOX)))
         return out
 
     reg = _registry(root)
@@ -615,6 +729,13 @@ def intake(root, cfg, packs, address=None, dest_dir=None, allow_unindexed=False,
             stem, ext = os.path.splitext(fn)
             dest = os.path.join(library, "%s__rev%d%s" % (stem, n, ext))
             old_text = read_any(prev["path"])
+            share = edition_overlap(old_text, text)[0]                            # K026
+            doubt = revision_doubt(old_text, text, os.path.basename(prev["path"]), addr)
+            if doubt and not allow_low_overlap:
+                out.append(("REFUSED", fn, doubt + " Nothing was filed and nothing was marked "
+                            "superseded. Wrong address: run intake again with the right --address. "
+                            "You have read both and it IS the new edition: add --allow-low-overlap"))
+                continue
             prev_ed = prev.get("edition_date") or edition_date(old_text, prev.get("url") or "")[0]
             # 🔴 K028: «arrived later» is not «newer». A point-in-time fetch for an EARLIER date (the
             # K044 workflow: the law on the filing date) used to become the current edition, and the
@@ -664,10 +785,13 @@ def intake(root, cfg, packs, address=None, dest_dir=None, allow_unindexed=False,
                             "edition_date": ed, "edition_source": ed_how, "editions": editions}
                 cur_path, older_paths = dest, reg[kid]["superseded_paths"]
                 out.append(("🔴 REVISION", os.path.basename(dest),
-                            "%d sentence(s) gone, %d new, %d moved, %.1f%% unchanged - the previous "
+                            "%d sentence(s) gone, %d new, %d moved, %.1f%% unchanged%s - the previous "
                             "edition is KEPT, and %s says what it means for the bank"
                             % (len(d["gone"]), len(d["added"]), d.get("moved", 0),
-                               100 * d["similarity"], os.path.relpath(report, root))))
+                               100 * d["similarity"],
+                               ("" if share is None else ", %.0f%% of the old text kept" % (100 * share))
+                               + (" (--allow-low-overlap)" if doubt else ""),
+                               os.path.relpath(report, root))))
         else:
             os.replace(src, dest)
             reg[kid] = {"path": dest, "sha256": meta.get("sha256"), "address": addr,

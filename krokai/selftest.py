@@ -6084,6 +6084,219 @@ def suite_k024_ocr_layer(tmp):
        and "8CFR-297.pdf  (pages 2-3 of 3)" in tail and "8CFR-298.pdf" not in tail, lib[-500:])
 
 
+def suite_k026_front_door(tmp):
+    """K026 + K016 (2026-11-25): what enters the library must be the document it claims to be. ONE
+    --address takes ONE inbox file; a «new edition» that keeps too little of the current one's text
+    is refused (a foreign law, a publisher's empty shell) unless the user says so; a real rewrite like
+    the measured USCIS-PM 8.G.12 edition still goes in, under any file name; `fetch` refuses a
+    redirect to the site's home page and a page whose own title is an error title, and never a law
+    page for an error word in its body. Measured on real publishers in the private record K026."""
+    import json
+    import subprocess as _sp
+    from krokai import fetch as F
+    from krokai.citations import load_packs
+    from krokai.config import load as load_cfg
+
+    root = os.path.join(tmp, "k026m")
+    os.makedirs(os.path.join(root, "law"))
+    io.open(os.path.join(root, "casefile.json"), "w", encoding="utf-8").write(json.dumps({
+        "library_index": "law/INDEX.md", "sources": ["law"], "drafts": [],
+        "citation_packs": ["us-immigration", "us-federal"]}))
+    cfg = load_cfg(root)
+    packs = load_packs(cfg["citation_packs"])
+    inbox = os.path.join(root, F.INBOX)
+    os.makedirs(inbox)
+    chrome = " ".join("Navigation block %d: contact website careers privacy updates explore subject %d." % (j, j)
+                      for j in range(6))
+    law = ["Section 245.%d provides that the officer examines records numbered %d before deciding whether "
+           "adjustment applies to applicant %d." % (i, i, i) for i in range(40)]
+    rewrite = ["Section 245.%d now requires counsel to present evidence numbered %d whenever another "
+               "applicant %d appears." % (i, i, i) for i in range(40)]
+    foreign = " ".join("Paragraph 214.%d governs student visitor reporting duties numbered %d for schools "
+                       "certified under program %d." % (i, i, i) for i in range(40))
+    OLD = chrome + " " + " ".join(law)
+    LIGHT = chrome + " " + " ".join(law[:36] + rewrite[36:])
+    HEAVY = chrome + " " + " ".join(law[:15] + rewrite[15:])          # like USCIS-PM 8.G.12 (K026)
+    SHELL = chrome + " Policy Manual chapter page."
+    share = lambda a, b: F.edition_overlap(a, b)[0]                    # noqa: E731
+    ok("k026: fixture - a foreign law keeps ~0 of the current edition, an empty shell (chrome only) "
+       "little, a heavy rewrite 40-50 % like the measured PM 8.G.12, a light edit most of it",
+       share(OLD, foreign) < 0.05 and share(OLD, SHELL) < F.REVISION_FLOOR
+       and 0.40 <= share(OLD, HEAVY) <= 0.50 and share(OLD, LIGHT) > 0.85,
+       "foreign %.2f shell %.2f heavy %.2f light %.2f floor %.2f" % (
+           share(OLD, foreign), share(OLD, SHELL), share(OLD, HEAVY), share(OLD, LIGHT), F.REVISION_FLOOR))
+    ok("k026: the share is counted on the CURRENT edition's side - the shell scores 100 % the symmetric way",
+       F.edition_overlap(chrome, OLD)[0] == 1.0 and share(OLD, chrome) < 0.5,
+       "%s %.2f" % (F.edition_overlap(chrome, OLD), share(OLD, chrome)))
+    short_old = "Sec. 553.101 Volunteer defined. An individual who performs hours of service is a volunteer."
+    ok("k026: a short section is measured in sentences when it has too few shingles",
+       F.edition_overlap(short_old, short_old + " A new sentence.") == (1.0, "sentences"),
+       str(F.edition_overlap(short_old, short_old)))
+    big_chrome = " ".join("Site menu entry %d: contact website careers privacy updates explore subject "
+                          "dossier %d." % (j, j) for j in range(17))
+    OLD_B = big_chrome + " " + " ".join(law[:25])
+    SHRINK = chrome + " " + " ".join(law[:17] + rewrite[17:21])       # like PM 8.G.9: smaller, adds text
+    d_frag = F.revision_doubt(OLD_B, big_chrome)
+    ok("k026: red - an empty page whose site chrome is a big share of the page (PM 6.E.9's 41 %) passes "
+       "the floor and is caught as a FRAGMENT: it adds nothing and is under half the size",
+       share(OLD_B, big_chrome) >= F.REVISION_FLOOR and "FRAGMENT" in (d_frag or ""),
+       "%.2f %s" % (share(OLD_B, big_chrome), d_frag))
+    ok("k026: green - real editions are not doubted: a heavy rewrite, a light edit, a smaller edition that "
+       "adds text (like PM 8.G.9 at 56 % of the size)",
+       F.revision_doubt(OLD, HEAVY) is None and F.revision_doubt(OLD, LIGHT) is None
+       and F.revision_doubt(OLD, SHRINK) is None,
+       "%s | %s | %s" % (F.revision_doubt(OLD, HEAVY), F.revision_doubt(OLD, LIGHT), F.revision_doubt(OLD, SHRINK)))
+    ok("k026: red - a foreign law is doubted as a DIFFERENT document",
+       "DIFFERENT" in (F.revision_doubt(OLD, foreign) or ""))
+
+    ecfr = "https://www.ecfr.gov/api/versioner/v1/full/%s/title-8.xml?part=245"
+
+    def drop(name, body, day="2026-11-20"):
+        io.open(os.path.join(inbox, name), "w", encoding="utf-8", newline="\n").write(body)
+        io.open(os.path.join(inbox, name + ".meta.json"), "w", encoding="utf-8").write(json.dumps(
+            {"url": ecfr % day, "sha256": F.sha256_of(body.encode("utf-8")), "trust": "primary",
+             "trust_label": "OFFICIAL", "model_in_path": False, "fetched_at": day + "T10:00:00"}))
+
+    def take(**kw):
+        return F.intake(root, cfg, packs, address="8 CFR 245", printer=lambda *a: None, **kw)
+
+    def pending():
+        return sorted(f for f in os.listdir(inbox) if not f.endswith(".meta.json"))
+
+    def clear(name):                           # tolerant: a mutation may already have moved it (E-1064)
+        for p in (name, name + ".meta.json"):
+            if os.path.exists(os.path.join(inbox, p)):
+                os.remove(os.path.join(inbox, p))
+
+    def index_rows():
+        p = os.path.join(root, "law", "INDEX.md")
+        return [ln for ln in io.open(p, encoding="utf-8").read().splitlines()
+                if ln.startswith("| ") and "`" in ln] if os.path.exists(p) else []
+
+    drop("part-245.xml", OLD, "2026-08-01")
+    r = take()
+    ok("k026: green - one file, one address: filed", [s for s, _n, _x in r] == ["added"], str(r))
+    drop("other-law.xml", foreign)
+    drop("part-245-again.xml", LIGHT)
+    r = take()
+    ok("k026: red - two files in the inbox and ONE --address: both refused, nothing filed",
+       [s for s, _n, _x in r] == ["REFUSED", "REFUSED"] and "ONE citation" in r[0][2]
+       and pending() == ["other-law.xml", "part-245-again.xml"] and len(index_rows()) == 1, str(r))
+    clear("part-245-again.xml")
+    r = take()
+    ok("k026: red - a foreign law under an address that has a file is refused, the current law is not "
+       "marked superseded, the register still names it",
+       [s for s, _n, _x in r] == ["REFUSED"] and "DIFFERENT document" in r[0][2]
+       and "--allow-low-overlap" in r[0][2] and pending() == ["other-law.xml"]
+       and not any("SUPERSEDED" in ln for ln in index_rows())
+       and F._registry(root)["cfr|8|245"]["path"].endswith("part-245.xml"), "%s %s" % (r, index_rows()))
+    clear("other-law.xml")
+    drop("chapter-shell.html", SHELL)
+    r = take()
+    ok("k026: red - an empty page (site chrome only) is not a new edition",
+       [s for s, _n, _x in r] == ["REFUSED"] and not any("SUPERSEDED" in ln for ln in index_rows()), str(r))
+    clear("chapter-shell.html")
+    drop("document.xml", HEAVY)
+    r = take()
+    ok("k026: green - a heavy rewrite of the provision (kept ~45 %, PM 8.G.12) under an arbitrary file "
+       "name is filed as the new edition and the old one is marked superseded (K028 unchanged)",
+       [s for s, _n, _x in r] == ["🔴 REVISION"] and "of the old text kept" in r[0][2]
+       and any("SUPERSEDED" in ln and "part-245.xml" in ln for ln in index_rows()), "%s %s" % (r, index_rows()))
+    drop("other-law.xml", foreign)
+    r = take(allow_low_overlap=True)
+    ok("k026: green - --allow-low-overlap is the user's word: the low-overlap file goes in, and the row says so",
+       [s for s, _n, _x in r] == ["🔴 REVISION"] and "(--allow-low-overlap)" in r[0][2] and pending() == [], str(r))
+
+    # the CLI: the flag exists and a refusal reaches the exit code (3), the hint names the flag
+    root2 = os.path.join(tmp, "k026c")
+    os.makedirs(os.path.join(root2, "law"))
+    io.open(os.path.join(root2, "casefile.json"), "w", encoding="utf-8").write(json.dumps({
+        "library_index": "law/INDEX.md", "sources": ["law"], "drafts": [],
+        "citation_packs": ["us-immigration", "us-federal"]}))
+    inbox, root = os.path.join(root2, F.INBOX), root2
+    os.makedirs(inbox)
+    cfg = load_cfg(root2)
+    drop("part-245.xml", OLD, "2026-08-01")
+    take()
+    drop("other-law.xml", foreign)
+    env = dict(os.environ, PYTHONPATH=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+               PYTHONIOENCODING="utf-8")
+    cp = _sp.run([sys.executable, "-m", "krokai", "intake", "--address", "8 CFR 245", "--dir", root2],
+                 stdout=_sp.PIPE, stderr=_sp.PIPE, env=env, timeout=120)
+    out = (cp.stdout or b"").decode("utf-8", "replace")
+    ok("k026: CLI - `intake` refuses with exit 3 and names --allow-low-overlap",
+       cp.returncode == 3 and "REFUSED" in out and "--allow-low-overlap" in out, "rc=%d %s" % (cp.returncode, out[-300:]))
+    cp = _sp.run([sys.executable, "-m", "krokai", "intake", "--address", "8 CFR 245", "--allow-low-overlap",
+                  "--dir", root2], stdout=_sp.PIPE, stderr=_sp.PIPE, env=env, timeout=120)
+    out = (cp.stdout or b"").decode("utf-8", "replace")
+    ok("k026: CLI - with --allow-low-overlap the same file is filed (exit 4, a revision)",
+       cp.returncode == 4 and "REVISION" in out, "rc=%d %s" % (cp.returncode, out[-300:]))
+
+    # K016: soft 404 - two signals a law page never gives; an error WORD in a law page's body never refuses
+    s4 = F.soft404_reason
+    html = lambda title, body="": ("<html><head><title>%s</title></head><body>%s</body></html>"   # noqa: E731
+                                   % (title, body)).encode("utf-8")
+    ok("k016: red - a redirect to the publisher's home page is not the document",
+       s4("https://www.uscis.gov/policy-manual/volume-7-part-b-chapter-99", "https://www.uscis.gov/",
+          "text/html", html("Home | USCIS")) is not None)
+    ok("k016: red - a redirect from a query URL to the home page is not the document",
+       s4("https://uscode.house.gov/view.xhtml?req=granuleid:USC-prelim-title8-section1255",
+          "https://uscode.house.gov/", "text/html", html("Office of the Law Revision Counsel")) is not None)
+    ok("k016: red - an HTTP 200 whose own title is an error title (any page size)",
+       all(s4("https://www.uscis.gov/x/y", "https://www.uscis.gov/x/y", "text/html; charset=UTF-8",
+              html(t, "menu " * 9000)) for t in ("Page Not Found | USCIS", "404 - Page Not Found",
+                                                 "Not Found", "Error 404 :: eCFR", "Page Not Found | GovInfo",
+                                                 "Federal Register :: Request Access")))
+    ok("k016: green - a law page passes, error words in its BODY included (the 0.7.1 lesson)",
+       s4("https://www.uscis.gov/policy-manual/volume-7-part-b-chapter-8",
+          "https://www.uscis.gov/policy-manual/volume-7-part-b-chapter-8", "text/html",
+          html("Chapter 8 - Inapplicability of Bars to Adjustment | USCIS",
+               "If the record is not found, page not found errors do not apply. Error 404 " * 50)) is None
+       and s4("https://www.ecfr.gov/current/title-8/part-245", "https://www.ecfr.gov/current/title-8/part-245",
+              "text/html", html("eCFR :: 8 CFR Part 245 -- Adjustment of Status")) is None)
+    ok("k016: green - a PDF is never judged by an HTML title, a redirect to a deeper page is not «home»",
+       s4("https://www.justice.gov/eoir/page/file/1/dl", "https://www.justice.gov/d9/2026/x.pdf",
+          "application/pdf", b"%PDF-1.7 <title>Not Found</title>") is None
+       and s4("https://www.ecfr.gov/x", "https://www.ecfr.gov/current/title-8/part-245", "text/html",
+              html("eCFR :: 8 CFR Part 245")) is None)
+
+    # E-215: the guard must be reached by the code `krokai fetch` runs - a stand-in `requests` (no network)
+    import types
+
+    class _Resp(object):
+        def __init__(self, final, body, ctype="text/html; charset=UTF-8", status=200):
+            self.url, self.status_code, self.content = final, status, body
+            self.headers = {"Content-Type": ctype}
+
+    answers = {}
+    fake = types.ModuleType("requests")
+    fake.get = lambda url, **kw: answers[url]
+    real_mod = sys.modules.get("requests")
+    sys.modules["requests"] = fake
+    try:
+        froot = os.path.join(tmp, "k026f")
+        os.makedirs(froot)
+        ib = os.path.join(froot, F.INBOX)
+        bad = "https://www.govinfo.gov/content/pkg/FR-2026-01-02/html/2026-43423.htm"
+        answers[bad] = _Resp("https://www.govinfo.gov/error", html("Page Not Found | GovInfo", "menu " * 9000))
+        good = "https://www.ecfr.gov/current/title-8/part-245"
+        answers[good] = _Resp(good, html("eCFR :: 8 CFR Part 245 -- Adjustment of Status",
+                                         "Sec. 245.1 Eligibility of an applicant. " * 400))
+        out = []
+        r_bad = F.fetch_url(bad, froot, packs=packs, printer=out.append)
+        ok("k016: red - `fetch` itself refuses the soft 404 (wired, not only defined) and saves nothing",
+           r_bad is None and any("HTTP 200, but" in x for x in out)
+           and not (os.path.isdir(ib) and os.listdir(ib)), str(out[-2:]))
+        out = []
+        r_good = F.fetch_url(good, froot, packs=packs, printer=out.append)
+        ok("k016: green - `fetch` saves a law page", bool(r_good) and len(os.listdir(ib)) == 2, str(out[-3:]))
+    finally:
+        if real_mod is None:
+            sys.modules.pop("requests", None)
+        else:
+            sys.modules["requests"] = real_mod
+
+
 def suite_k025_copies(tmp):
     """K025 (2026-11-25): when one document is on the disk twice and one copy is an OCR text layer,
     the quotation is asked again inside every other copy, and «copies disagree» shows both readings
@@ -6304,6 +6517,7 @@ def main():
         suite_k028_editions(tmp)
         suite_k024_ocr_layer(tmp)
         suite_k025_copies(tmp)
+        suite_k026_front_door(tmp)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)

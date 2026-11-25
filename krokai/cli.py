@@ -744,7 +744,8 @@ def cmd_intake(a):
     from .fetch import intake
     cfg = load(a.dir)
     packs = load_packs(cfg["citation_packs"])
-    rows = intake(cfg.root, cfg, packs, address=a.address, dest_dir=a.into)
+    rows = intake(cfg.root, cfg, packs, address=a.address, dest_dir=a.into,
+                  allow_low_overlap=a.allow_low_overlap)
     if not rows:
         return 0
     print("")
@@ -1656,6 +1657,9 @@ def build_parser():
         "intake", help="move the inbox into the library, detecting revisions"))
     p.add_argument("--address", help='the citation this file IS, e.g. "8 CFR 245.1"')
     p.add_argument("--into", help="library folder (default: the first source_dir)")
+    p.add_argument("--allow-low-overlap", action="store_true",
+                   help="the new file shares little text with the address's current edition and you "
+                        "have read both: it IS the new edition (K026; refused without this)")
     p.set_defaults(fn=cmd_intake)
 
     p = common(sub.add_parser("mutate", help="regression bank: how often does it say clean wrongly"))
