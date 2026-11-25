@@ -6084,6 +6084,50 @@ def suite_k024_ocr_layer(tmp):
        and "8CFR-297.pdf  (pages 2-3 of 3)" in tail and "8CFR-298.pdf" not in tail, lib[-500:])
 
 
+def suite_k030_edge_ellipsis(tmp):
+    """🔴 K030 (2026-11-25): a verbatim quotation cut at ONE edge was graded ALTERED.
+
+    Found by putting krokai's verdicts next to the sister project's own checker on a copy of a real
+    matter (the filed petition): three quotations whose words are verbatim in the source, cut with a
+    single leading or trailing ellipsis, came back ALTERED with an EMPTY detail; without the ellipsis
+    both checkers said VERIFIED. `check` entered the ellipsis section only with two fragments or more,
+    so a one-edge cut fell through to the branch that reads our own ellipsis as a changed tail.
+
+    The pins hold the three sides of the repair: the verbatim one-edge cut is ASSEMBLED (it was the
+    defect); a cut that hides a negation in FRONT, or stops before an unmarked limiter, is still loud
+    (the repair must not turn today's accidental alarm into a pass); and a short piece on the other
+    side of the ellipsis keeps the quotation out of the green path - `ellipsis_parts` drops it below
+    its floor, so nothing would have checked it.
+    """
+    from krokai.corpus import Corpus
+    from krokai.verify import CLEAN, check
+    d = os.path.join(tmp, "k030")
+    os.makedirs(d, exist_ok=True)
+    with io.open(os.path.join(d, "src.md"), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("For purposes of the counting period, the calculation of the number of days will stop "
+                 "as of the date the agency receives a properly filed application from the person "
+                 "concerned.\n\nExcept as otherwise provided, no alien may be admitted to the United "
+                 "States under this paragraph for any purpose whatsoever.\n\nThe officer shall approve "
+                 "the application filed under this section unless the applicant is inadmissible.\n")
+    c = Corpus([d], quiet=True)
+    body = ("the calculation of the number of days will stop as of the date the agency receives a "
+            "properly filed application")
+    for label, q in (("trailing ...", body + "..."), ("trailing …", body + "…"),
+                     ("leading ...", "..." + body), ("both edges", "… " + body + " …")):
+        v, _w, dd = check(q, c)
+        ok("k030 a verbatim quotation cut at one edge is ASSEMBLED, not ALTERED (%s)" % label,
+           v == "ASSEMBLED", "%s :: %s" % (v, dd))
+    v, _w, dd = check("...alien may be admitted to the United States under this paragraph", c)
+    ok("k030 a front cut hiding a negation stays TRUNCATED_OPENING with an ellipsis before it",
+       v == "TRUNCATED_OPENING", "%s :: %s" % (v, dd))
+    v, _w, dd = check("...shall approve the application filed under this section", c)
+    ok("k030 an unmarked end before a limiter stays TRUNCATED_CONDITION after a leading ellipsis",
+       v == "TRUNCATED_CONDITION", "%s :: %s" % (v, dd))
+    v, _w, dd = check("Not ... " + body, c)
+    ok("k030 a short piece across the ellipsis keeps the quotation out of the green path",
+       v not in CLEAN, "%s :: %s" % (v, dd))
+
+
 def suite_k026_front_door(tmp):
     """K026 + K016 (2026-11-25): what enters the library must be the document it claims to be. ONE
     --address takes ONE inbox file; a «new edition» that keeps too little of the current one's text
@@ -6518,6 +6562,7 @@ def main():
         suite_k024_ocr_layer(tmp)
         suite_k025_copies(tmp)
         suite_k026_front_door(tmp)
+        suite_k030_edge_ellipsis(tmp)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)

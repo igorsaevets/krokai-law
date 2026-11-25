@@ -616,9 +616,39 @@ def _check_inner(quote, corpus, keep_tags=False):
     if tp:
         return "ELLIPSIS_HIDES", tp, ("the elision at the END hides: «%s…»"
                                       % " ".join(ttail.split())[:200])
-    if (ELLIPSIS_RE.search(n) or ELLIPSIS_RE.search(quote or "")) and len(parts) > 1:
+    # 🔴 K030 (2026-11-25): ONE fragment enters too - when nothing stands on the other side of the
+    # ellipsis. Measured on a copy of a real matter against the sister project's own checker: three
+    # verbatim quotations of a filed petition, cut at ONE edge («...for purposes of the 180-day
+    # counting period, ...», «Where consular processing is available to an alien...»), came back
+    # ALTERED with an EMPTY detail; without the ellipsis both checkers said VERIFIED. With the gate at
+    # `len(parts) > 1` such a quotation fell through to «opening present, whole absent» below, which
+    # read our own ellipsis as a changed tail. The sister checker had moved its gate to «one
+    # fragment or more» after krokai was extracted from it - one rule, two implementations, drifted.
+    # Two limits keep the repair from becoming a pass nobody checked:
+    #   * a short piece on the other side ("Not ... shall be admitted") is dropped by the floor of
+    #     `ellipsis_parts`, so such a quotation stays OUT of this path (`pieces`);
+    #   * the fragment is interrogated like an exact quotation: an UNMARKED end gets the limiter test
+    #     (a marked end already had R51's above), and the front gets the negation test - «...may be
+    #     admitted» hiding «no alien» is a truncated opening whether or not an ellipsis announces it;
+    #   * a marked end whose fragment is under the tail check's floor was NOT examined by R51's test
+    #     (`tail_short_enough_to_decline`), and no clean verdict may stand over a declined tail
+    #     (the r56 pin, R76 probe P5) - such a quotation keeps its old, loud path.
+    pieces = [x for x in (y.strip(" .,;:-—") for y in ELLIPSIS_RE.split(n)) if x]
+    edge_only = (len(parts) == 1 and len(pieces) == 1 and bool(ELLIPSIS_RE.search(n))
+                 and not (_TAIL_ELLIPSIS_RE.search(n) and tail_short_enough_to_decline(n, quote)))
+    if (ELLIPSIS_RE.search(n) or ELLIPSIS_RE.search(quote or "")) and (len(parts) > 1 or edge_only):
         one, offs = corpus.all_in_order(parts)
         if one:
+            if edge_only:
+                if not _TAIL_ELLIPSIS_RE.search(n):
+                    p, _limiter, tail = truncated_condition(parts[0], corpus)
+                    if p:
+                        return "TRUNCATED_CONDITION", p, "the source continues: «%s…»" % tail
+                p2, bad, head = leading_cut(parts[0], corpus)
+                if p2:
+                    return ("TRUNCATED_OPENING", p2,
+                            "immediately before it in the source: «…%s» (governing words: %s)"
+                            % (head, bad))
             v, why = elision_verdict(one, parts, offs, corpus, short)
             return v, one, why
         hits = [corpus.find(p) for p in parts]

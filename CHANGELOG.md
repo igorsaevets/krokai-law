@@ -10,6 +10,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.25.0] - 2026-11-25
+
+A quotation cut at ONE edge is no longer graded ALTERED. Put next to the sister project's own
+checker on a copy of a real matter (a filed petition, 129 quotations), krokai called three verbatim
+quotations ALTERED with an empty explanation - each cut with a single leading or trailing ellipsis
+(«...for purposes of the 180-day counting period, ...», «Where consular processing is available to
+an alien...»). Without the ellipsis both checkers said VERIFIED; the sister checker said ASSEMBLED.
+
+### Fixed
+
+- A quotation with an ellipsis at one edge and nothing on the other side is checked as a cut:
+  ASSEMBLED when its words stand in the source. Before, `check` looked at an elision only when it
+  split the quotation into two pieces or more, so a one-edge cut fell to the branch that read the
+  ellipsis itself as a changed tail.
+- The cut fragment is still asked what an exact quotation is asked: a negation standing right in
+  front of it gives TRUNCATED_OPENING, and an end that is not marked with an ellipsis but stops
+  before «unless …» gives TRUNCATED_CONDITION. A short piece on the other side of the ellipsis
+  («Not ... shall be admitted»), and a trailing fragment too short for the tail check, keep the
+  old loud verdict - nothing would have checked them.
+
 ## [0.24.0] - 2026-11-25
 
 The library's front door checks what comes in. Measured with 0.23.0 from PyPI on real law: two
