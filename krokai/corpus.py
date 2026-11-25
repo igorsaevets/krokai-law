@@ -352,6 +352,44 @@ class Corpus(object):
     def is_superseded(self, path):
         return bool(path) and os.path.normcase(os.path.abspath(path)) in self.superseded
 
+    def current_view(self):
+        """This corpus with every SUPERSEDED file blanked out - same offsets, so every lookup works.
+
+        🔴 K028: a revision leaves most of a provision's text unchanged, so most quotations are in
+        BOTH editions - and the lookups return the FIRST file, which is the old one whenever its
+        name sorts first (`X.md` before `X__rev2.md`). A correct quotation of the law in force came
+        back SUPERSEDED_EDITION, a dangerous verdict (probe `private` K028 `k028_probe_both.py`).
+        `check()` re-asks the whole question here; built once, only when such a hit happens."""
+        v = self.__dict__.get("_current_view")
+        if v is not None:
+            return v
+        gone = [k for k, p in enumerate(self.paths) if self.is_superseded(p)]
+        if not gone:
+            self._current_view = self
+            return self
+        v = Corpus.__new__(Corpus)
+        v.__dict__.update(self.__dict__)
+        v.superseded = set()
+
+        def blank(s, starts, sep):
+            parts, last = [], 0
+            for k in gone:
+                lo = starts[k]
+                hi = starts[k + 1] - sep if k + 1 < len(starts) else len(s)
+                parts += [s[last:lo], "\x00" * (hi - lo)]
+                last = hi
+            parts.append(s[last:])
+            return "".join(parts)
+
+        v.joined = blank(self.joined, self.starts, len(self.SEP))
+        v.ajoined = blank(self.ajoined, self.astarts, 1)
+        v.hjoined = blank(self.hjoined, self.hstarts, len(self.SEP))
+        g = set(gone)
+        v.texts = ["\x00" * len(t) if k in g else t for k, t in enumerate(self.texts)]
+        v._current_view = v
+        self._current_view = v
+        return v
+
     # -- lookup ---------------------------------------------------------------------------------
     def _owner(self, i):
         return self.paths[bisect.bisect_right(self.starts, i) - 1]

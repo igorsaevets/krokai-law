@@ -42,7 +42,8 @@ import os
 import re
 import time
 
-__all__ = ["INDEX_HEADER", "index_entries", "add_entry", "prove", "orphans", "RECIPES"]
+__all__ = ["INDEX_HEADER", "index_entries", "add_entry", "prove", "orphans", "RECIPES",
+           "mark_superseded", "SUPERSEDED_TAG"]
 
 INDEX_HEADER = """# Law library index
 
@@ -51,6 +52,12 @@ INDEX_HEADER = """# Law library index
 Found a new source? **Download it into the library folder AND add a line here.** A source that is
 not indexed will be downloaded again next round, and its absence turns an honest quotation into a
 `NOT_FOUND` that looks like a fabrication.
+
+🔴 **A row marked SUPERSEDED is an older edition**, kept on disk on purpose: its note names the
+current edition, and the current one need not carry the plain file name. Quote and paraphrase the
+current edition - or, for the law on an earlier date, the edition in force then, saying which.
+«Retrieved» is the day the file was downloaded; «Edition / as of» is the date the PUBLISHER prints
+for the text, and a dash means none was printed - not that the text is current.
 
 | Citation | What it is | File | Retrieved | Edition / as of | Notes |
 |---|---|---|---|---|---|
@@ -142,6 +149,64 @@ def add_entry(path, citation, what, filename, edition="", notes="", when=None):
     io.open(tmp, "w", encoding="utf-8", newline="\n").write("\n".join(lines) + "\n")
     os.replace(tmp, path)             # atomic: a half-written index is a lost index
     return row
+
+
+# 🔴 K028 - AN OLDER EDITION MUST LOOK OLD WHERE A DRAFTER LOOKS FIRST. On a revision the new file
+# is `<stem>__revN` while the OLD file keeps its plain name, and the index row of the old file stayed
+# exactly as it was - so a person or a model reading the index or the folder took the old law for the
+# current one. A quotation of it is caught (SUPERSEDED_EDITION); a paraphrase is not. The pairing
+# cannot be left to file names: on the AOS matter `8-CFR-245__rev2.xml` replaced
+# `8-CFR-245-Adjustment-of-Status.xml` - a different stem. So the old row itself carries the mark and
+# names the current file. The File cell is never touched: `index_entries` reads it, and a broken cell
+# would turn the old edition into an «unindexed» source.
+SUPERSEDED_TAG = "🔴 SUPERSEDED"
+_TAG_RX = re.compile(r"^(?:%s · )+" % re.escape(SUPERSEDED_TAG))
+_NOTE_RX = re.compile(r"^(?:superseded - current edition: `[^`]*`(?:; )?)+")
+_FILE_CELL = re.compile(r"^\s*`([^`]+)`\s*$")
+
+
+def mark_superseded(path, old_files, current_file, dry_run=False):
+    """Mark every index row whose File cell is one of `old_files` as SUPERSEDED by `current_file`.
+
+    The mark goes at the start of the row's first cell and the pointer at the start of its last
+    cell (skipping the File cell wherever it sits). Re-marking rewrites a stale pointer and never
+    stacks a second mark. Returns `(rows changed - or that would change with dry_run, sorted old
+    file names that have no row at all)`."""
+    olds = {os.path.normcase(os.path.basename(f)) for f in old_files}
+    if not olds or not os.path.exists(path):
+        return 0, sorted(olds)
+    lines = io.open(path, encoding="utf-8", errors="replace").read().splitlines()
+    seen, changed = set(), 0
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if not (s.startswith("|") and s.endswith("|")):
+            continue
+        cells = re.split(r"(?<!\\)\|", s)[1:-1]
+        fi = next((k for k, c in enumerate(cells) if _FILE_CELL.match(c)), None)
+        if fi is None:
+            continue
+        name = os.path.normcase(os.path.basename(_FILE_CELL.match(cells[fi]).group(1).strip()))
+        if name not in olds:
+            continue
+        seen.add(name)
+        new = list(cells)
+        t = 0 if fi != 0 else 1
+        if t < len(new) and t != fi:
+            new[t] = " %s · %s " % (SUPERSEDED_TAG, _TAG_RX.sub("", new[t].strip()))
+        n = len(new) - 1
+        if n != fi and n != t:
+            rest = _NOTE_RX.sub("", new[n].strip())
+            new[n] = " superseded - current edition: `%s`%s " % (current_file,
+                                                                   "; " + rest if rest else "")
+        rebuilt = "|" + "|".join(new) + "|"
+        if rebuilt != s:
+            lines[i] = rebuilt
+            changed += 1
+    if changed and not dry_run:
+        tmp = path + ".tmp"
+        io.open(tmp, "w", encoding="utf-8", newline="\n").write("\n".join(lines) + "\n")
+        os.replace(tmp, path)
+    return changed, sorted(olds - seen)
 
 
 def prove(text, party=None, subject=None):

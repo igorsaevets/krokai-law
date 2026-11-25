@@ -67,7 +67,7 @@ from .corpus import looks_like_placeholder
 from .readers import MIN_TEXT_LAYER
 
 __all__ = ["fetch_url", "intake", "trust_of", "INBOX", "REGISTRY", "sha256_of",
-           "superseded_paths"]
+           "superseded_paths", "edition_date", "register_chains"]
 
 INBOX = os.path.join(".krokai", "inbox")
 REGISTRY = os.path.join(".krokai", "law_registry.json")
@@ -331,6 +331,118 @@ def superseded_paths(root):
     return out
 
 
+def register_chains(root):
+    """K028: every provision the register knows in more than one edition, as
+    `(kid, address, current_path, [older paths, newest first], entry)`."""
+    out = []
+    for kid, e in sorted(_registry(root).items()):
+        if not isinstance(e, dict) or not e.get("path"):
+            continue
+        chain = [p for p in (e.get("superseded_paths") or []) if p]
+        if not chain and e.get("supersedes"):
+            chain = [e["supersedes"]]               # a register written before R76
+        if chain:
+            out.append((kid, e.get("address") or kid, e["path"], chain, e))
+    return out
+
+
+# 🔴 K028 - THE EDITION'S OWN DATE, ONLY WHERE THE PUBLISHER PRINTS ONE THAT CAN BE READ.
+# The index's «Edition / as of» column used to hold the FETCH date. Measured on the AOS matter's own
+# register: its two editions of 8 CFR 245 were fetched ten seconds apart on one day - point-in-time
+# 2024-01-01 and 2026-08-01 - so the column would have printed the same day for both, and a
+# «the law on the filing date» check (K044) cannot use a fetch date at all. Read the date only from
+# shapes measured on the 318-file AOS law corpus (`private` K028 census) or seen on the live site:
+#   * the eCFR versioner URL `/full/YYYY-MM-DD/` - the point in time IS the request;
+#   * a govinfo package URL `USCODE-YYYY-` / `CFR-YYYY-` - the annual edition;
+#   * «Current as of <date>» (USCIS Policy Manual): 65 files, never two different dates in one;
+#   * «United States Code, YYYY Edition» (govinfo): 17 files, never two different years;
+#   * «current through Public Law N-M (<date>)» (uscode.house.gov banner, live 2026-11-24);
+#   * «up to date as of <date>» (eCFR browser pages - seen in search snippets, not in a saved file).
+# 🔴 NOT read, because the census found them inside the law's own text: a bare «as of <date>» (100
+# files, 36 with two or more different dates), «effective <date>» (76 / 32), «Last updated» (19 / 11)
+# and «revised as of» - its one hit was an eCFR part citing «the 8 CFR edition revised as of January
+# 1, 1987». A phrase that yields two different dates in one file records nothing: no date is better
+# than a wrong one, because a wrong date makes the old law look current.
+_MONTH = {m: i for i, m in enumerate(
+    ("january", "february", "march", "april", "may", "june", "july", "august", "september",
+     "october", "november", "december"), 1)}
+_DATE = (r"(?:(?:January|February|March|April|May|June|July|August|September|October|November|"
+         r"December)\s+\d{1,2},\s+\d{4}|\d{1,2}/\d{1,2}/\d{4}|\d{4}-\d\d-\d\d)")
+_EDITION_URL = (
+    (re.compile(r"ecfr\.gov/api/versioner/v1/[a-z]+/(\d{4}-\d\d-\d\d)/", re.I), "eCFR point-in-time URL"),
+    (re.compile(r"govinfo\.gov/content/pkg/(?:USCODE|CFR)-(\d{4})-", re.I), "govinfo package year"),
+)
+_EDITION_TEXT = (
+    (re.compile(r"Current as of\s*:?\s*(" + _DATE + ")", re.I), "«Current as of»"),
+    (re.compile(r"United States Code,\s+(\d{4})\s+Edition", re.I), "«United States Code, YYYY Edition»"),
+    (re.compile(r"current through Public Law\s+\d+[-–]\d+\s*\((" + _DATE + r")\)", re.I),
+     "«current through Public Law»"),
+    (re.compile(r"up to date as of\s+(" + _DATE + ")", re.I), "«up to date as of»"),
+)
+
+
+def _iso(s):
+    s = " ".join((s or "").split())
+    if re.fullmatch(r"\d{4}(-\d\d-\d\d)?", s):
+        return s
+    m = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", s)
+    if m:
+        return "%s-%02d-%02d" % (m.group(3), int(m.group(1)), int(m.group(2)))
+    m = re.fullmatch(r"([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})", s)
+    if m and m.group(1).lower() in _MONTH:
+        return "%s-%02d-%02d" % (m.group(3), _MONTH[m.group(1).lower()], int(m.group(2)))
+    return ""
+
+
+def edition_date(text, url=""):
+    """`(date, how)`: the date the PUBLISHER prints for this text - `YYYY-MM-DD`, or `YYYY` for an
+    annual edition - and the shape it was read from; `("", why)` when there is none or it is
+    ambiguous. Never a fetch date. See the K028 note above for what is read and what is not."""
+    for rx, how in _EDITION_URL:
+        m = rx.search(url or "")
+        if m and _iso(m.group(1)):
+            return _iso(m.group(1)), how
+    why = ""
+    for rx, how in _EDITION_TEXT:
+        vals = {_iso(m.group(1)) for m in rx.finditer(text or "")} - {""}
+        if len(vals) == 1:
+            return vals.pop(), how
+        if len(vals) > 1 and not why:
+            why = "%s printed %d different dates - none recorded" % (how, len(vals))
+    return "", why
+
+
+def edition_order(a, b):
+    """-1 when edition date `a` is OLDER than `b`, 1 when newer, 0 the same, None when either is
+    unknown or a year cannot be ordered against a day of the same year."""
+    if not a or not b:
+        return None
+    if len(a) == len(b):
+        return (a > b) - (a < b)
+    if a[:4] != b[:4]:
+        return -1 if a[:4] < b[:4] else 1
+    return None
+
+
+def _edition_cell(ed, how):
+    return "%s · %s" % (ed, how) if ed else "—"
+
+
+def _mark_chains(root, cfg):
+    """K028: write the SUPERSEDED mark on the index row of every older edition the register knows,
+    pointing at the current one. Idempotent; it also repairs an index written before K028."""
+    from .library import mark_superseded
+    out = []
+    idx = cfg.abs(cfg["library_index"])
+    for _kid, addr, cur, chain, _e in register_chains(root):
+        changed, _norow = mark_superseded(idx, [os.path.basename(p) for p in chain],
+                                          os.path.basename(cur))
+        if changed:
+            out.append(("marked", os.path.basename(cur),
+                        "%d older edition row(s) of %s marked SUPERSEDED in the index" % (changed, addr)))
+    return out
+
+
 def _sentences(t):
     """Sentences of NORMALISED text.
 
@@ -405,18 +517,20 @@ def intake(root, cfg, packs, address=None, dest_dir=None, allow_unindexed=False,
     Returns a list of `(status, filename, note)`.
     """
     from .readers import read_any
+    # K028: first make every older edition the register knows visibly old in the index - this also
+    # repairs an index written before the marks existed, with nothing in the inbox.
+    out = _mark_chains(root, cfg)
     inbox = os.path.join(root, INBOX)
     if not os.path.isdir(inbox):
         printer("nothing in the inbox (%s does not exist yet)" % INBOX)
-        return []
+        return out
 
     files = [f for f in sorted(os.listdir(inbox)) if not f.endswith(".meta.json")]
     if not files:
         printer("the inbox is empty. `krokai fetch <url>` puts things in it.")
-        return []
+        return out
 
     reg = _registry(root)
-    out = []
     library = dest_dir or (cfg.source_dirs[0] if cfg.source_dirs else root)
     os.makedirs(library, exist_ok=True)
 
@@ -478,6 +592,8 @@ def intake(root, cfg, packs, address=None, dest_dir=None, allow_unindexed=False,
             out.append(("REFUSED", fn, "the recorded URL is a lookalike host"))
             continue
         meta["trust"], meta["trust_label"] = kind, TRUST[kind][0]
+        ed, ed_how = edition_date(text, meta.get("url") or "")          # K028
+        cur_path, older_paths = None, []
 
         prev = reg.get(kid)
         dest = os.path.join(library, fn)
@@ -499,30 +615,65 @@ def intake(root, cfg, packs, address=None, dest_dir=None, allow_unindexed=False,
             stem, ext = os.path.splitext(fn)
             dest = os.path.join(library, "%s__rev%d%s" % (stem, n, ext))
             old_text = read_any(prev["path"])
+            prev_ed = prev.get("edition_date") or edition_date(old_text, prev.get("url") or "")[0]
+            # 🔴 K028: «arrived later» is not «newer». A point-in-time fetch for an EARLIER date (the
+            # K044 workflow: the law on the filing date) used to become the current edition, and the
+            # law in force today was then graded SUPERSEDED. When both publisher dates are known and
+            # the arrival is older, the current edition stays current and the arrival joins the chain.
+            older = edition_order(ed, prev_ed) == -1
             d = revision_diff(old_text, text)
             os.replace(src, dest)
             rev_dir = os.path.join(root, REVISIONS)
             os.makedirs(rev_dir, exist_ok=True)
             report = os.path.join(rev_dir, "%s-rev%d.md" % (_SAFE.sub("-", kid), n))
+            note = ("🔴 **This edition is OLDER than the one already on disk** (publisher dates: this "
+                    "one %s, the current one %s). It is kept as a SUPERSEDED edition and `%s` stays "
+                    "the current edition. «Gone» and «new» below are in arrival order: «gone» = in the "
+                    "current edition, not in this older one."
+                    % (ed, prev_ed, os.path.basename(prev["path"]))) if older else ""
             io.open(report, "w", encoding="utf-8", newline="\n").write(
-                _revision_report(addr, prev, meta, d, cfg, text, packs))
-            reg[kid] = {"path": dest, "sha256": meta.get("sha256"), "address": addr,
-                        "revision": n, "url": meta.get("url", ""), "trust": meta.get("trust"),
-                        "fetched_at": meta.get("fetched_at"), "supersedes": prev.get("path"),
-                        # R76: the FULL chain, because this entry is about to overwrite the
-                        # only record of the previous editions (probe P8).
-                        "superseded_paths": [prev.get("path")]
-                        + (prev.get("superseded_paths") or [])}
-            out.append(("🔴 REVISION", os.path.basename(dest),
-                        "%d sentence(s) gone, %d new, %d moved, %.1f%% unchanged - the previous "
-                        "edition is KEPT, and %s says what it means for the bank"
-                        % (len(d["gone"]), len(d["added"]), d.get("moved", 0),
-                           100 * d["similarity"], os.path.relpath(report, root))))
+                _revision_report(addr, prev, meta, d, cfg, text, packs, note=note))
+            # The date of every edition, kept across revisions - the register keeps one entry per
+            # provision, so this map is the only record of the older editions' own dates (K044).
+            editions = dict(prev.get("editions") or {})
+            editions.setdefault(prev["path"], {"edition_date": prev_ed,
+                                               "fetched_at": prev.get("fetched_at"),
+                                               "sha256": prev.get("sha256")})
+            editions[dest] = {"edition_date": ed, "edition_source": ed_how,
+                              "fetched_at": meta.get("fetched_at"), "sha256": meta.get("sha256")}
+            if older:
+                chain = [dest] + [p for p in (prev.get("superseded_paths") or []) if p]
+                if not chain[1:] and prev.get("supersedes"):
+                    chain.append(prev["supersedes"])
+                reg[kid] = dict(prev, revision=n, editions=editions, superseded_paths=chain,
+                                edition_date=prev.get("edition_date") or prev_ed)
+                cur_path, older_paths = prev["path"], chain
+                out.append(("⚠️ OLDER EDITION", os.path.basename(dest),
+                            "publisher date %s is earlier than the current edition's %s - kept as a "
+                            "SUPERSEDED edition, `%s` stays current; %s compares the two"
+                            % (ed, prev_ed, os.path.basename(prev["path"]),
+                               os.path.relpath(report, root))))
+            else:
+                reg[kid] = {"path": dest, "sha256": meta.get("sha256"), "address": addr,
+                            "revision": n, "url": meta.get("url", ""), "trust": meta.get("trust"),
+                            "fetched_at": meta.get("fetched_at"), "supersedes": prev.get("path"),
+                            # R76: the FULL chain, because this entry is about to overwrite the
+                            # only record of the previous editions (probe P8).
+                            "superseded_paths": [prev.get("path")]
+                            + (prev.get("superseded_paths") or []),
+                            "edition_date": ed, "edition_source": ed_how, "editions": editions}
+                cur_path, older_paths = dest, reg[kid]["superseded_paths"]
+                out.append(("🔴 REVISION", os.path.basename(dest),
+                            "%d sentence(s) gone, %d new, %d moved, %.1f%% unchanged - the previous "
+                            "edition is KEPT, and %s says what it means for the bank"
+                            % (len(d["gone"]), len(d["added"]), d.get("moved", 0),
+                               100 * d["similarity"], os.path.relpath(report, root))))
         else:
             os.replace(src, dest)
             reg[kid] = {"path": dest, "sha256": meta.get("sha256"), "address": addr,
                         "revision": 1, "url": meta.get("url", ""), "trust": meta.get("trust"),
-                        "fetched_at": meta.get("fetched_at")}
+                        "fetched_at": meta.get("fetched_at"),
+                        "edition_date": ed, "edition_source": ed_how}
             out.append(("added", os.path.basename(dest), "%s · %s" % (addr, meta.get("trust_label"))))
 
         try:
@@ -530,21 +681,30 @@ def intake(root, cfg, packs, address=None, dest_dir=None, allow_unindexed=False,
         except OSError:
             pass
 
-        from .library import add_entry
-        add_entry(cfg.abs(cfg["library_index"]), citation=addr,
+        from .library import add_entry, mark_superseded
+        idx = cfg.abs(cfg["library_index"])
+        # K028: «Retrieved» is the day the bytes were fetched; «Edition / as of» is the PUBLISHER's
+        # date for the text, or a dash - it used to repeat the fetch date under the edition's name.
+        add_entry(idx, citation=addr,
                   what=meta.get("trust_label", "UNKNOWN"),
                   filename=os.path.basename(dest),
-                  edition=(meta.get("fetched_at") or "")[:10],
-                  notes=("from %s" % meta.get("url", ""))[:120])
+                  edition=_edition_cell(ed, ed_how),
+                  notes=("from %s" % meta.get("url", ""))[:120],
+                  when=(meta.get("fetched_at") or "")[:10] or None)
+        if older_paths:
+            mark_superseded(idx, [os.path.basename(p) for p in older_paths],
+                            os.path.basename(cur_path))
 
     _write_registry(root, reg)
     return out
 
 
-def _revision_report(addr, prev, meta, d, cfg, new_text, packs):
+def _revision_report(addr, prev, meta, d, cfg, new_text, packs, note=""):
     """The report exists to answer one question: which banked quotations just stopped matching?"""
     lines = [
         "# Revision of %s" % (addr or "an unidentified provision"),
+        "",
+        note,
         "",
         "| | |", "|---|---|",
         "| previous | `%s` |" % prev.get("path", ""),

@@ -10,6 +10,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.21.0] - 2026-11-25
+
+Superseded editions look superseded. When a new edition of a provision arrives, the old file keeps
+its plain name and the new one is `<stem>__revN` - and the old index row stayed exactly as it was, so
+a person or a model browsing the library took the old law for the current one. A quotation of it was
+caught; a paraphrase never is.
+
+### Added
+- **The old edition's index row is marked** `🔴 SUPERSEDED` and its note names the current file
+  (`intake` writes it on every revision, and repairs an index written before the mark existed, even
+  with an empty inbox). Names cannot carry the pairing: in a real matter `8-CFR-245__rev2.xml`
+  replaced `8-CFR-245-Adjustment-of-Status.xml`.
+- **The edition's own date.** «Edition / as of» used to repeat the fetch date; it now holds the date
+  the publisher prints for the text, read only from shapes measured on a 318-file law corpus or seen on
+  the live site: an eCFR point-in-time URL, a govinfo package year, «Current as of» (USCIS Policy
+  Manual), «United States Code, YYYY Edition», «current through Public Law …», «up to date as of». A
+  bare «as of», «effective», «Last updated» or «revised as of» is never read - each turned up inside the
+  law's own text with two or more different dates per file - and a phrase giving two different dates
+  records nothing. «Retrieved» is now the fetch day. The register keeps every edition's date.
+- **`check` lists revised provisions** with their current and older editions, and the draft
+  paragraphs that cite one of them WITHOUT a quotation - where a paraphrase of the old law would sit.
+  REPORT.md and `result.json` (`editions`); never in the exit code.
+- The assistant block and a new index say what a SUPERSEDED row means: quote and paraphrase the
+  current edition, or the edition in force on the date that matters, and say which.
+
+### Fixed
+- **A correct quotation of the CURRENT law came back SUPERSEDED_EDITION** (dangerous) whenever the
+  words were in both editions and the old file sorted first - which after a revision is most of the
+  text. `check` now re-asks the question with the superseded files blanked out, on the direct path and
+  at the cited address; a quotation found only in the old edition is still SUPERSEDED_EDITION, and its
+  note now says what the current edition holds.
+- **«Arrived later» is no longer «newer».** A point-in-time fetch for an EARLIER date became the
+  current edition and graded today's law SUPERSEDED. When both publisher dates are known, an older
+  arrival is kept as a superseded edition (`⚠️ OLDER EDITION`, not a 🔴 revision).
+
 ## [0.20.0] - 2026-11-24
 
 Gap and conflict markers. A model drafting from incomplete evidence fills the hole with fluent prose,

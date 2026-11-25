@@ -5651,6 +5651,192 @@ def suite_k027_markers(tmp):
        rc == 0 and "tiers B+C: 1 open in 1 file(s)" in out and "ALL CLEAR" in out, out[-400:])
 
 
+def suite_k028_editions(tmp):
+    """K028 (2026-11-24): an older edition must look old. The publisher's own edition date is read
+    only from measured shapes; the index row of an older edition is marked SUPERSEDED and names the
+    current file; «arrived later» is not «newer»; a quotation that is ALSO in the current edition is
+    not graded SUPERSEDED_EDITION; `check` lists the paragraphs that cite a revised provision without
+    a quotation. The fixture mirrors the AOS register: two editions fetched the same day, point-in-time
+    2024-01-01 and 2026-08-01, the newer one under a different stem."""
+    import json
+    import subprocess as _sp
+    from krokai import fetch as F
+    from krokai.corpus import Corpus
+    from krokai.citations import load_packs
+    from krokai.config import load as load_cfg
+    from krokai.verify import check
+    from krokai.verdicts import CLEAN
+    from krokai.library import INDEX_HEADER, mark_superseded, orphans, SUPERSEDED_TAG
+    from krokai.run import scan_matter, print_editions, SENTINELS
+
+    ed = F.edition_date
+    ok("k028: «Current as of» on a Policy Manual page is the edition date",
+       ed("Page sub tree links Current as of August 12, 2026 more") == ("2026-08-12", "«Current as of»"),
+       str(ed("Current as of August 12, 2026")))
+    ok("k028: an eCFR point-in-time URL is the edition date, whatever the text says",
+       ed("as of May 5, 1988", "https://www.ecfr.gov/api/versioner/v1/full/2024-01-01/title-8.xml?part=245")[0]
+       == "2024-01-01")
+    ok("k028: a govinfo U.S. Code page gives its annual edition as a year, never an invented day",
+       ed("8 U.S.C. United States Code, 2024 Edition Title 8")[0] == "2024"
+       and ed("current through Public Law 119-142 (November 10, 2026).")[0] == "2026-11-10")
+    amb = ed("Current as of May 1, 2026 ... Current as of June 2, 2026")
+    ok("k028: a phrase that prints two different dates records none (and says why)",
+       amb[0] == "" and "2 different dates" in amb[1], str(amb))
+    law_text = ("pending adjudication as of November 12, 1999; effective Dec. 23, 2008; Last updated: "
+                "4/26/2021; the 8 CFR edition revised as of January 1, 1987; effective on July 21, 2010")
+    ok("k028: dates inside the law's own text are never taken for the edition (as of / effective / "
+       "Last updated / revised as of - each measured ambiguous on the AOS corpus)",
+       ed(law_text) == ("", ""), str(ed(law_text)))
+    ok("k028: a new index explains its two date columns and the SUPERSEDED mark",
+       "SUPERSEDED" in INDEX_HEADER and "PUBLISHER" in INDEX_HEADER and "a dash means none" in INDEX_HEADER)
+
+    root = os.path.join(tmp, "k028m")
+    law, case = os.path.join(root, "law"), os.path.join(root, "case")
+    os.makedirs(law)
+    os.makedirs(case)
+    io.open(os.path.join(root, "casefile.json"), "w", encoding="utf-8").write(json.dumps({
+        "bank": "QUOTE-BANK.md", "queue": "QUOTE-QUEUE.md", "library_index": "law/INDEX.md",
+        "sources": ["law"], "drafts": [{"tier": "A", "label": "filed", "path": "case"}],
+        "citation_packs": ["us-immigration", "us-federal"]}))
+    cfg = load_cfg(root)
+    packs = load_packs(cfg["citation_packs"])
+    idx = cfg.abs(cfg["library_index"])
+    fill = " ".join(["Paragraph %d of the provision keeps this synthetic source above every floor." % i
+                     for i in range(12)])
+    BOTH = "The officer shall consider every relevant factor in the record before deciding."
+    OLD = ("Sec. 245.1 Eligibility. %s The former fee schedule applies to every application filed "
+           "before the effective date of this section. %s" % (BOTH, fill))
+    NEW = OLD.replace("The former fee schedule applies to every application filed before",
+                      "The current fee schedule applies to every application filed on or after")
+    OLDEST = OLD.replace("The officer shall consider", "The officer may consider")
+    inbox = os.path.join(root, F.INBOX)
+    os.makedirs(inbox)
+    ecfr = "https://www.ecfr.gov/api/versioner/v1/full/%s/title-8.xml?part=245"
+
+    def drop(name, body, day, fetched):
+        io.open(os.path.join(inbox, name), "w", encoding="utf-8", newline="\n").write(body)
+        io.open(os.path.join(inbox, name + ".meta.json"), "w", encoding="utf-8").write(json.dumps(
+            {"url": ecfr % day, "sha256": F.sha256_of(body.encode("utf-8")), "trust": "primary",
+             "trust_label": "OFFICIAL", "model_in_path": False, "fetched_at": fetched}))
+
+    def rows_of(name):                       # by the File cell - a marked row NAMES the current file too
+        out = []
+        for ln in io.open(idx, encoding="utf-8").read().splitlines():
+            m = re.search(r"\|\s*`([^`]+)`\s*\|", ln)
+            if ln.startswith("|") and m and m.group(1) == name:
+                out.append(ln)
+        return out
+
+    quiet = lambda *a: None                                         # noqa: E731
+    drop("8CFR-245-Adjustment.txt", OLD, "2024-01-01", "2026-08-05T10:54:01")
+    r1 = F.intake(root, cfg, packs, address="8 CFR 245.1", printer=quiet)
+    drop("8CFR-245.txt", NEW, "2026-08-01", "2026-08-05T10:54:11")
+    r2 = F.intake(root, cfg, packs, address="8 CFR 245.1", printer=quiet)
+    v1, v2 = rows_of("8CFR-245-Adjustment.txt"), rows_of("8CFR-245__rev2.txt")
+    ok("k028: the second edition is a revision, saved under the NEW file's stem",
+       [s for s, _n, _x in r1] == ["added"] and r2 and r2[-1][0].startswith("\U0001f534")
+       and len(v1) == 1 and len(v2) == 1, str(r1 + r2))
+    if not (len(v1) == 1 and len(v2) == 1):
+        return
+    ok("k028: the old edition's row is marked SUPERSEDED and names the current file",
+       v1[0].startswith("| %s · " % SUPERSEDED_TAG)
+       and "superseded - current edition: `8CFR-245__rev2.txt`" in v1[0], v1[0])
+    ok("k028: the current edition's row carries no mark", SUPERSEDED_TAG not in v2[0], v2[0])
+    ok("k028: «Retrieved» is the fetch day and «Edition / as of» the publisher's date - two editions "
+       "fetched the same day no longer look like one",
+       "| 2026-08-05 | 2024-01-01 · eCFR point-in-time URL |" in v1[0]
+       and "| 2026-08-05 | 2026-08-01 · eCFR point-in-time URL |" in v2[0], v1[0] + " / " + v2[0])
+    un, miss = orphans(cfg.source_dirs, idx)
+    ok("k028: a marked row still indexes its file (the File cell is never touched)",
+       un == [] and miss == [], str(un) + str(miss))
+    reg = json.load(io.open(os.path.join(root, F.REGISTRY), encoding="utf-8"))
+    ent = list(reg.values())[0]
+    ok("k028: the register keeps every edition's own date",
+       ent.get("edition_date") == "2026-08-01"
+       and sorted(v.get("edition_date") for v in (ent.get("editions") or {}).values())
+       == ["2024-01-01", "2026-08-01"], str(ent.get("editions")))
+    before = io.open(idx, "rb").read()
+    again = mark_superseded(idx, ["8CFR-245-Adjustment.txt"], "8CFR-245__rev2.txt")
+    ok("k028: marking again changes nothing", again == (0, []) and io.open(idx, "rb").read() == before,
+       str(again))
+
+    corp = Corpus([law], sentinel=SENTINELS, quiet=True, superseded=F.superseded_paths(root))
+    vb, wb, _d = check(BOTH, corp)
+    ok("k028: a quotation that is ALSO in the current edition verifies there - it used to come back "
+       "SUPERSEDED_EDITION whenever the old file sorted first",
+       vb in CLEAN and os.path.basename(wb or "") == "8CFR-245__rev2.txt", "%s %s" % (vb, wb))
+    vo, _w, do = check("The former fee schedule applies to every application filed before the "
+                       "effective date", corp)
+    ok("k028: a quotation found ONLY in the old edition is still SUPERSEDED_EDITION, and says what the "
+       "current edition holds", vo == "SUPERSEDED_EDITION" and "In the current edition it is" in do,
+       "%s %s" % (vo, do[-160:]))
+
+    drop("8CFR-245-2020.txt", OLDEST, "2020-01-01", "2026-08-06T09:00:00")
+    r3 = F.intake(root, cfg, packs, address="8 CFR 245.1", printer=quiet)
+    sup = {os.path.basename(p) for p in F.superseded_paths(root)}
+    reg = json.load(io.open(os.path.join(root, F.REGISTRY), encoding="utf-8"))
+    ok("k028: an OLDER point-in-time edition fetched later does not become the current law",
+       r3 and r3[-1][0] == "⚠️ OLDER EDITION"
+       and os.path.basename(list(reg.values())[0]["path"]) == "8CFR-245__rev2.txt"
+       and sup == {"8CFR-245-Adjustment.txt", "8CFR-245-2020__rev3.txt"}, "%s %s" % (r3, sup))
+    v3, v1b = rows_of("8CFR-245-2020__rev3.txt"), rows_of("8CFR-245-Adjustment.txt")
+    ok("k028: its row is marked at birth, and the first edition's mark is not stacked",
+       len(v3) == 1 and v3[0].startswith("| %s · " % SUPERSEDED_TAG)
+       and "`8CFR-245__rev2.txt`" in v3[0] and len(v1b) == 1 and v1b[0].count(SUPERSEDED_TAG) == 1,
+       str(v3 + v1b))
+    ok("k028: an older edition arriving is not a 🔴 revision (intake exits 0 on it)",
+       not any(s.startswith("\U0001f534") for s, _n, _x in r3), str(r3))
+
+    marked = io.open(idx, encoding="utf-8").read()
+    io.open(idx, "w", encoding="utf-8", newline="\n").write(
+        marked.replace("%s · " % SUPERSEDED_TAG, "").replace(
+            "superseded - current edition: `8CFR-245__rev2.txt`; ", ""))
+    r4 = F.intake(root, cfg, packs, printer=quiet)
+    ok("k028: an index written before the marks existed is repaired by intake with an empty inbox",
+       [s for s, _n, _x in r4] == ["marked"] and io.open(idx, encoding="utf-8").read() == marked, str(r4))
+
+    io.open(os.path.join(law, "0-USCIS-PM-quotes.txt"), "w", encoding="utf-8").write(
+        "Volume 7 discussion. %s %s" % (BOTH, fill))
+    io.open(os.path.join(case, "petition.md"), "w", encoding="utf-8").write(
+        'Under 8 C.F.R. § 245.1, "%s" That standard governs this application.\n\n'
+        "Under 8 C.F.R. § 245.1 the former fee schedule still governs applications like this one.\n\n"
+        "The applicant meets every requirement of 8 U.S.C. § 1182 as the record shows.\n" % BOTH)
+    res = scan_matter(cfg, quiet=True, printer=quiet)
+    row = [r for r in (res or {}).get("rows", []) if "relevant factor" in r["quote"]]
+    ok("k028: through `check`, the quotation at the cited address verifies in the CURRENT edition "
+       "(the address repair no longer prefers the old file)",
+       len(row) == 1 and row[0]["verdict"] in CLEAN and row[0]["where"].endswith("8CFR-245__rev2.txt"),
+       str([(r["verdict"], r["where"]) for r in row]))
+    eds = (res or {}).get("editions") or {}
+    para = eds.get("paraphrases") or []
+    ok("k028: `check` names the paragraph that cites the revised provision without a quotation - and "
+       "only that one", len(para) == 1 and "former fee schedule" in para[0]["excerpt"], str(para))
+    prov = (eds.get("provisions") or [{}])[0]
+    ok("k028: the editions block names the current file and both older ones with their dates",
+       prov.get("current", "").endswith("8CFR-245__rev2.txt") and prov.get("current_date") == "2026-08-01"
+       and sorted(o["date"] for o in prov.get("older", [])) == ["2020-01-01", "2024-01-01"], str(prov))
+    printed = []
+    print_editions(res, printer=printed.append)
+    ok("k028: the block is printed with its reading instruction",
+       any("compare each with the current edition" in p for p in printed), "\n".join(printed)[-300:])
+    snip = io.open(os.path.join(data_dir("templates"), "CLAUDE.md.snippet"), encoding="utf-8").read()
+    ok("k028: the assistant block tells the drafter what a SUPERSEDED row means",
+       "is an older edition of the law" in snip and "the edition in force then" in snip
+       and "a dash means none" in snip)
+
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    p = _sp.run([sys.executable, "-m", "krokai", "check", "--dir", root, "--out",
+                 os.path.join(tmp, "k028o")], cwd=repo, env=env, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=240)
+    out = (p.stdout or "") + (p.stderr or "")
+    rep = os.path.join(tmp, "k028o", "REPORT.md")
+    md = io.open(rep, encoding="utf-8").read() if os.path.exists(rep) else ""
+    ok("k028: the real `check` prints the editions block and REPORT.md carries it",
+       "Editions - 1 provision with an OLDER edition" in out and "## Editions" in md, out[-500:])
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if root not in sys.path:
@@ -5678,6 +5864,7 @@ def main():
         suite_k023_not_examined(tmp)
         suite_k012_section_form(tmp)
         suite_k027_markers(tmp)
+        suite_k028_editions(tmp)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)

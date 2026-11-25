@@ -885,10 +885,20 @@ def check(quote, corpus, *a, **kw):
                   % ", ".join(marks[:4]))
     if where and verdict in CLEAN and getattr(corpus, "is_superseded", None) \
             and corpus.is_superseded(where):
+        # 🔴 K028: the first hit is the OLD edition whenever its name sorts first, and most of a
+        # revised provision is unchanged. Ask the whole question again with the superseded files
+        # blanked: clean there means the quotation IS the current law (see Corpus.current_view).
+        now = ""
+        view = corpus.current_view() if hasattr(corpus, "current_view") else corpus
+        if view is not corpus:
+            v2, w2, d2 = check(quote, view, *a, **kw)
+            if v2 in CLEAN and w2:
+                return v2, w2, d2
+            now = (" In the current edition it is %s%s." % (v2, " (%s)" % d2[:160] if d2 else ""))
         extra = ("the words are in `%s`, which the law register marks as SUPERSEDED by a newer "
                  "edition of the same provision. This is not an accusation - the quotation was "
                  "correct when it was taken. Decide whether the filing should cite the edition in "
-                 "force at the time or the current text, and see the revision report."
-                 % os.path.basename(where))
+                 "force at the time or the current text, and see the revision report.%s"
+                 % (os.path.basename(where), now))
         return "SUPERSEDED_EDITION", where, (detail + " - " if detail else "") + extra
     return verdict, where, detail

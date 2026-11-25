@@ -36,6 +36,7 @@ from .verdicts import ORDER, DANGEROUS, CLEAN, UNCHECKABLE, MEANING, MARK, label
 from .verify import check
 
 __all__ = ["scan_matter", "write_report", "print_not_examined", "print_markers", "draft_docs",
+           "print_editions", "editions",
            "SENTINEL", "SENTINELS", "SENTINEL_HEAD"]
 
 SENTINEL = "KROKAI-TOOL-OUTPUT"
@@ -196,6 +197,7 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
     marks = analyse(docs, prev, tiers, only)
     marks["state_error"] = perr
     marks["prev"] = prev
+    eds = editions(cfg, packs, unexamined)                        # K028
 
     grid = {t: {s: 0 for s in ORDER} for t in "ABCD"}
     for r in rows:
@@ -203,6 +205,7 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
 
     return {"rows": rows, "grid": grid, "per_file": per_file, "corpus": corpus,
             "not_examined": unexamined, "min_len": cfg["min_quote_length"], "markers": marks,
+            "editions": eds,
             "drop_cyrillic": bool(cfg["drop_cyrillic_quotes"]),
             "packs": packs, "mixed": mixed_provisions(rows, packs),
             "seconds": round(time.time() - t0, 1),
@@ -400,6 +403,99 @@ def _markers_md(res):
     return md
 
 
+def editions(cfg, packs, recs):
+    """K028: every provision the law register knows in more than one edition, the older editions
+    whose index row carries no SUPERSEDED mark, and the draft paragraphs (tiers A+B) that cite one of
+    those provisions WITHOUT a quotation. A quotation of an old edition is graded SUPERSEDED_EDITION;
+    a paraphrase passes every string check, so these paragraphs are where one would hide - a reading
+    list, never in the exit code (K023's rule for everything `check` did not examine)."""
+    from .fetch import register_chains
+    from .library import mark_superseded
+    idx = cfg.abs(cfg["library_index"])
+    rel = lambda p: os.path.relpath(p, cfg.root) if os.path.isabs(p) else p   # noqa: E731
+    provs, unmarked = [], []
+    for kid, addr, cur, chain, e in register_chains(cfg.root):
+        eds = e.get("editions") or {}
+        provs.append({"kid": kid, "address": addr, "current": rel(cur),
+                      "current_date": e.get("edition_date") or "",
+                      "older": [{"file": rel(p), "date": (eds.get(p) or {}).get("edition_date") or ""}
+                                for p in chain]})
+        n, _norow = mark_superseded(idx, [os.path.basename(p) for p in chain],
+                                    os.path.basename(cur), dry_run=True)
+        if n:
+            unmarked.append({"address": addr, "rows": n})
+    para = []
+    kids = {p["kid"]: p["address"] for p in provs}
+    for r in recs if kids else ():
+        if r["tier"] not in ("A", "B"):
+            continue
+        for x in r["cited"]:
+            hit = set()
+            for c in x["cites"]:
+                hit |= {"|".join(k) for k in packs.keys(packs.find(c))} & set(kids)
+            if hit:
+                para.append({"tier": r["tier"], "file": r["file"], "excerpt": x["excerpt"],
+                             "provisions": sorted(kids[k] for k in hit)})
+    return {"provisions": provs, "unmarked": unmarked, "paraphrases": para}
+
+
+def _ed(d):
+    return " (%s)" % d if d else ""
+
+
+def print_editions(res, printer=print, limit=20):
+    ed = res.get("editions") or {}
+    provs = ed.get("provisions") or []
+    if not provs:
+        return
+    printer("\nEditions - %s with an OLDER edition still on disk (law register); the older one is "
+            "not the law now:" % _pl(len(provs), "provision", "provisions"))
+    for p in provs[:limit]:
+        printer("  %s · current `%s`%s · older %s" % (
+            p["address"], p["current"], _ed(p["current_date"]),
+            ", ".join("`%s`%s" % (o["file"], _ed(o["date"])) for o in p["older"][:4])))
+    for u in ed.get("unmarked") or []:
+        printer("  ⚠️ %s: %s with no SUPERSEDED mark in the index - `krokai intake` writes it"
+                % (u["address"], _pl(u["rows"], "older edition row", "older edition rows")))
+    para = ed.get("paraphrases") or []
+    if para:
+        printer("  %s cite a revised provision WITHOUT a quotation - a paraphrase passes every string "
+                "check; compare each with the current edition:"
+                % _pl(len(para), "paragraph", "paragraphs"))
+        for x in para[:limit]:
+            printer("     %s %s: «%s» (%s)" % (x["tier"], x["file"], x["excerpt"][:110],
+                                             ", ".join(x["provisions"])))
+        if len(para) > limit:
+            printer("     ... and %d more (REPORT.md)" % (len(para) - limit))
+
+
+def _editions_md(res):
+    ed = res.get("editions") or {}
+    provs = ed.get("provisions") or []
+    if not provs:
+        return []
+    md = ["## Editions - revised provisions with an older edition on disk", "",
+          "The older edition stays on disk on purpose: a quotation of it was correct when it was "
+          "taken, and its verdict is SUPERSEDED_EDITION. A paraphrase of it passes every string check, "
+          "so every paragraph below that cites a revised provision without a quotation needs a "
+          "reading against the CURRENT edition. These lines never change the exit code.", "",
+          "| provision | current edition | older editions |", "|---|---|---|"]
+    for p in provs:
+        md.append("| %s | `%s`%s | %s |" % (p["address"], p["current"], _ed(p["current_date"]),
+                                            ", ".join("`%s`%s" % (o["file"], _ed(o["date"]))
+                                                      for o in p["older"])))
+    md.append("")
+    for u in ed.get("unmarked") or []:
+        md.append("* ⚠️ %s: %d older edition row(s) carry no SUPERSEDED mark in the index - "
+                  "`krokai intake` writes it." % (u["address"], u["rows"]))
+    para = ed.get("paraphrases") or []
+    if para:
+        md += ["", "### Paragraphs citing a revised provision without a quotation", ""]
+        md += ["* %s `%s`: «%s» (%s)" % (x["tier"], x["file"], x["excerpt"], ", ".join(x["provisions"]))
+               for x in para[:200]]
+    return md + [""]
+
+
 def _not_examined_md(res):
     recs = res.get("not_examined") or []
     if not recs:
@@ -531,6 +627,7 @@ def write_report(res, cfg, out_dir, lang="en"):
     md.append("")
     md += _not_examined_md(res)
     md += _markers_md(res)
+    md += _editions_md(res)
 
     if c.excluded_derived:
         md += ["## Excluded from the corpus as our own derived text", "",
@@ -598,6 +695,7 @@ def write_report(res, cfg, out_dir, lang="en"):
                "grid": grid, "per_file": res["per_file"],
                "not_examined": res.get("not_examined") or [],
                "markers": {k: (res.get("markers") or {}).get(k) or [] for k in ("open", "gone")},
+               "editions": res.get("editions") or {},
                "corpus_files": len(c.paths),
                "corpus_derived": [os.path.relpath(p, cfg.root) for p in c.excluded_derived],
                "corpus_no_text_layer": [os.path.relpath(p, cfg.root) for p in c.excluded_stub],

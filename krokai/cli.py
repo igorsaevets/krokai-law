@@ -224,7 +224,8 @@ Next:
 # --------------------------------------------------------------------------------- check
 def cmd_check(a):
     from .config import load
-    from .run import scan_matter, print_summary, write_report, print_not_examined, print_markers
+    from .run import (scan_matter, print_summary, write_report, print_not_examined, print_markers,
+                     print_editions)
 
     cfg = load(a.dir)
     for kind, p in cfg.missing_paths():
@@ -236,6 +237,7 @@ def cmd_check(a):
     print_not_examined(res)
     # K027: gap / conflict markers and the ones that vanished - never in this exit code either.
     print_markers(res)
+    print_editions(res)                         # K028
     bad, unknown = print_summary(res, cfg["language"])
     out = a.out or os.path.join(cfg.root, "reports",
                                 "check-" + __import__("time").strftime("%Y-%m-%d-%H%M"))

@@ -273,6 +273,14 @@ def fold(quote, verdict, path, detail, near_cites, corpus, keymap, packs):
     # edition question is re-asked at the repaired path, a DANGEROUS verdict upgrades only on
     # EXACT containment, and the containment tier caps the verdict it can produce.
     repaired, tier = repair_anchor_miss(quote, addr, corpus)
+    # 🔴 K028: an older edition behind the same address must not win over the current one - the
+    # unchanged text of a revised provision is in both, and the old file is tried first whenever its
+    # name sorts first. Ask again with the superseded files blanked (Corpus.current_view).
+    if repaired and getattr(corpus, "is_superseded", None) and corpus.is_superseded(repaired) \
+            and hasattr(corpus, "current_view"):
+        r2, t2 = repair_anchor_miss(quote, addr, corpus.current_view())
+        if r2:
+            repaired, tier = r2, t2
     if repaired:
         n = normalise(quote)
         matched = {"status": "MATCHED", "matched": "after binding", "keys": addr["keys"]}
@@ -307,6 +315,11 @@ def fold(quote, verdict, path, detail, near_cites, corpus, keymap, packs):
     if verdict == "ASSEMBLED":
         # K012: the elided quotation re-checked AT the cited address - see `_assembled_at_address`.
         one, v2, why = _assembled_at_address(quote, addr, corpus)
+        if one and getattr(corpus, "is_superseded", None) and corpus.is_superseded(one) \
+                and hasattr(corpus, "current_view"):
+            o2 = _assembled_at_address(quote, addr, corpus.current_view())     # K028, as above
+            if o2[0]:
+                one, v2, why = o2
         if one:
             matched = {"status": "MATCHED", "matched": "after binding", "keys": addr["keys"]}
             if getattr(corpus, "is_superseded", None) and corpus.is_superseded(one):
