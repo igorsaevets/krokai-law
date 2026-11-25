@@ -6084,6 +6084,196 @@ def suite_k024_ocr_layer(tmp):
        and "8CFR-297.pdf  (pages 2-3 of 3)" in tail and "8CFR-298.pdf" not in tail, lib[-500:])
 
 
+def suite_k025_copies(tmp):
+    """K025 (2026-11-25): when one document is on the disk twice and one copy is an OCR text layer,
+    the quotation is asked again inside every other copy, and «copies disagree» shows both readings
+    - `check` (console, REPORT.md, result.json) and `quote`. Advisory: the exit code never moves.
+    Measured on a filed petition's library: the two OCR readings of one decision disagree on 12.6 %
+    of their number tokens, of another on 16.1 %, and `check` read only the copy that sorted first."""
+    import json
+    import random
+    import shutil
+    import subprocess as _sp
+    from krokai.config import load as load_cfg
+    from krokai.corpus import Corpus, copy_print, COPY_SHARE, COPY_LEN
+    from krokai.run import scan_matter, copy_counts, print_summary
+    from krokai.verdicts import CLEAN
+    from krokai.verify import copies_check, check
+
+    rnd = random.Random(25)
+    vocab = ("officer applied records general between statute because however service present "
+             "against appeals pending request student program periods factors notices hearing "
+             "the of and to in a for on with by at from that this which under shall may each").split()
+
+    def prose(n, seed):
+        rnd.seed(seed)
+        return [" ".join(rnd.choice(vocab) for _ in range(12)).capitalize() + "." for _ in range(n)]
+
+    S1 = "The respondent filed the motion on March 12, 1986, within the period the rule allows."
+    S2 = "The officer explained the decision to the applicant in writing on the same day."
+    S3 = "The board will reopen the matter within 90 days"
+    S4 = "This sentence appears only in the extracted text and never in the scan layer itself."
+    S5 = "The alert takes effect for filings received on or after June 1, 2026, at the service."
+    body = prose(48, 1)
+    txt_lines = body[:12] + [S1] + body[12:24] + [S2] + body[24:36] + \
+        [S3 + " unless the applicant shows good cause."] + body[36:] + [S4]
+    ocr_lines = [ln.replace("1986", "1988") for ln in txt_lines if ln != S4]
+    ocr_lines = [S3 + "." if ln.startswith(S3) else ln for ln in ocr_lines]
+
+    a, b = copy_print(" ".join(txt_lines)), copy_print(" ".join(ocr_lines))
+    ok("k025: the copy fingerprint is deterministic and sees one misread digit as the same document",
+       copy_print(" ".join(txt_lines)) == a and len(a) >= 20
+       and len(a & b) / float(max(len(a), len(b))) >= 0.9 and 0 < COPY_SHARE < 1 and 0 < COPY_LEN < 1,
+       "%d / %d shared %d" % (len(a), len(b), len(a & b)))
+
+    try:
+        from krokai import _pdfengine
+        fz = _pdfengine.load()
+    except ImportError:
+        fz = None
+    if fz is None:
+        print("note: k025 copies fixture pins skipped - PyMuPDF builds the OCR fixture and is not "
+              "installed here")
+        return
+
+    root = os.path.join(tmp, "k025m")
+    law, case = os.path.join(root, "law"), os.path.join(root, "case")
+    os.makedirs(law)
+    os.makedirs(case)
+    io.open(os.path.join(root, "casefile.json"), "w", encoding="utf-8").write(json.dumps({
+        "bank": "QUOTE-BANK.md", "queue": "QUOTE-QUEUE.md", "library_index": "law/INDEX.md",
+        "sources": ["law"], "drafts": [{"tier": "A", "label": "filed", "path": "case"}],
+        "citation_packs": ["us-immigration", "us-federal"]}))
+    ocr_pdf = os.path.join(law, "Matter-of-Example.pdf")
+    txt_md = os.path.join(law, "Matter-of-Example.text.md")
+    d = fz.open()
+    for start in range(0, len(ocr_lines), 30):
+        pg = d.new_page()
+        for i, ln in enumerate(ocr_lines[start:start + 30]):
+            pg.insert_text((40, 50 + 14 * i), ln, fontsize=8, render_mode=3)
+    d.save(ocr_pdf)
+    d.close()
+    io.open(txt_md, "w", encoding="utf-8").write("\n".join(txt_lines) + "\n")
+    alert = prose(40, 2)
+    io.open(os.path.join(law, "PA-2026-99.md"), "w", encoding="utf-8").write(
+        "\n".join(alert[:20] + [S5] + alert[20:]) + "\n")
+    io.open(os.path.join(law, "PA-2026-99-copy.md"), "w", encoding="utf-8").write(
+        "\n".join(alert[:20] + [S5.replace("June 1", "June 7")] + alert[20:]) + "\n")
+    io.open(os.path.join(law, "Long-reprint.md"), "w", encoding="utf-8").write(
+        "\n".join(txt_lines + prose(22, 3)) + "\n")
+
+    cfg = load_cfg(root)
+    from krokai.run import corpus_for
+    corp = corpus_for(cfg)
+    ok("k025: an OCR layer and the text beside it are copies of one document, both ways; a reprint "
+       "half as long again is not; two typeset texts are never compared (no OCR side)",
+       [p for p, _s in corp.copies_of(ocr_pdf)] == [txt_md]
+       and [p for p, _s in corp.copies_of(txt_md)] == [ocr_pdf]
+       and corp.copies_of(os.path.join(law, "PA-2026-99.md")) == [],
+       str((corp.copies_of(ocr_pdf), corp.copies_of(txt_md),
+            corp.copies_of(os.path.join(law, "PA-2026-99.md")))))
+    sup = Corpus([law], quiet=True, superseded=[txt_md])
+    ok("k025: a superseded edition is never a copy (K028 owns editions)",
+       sup.copies_of(ocr_pdf) == [] and sup.copies_of(txt_md) == [], str(sup.copies_of(ocr_pdf)))
+
+    long_md = os.path.join(law, "Long-reprint.md")
+    v1, w1, _d = check(S1, corp)
+    c1 = copies_check(S1, v1, w1, corp)
+    c1o = [c for c in c1 if c["path"] == ocr_pdf]
+    ok("k025: verified in the text, the OCR copy reads another digit - DISAGREE, with both readings "
+       "taken from the copy that differs",
+       v1 == "VERIFIED" and len(c1o) == 1 and c1o[0]["state"] == "disagree"
+       and c1o[0]["reading_from"] == ocr_pdf and ["1986", "1988"] in c1o[0]["reading"], str((v1, w1, c1)))
+    ok("k025: the verdict names a reprint that sorts first and has no copy of its own - the copies of "
+       "every file holding the words are still asked (E-1073)",
+       w1 == long_md and corp.copies_of(long_md) == [] and len(c1o) == 1, str((w1, c1)))
+    c1r = copies_check(S1, "OPERATOR", ocr_pdf, corp)
+    ok("k025: the same pair seen from the other side (the OCR copy read first, flagged) - the text "
+       "copy holds the words, DISAGREE, and the reading still names the OCR copy's «1988»",
+       len(c1r) == 1 and c1r[0]["state"] == "disagree" and c1r[0]["verdict"] in CLEAN
+       and c1r[0]["reading_from"] == ocr_pdf and ["1986", "1988"] in c1r[0]["reading"], str(c1r))
+
+    io.open(os.path.join(case, "petition.md"), "w", encoding="utf-8").write(
+        '"%s"\n\n"%s"\n\n"%s"\n\n"%s"\n\n"%s"\n' % (S1, S2, S3, S4, S5))
+    res = scan_matter(cfg, quiet=True, printer=lambda *a: None) or {"rows": []}
+
+    def row(marker):
+        return next((r for r in res["rows"] if marker in r["quote"]), {})
+
+    r1, r2, r3, r4, r5 = (row(x) for x in ("March 12", "same day", "reopen the matter",
+                                             "only in the extracted", "June 1"))
+    st = [[c["state"] for c in r.get("copies") or []] for r in (r1, r2, r3, r4, r5)]
+    ok("k025: rows carry each copy's answer - digit DISAGREE, same words AGREE (in both copies), a "
+       "proviso only one copy shows DISAGREE, a passage one copy lacks ABSENT, a typeset pair nothing",
+       st[0] == ["disagree"] and set(st[1]) == {"agree"} and len(st[1]) == 2 and "disagree" in st[2]
+       and st[3] == ["absent"] and st[4] == []
+       and r3.get("verdict") == "TRUNCATED_CONDITION" and r1.get("verdict") == "VERIFIED"
+       and r5.get("verdict") == "VERIFIED", str([(r.get("verdict"), s) for r, s in
+                                                 zip((r1, r2, r3, r4, r5), st)]))
+    cc = copy_counts(res)
+    lines = []
+    back = print_summary(res, printer=lines.append)
+    said = "\n".join(lines)
+    stripped = dict(res, rows=[dict(r, copies=[]) for r in res["rows"]])
+    ok("k025: the console counts them - 2 disagree, 1 confirmed - and the count never reaches the "
+       "returned numbers (the exit code)",
+       (cc["disagree"], cc["confirmed"]) == (2, 1)
+       and "🟡 COPIES DISAGREE, tiers A+B: 2 quotation(s)" in said
+       and "✅ SECOND COPY, tiers A+B: 1 quotation(s)" in said
+       and back == print_summary(stripped, printer=lambda *a: None), said[-500:])
+
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def cli(*args):
+        p = _sp.run([sys.executable, "-m", "krokai"] + list(args), cwd=repo, env=env,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+    _rc, out = cli("check", "--dir", root, "--out", os.path.join(tmp, "k025o"))
+    rep_md = os.path.join(tmp, "k025o", "REPORT.md")
+    md = io.open(rep_md, encoding="utf-8").read() if os.path.exists(rep_md) else ""
+    sec = md.split("## Copies disagree", 1)[-1].split("\n## ", 1)[0] if md else ""
+    ok("k025: the real `check` prints the line, and REPORT.md shows both readings of the disagreeing "
+       "rows - not the agreeing one, not the typeset pair",
+       "COPIES DISAGREE, tiers A+B: 2" in out and "## Copies disagree - tiers A+B: 2" in md
+       and "quoted «1986»" in sec and "reads «1988»" in sec and "March 12" in sec
+       and "same day" not in sec and "June 1" not in sec, out[-300:] + " || " + sec[:600])
+    rj = os.path.join(tmp, "k025o", "result.json")
+    payload = json.load(io.open(rj, encoding="utf-8")) if os.path.exists(rj) else {}
+    ok("k025: result.json carries every copy's answer on its row and the counts",
+       (payload.get("copies") or {}).get("disagree") == 2
+       and any(c.get("state") == "disagree" and c.get("file", "").endswith("Matter-of-Example.pdf")
+               for r in payload.get("rows", []) for c in r.get("copies") or []),
+       str(payload.get("copies")))
+
+    _rc, q1 = cli("quote", "--dir", root, S1)
+    _rc, q2 = cli("quote", "--dir", root, S2)
+    _rc, q5 = cli("quote", "--dir", root, S5)
+    ok("k025: `quote` shows the other copy's reading when the copies disagree",
+       "🟡 COPIES DISAGREE:" in q1 and "«1988»" in q1 and "page image" in q1, q1[:700])
+    ok("k025: `quote` says the second copy agrees - and no disagreement - when they agree; a typeset "
+       "pair prints neither",
+       "✅ second copy:" in q2 and "COPIES DISAGREE:" not in q2
+       and "COPIES DISAGREE:" not in q5 and "second copy:" not in q5, q2[:500] + " || " + q5[:300])
+
+    green = os.path.join(tmp, "k025g")
+    shutil.copytree(law, os.path.join(green, "law"))
+    os.makedirs(os.path.join(green, "case"))
+    shutil.copyfile(os.path.join(root, "casefile.json"), os.path.join(green, "casefile.json"))
+    io.open(os.path.join(green, "case", "petition.md"), "w", encoding="utf-8").write('"%s"\n' % S2)
+    rcg, outg = cli("check", "--strict", "--dir", green, "--out", os.path.join(tmp, "k025go"))
+    io.open(os.path.join(green, "case", "petition.md"), "w", encoding="utf-8").write('"%s"\n' % S1)
+    rcd, outd = cli("check", "--strict", "--dir", green, "--out", os.path.join(tmp, "k025do"))
+    ok("k025: green path - a quotation every copy confirms passes `check --strict` (exit 0) and says "
+       "so, with no disagreement line",
+       rcg == 0 and "✅ SECOND COPY, tiers A+B: 1" in outg and "COPIES DISAGREE" not in outg,
+       "exit %s: %s" % (rcg, outg[-300:]))
+    ok("k025: advisory - a quotation the copies disagree on still exits 0 under --strict",
+       rcd == 0 and "COPIES DISAGREE, tiers A+B: 1" in outd, "exit %s: %s" % (rcd, outd[-300:]))
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if root not in sys.path:
@@ -6113,6 +6303,7 @@ def main():
         suite_k027_markers(tmp)
         suite_k028_editions(tmp)
         suite_k024_ocr_layer(tmp)
+        suite_k025_copies(tmp)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)

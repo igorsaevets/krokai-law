@@ -17,7 +17,7 @@ from .normalize import (normalise, alnum, dehyph, editorial_marks, ellipsis_part
                         prepare_quote, source_marks, strip_all_marks, ELLIPSIS_RE)
 from .verdicts import CLEAN
 
-__all__ = ["check", "word_diff", "neighbours", "OPERATORS"]
+__all__ = ["check", "word_diff", "neighbours", "OPERATORS", "copies_check"]
 
 # ------------------------------------------------------------------------------------------------
 # Words whose loss or substitution inverts a legal sentence.
@@ -902,3 +902,92 @@ def check(quote, corpus, *a, **kw):
                  % (os.path.basename(where), now))
         return "SUPERSEDED_EDITION", where, (detail + " - " if detail else "") + extra
     return verdict, where, detail
+
+
+# ------------------------------------------------------------------------------------------------
+def copies_check(quote, verdict, where, corpus):
+    """K025 - COPIES DISAGREE: the same question asked of every other COPY of the file a verdict
+    names, each copy alone (`Corpus.copies_of`, `Corpus.only`).
+
+    🔴 `check()` answers from the first file whose text holds the words. When one document sits on
+    the disk twice - two OCR runs of one scan, the text extracted beside its PDF - the copy that
+    happens to be read decides, and the other is never consulted: in a filed petition's library the
+    two OCR readings of one decision disagree on 12.6 % of their number tokens, of another on 16.1 %
+    (`private` K025 census), so whether a quotation with a date verifies depended on which copy was
+    read. A second copy on
+    the disk is the cheapest second signature there is (AGENTS.md).
+
+    One dict per copy: ``path``, ``share``, ``verdict`` (that copy alone), ``state`` - ``agree``
+    (both clean, or both flagged), ``disagree`` (one clean, the other not, and the copy holds the
+    passage), ``absent`` (the copy does not hold it at all) - and, for a disagreement, ``reading``:
+    ``[[quoted, read there], ...]`` from ``reading_from``, the side that does NOT match the
+    quotation. Advisory: the verdict is untouched, so the exit code cannot move."""
+    if not where or not hasattr(corpus, "copies_of"):
+        return []
+    out, clean = [], verdict in CLEAN
+    # 🔴 E-1073 again: the verdict names the FIRST file that holds the words, and that can be a third
+    # document - a reprint, a preamble - with no copy of its own, while the decision and its OCR copy
+    # sit further down the list (the K025 fixture's first run: a reprint sorting first hid both
+    # readings). So the copies of EVERY file holding the exact words are asked, not only `where`'s.
+    holders = [where]
+    if verdict in ("VERIFIED", "WRONG_SPEAKER", "TRUNCATED_CONDITION", "TRUNCATED_OPENING"):
+        n = normalise(prepare_quote(quote))
+        holders += [p for p, _o in corpus.find_all_pos(n) if p != where] if n else []
+    seen, todo = {where}, []
+    for h in holders:
+        for other, share in corpus.copies_of(h):
+            if other not in seen:
+                seen.add(other)
+                todo.append((other, share))
+    for other, share in todo:
+        view = corpus.only([other])
+        v2, w2, _d2 = check(quote, view)
+        if v2 in ("NOT_FOUND", "FRAGMENTS") or not w2:
+            state = "absent"
+        else:
+            state = "agree" if (v2 in CLEAN) == clean else "disagree"
+        rec = {"path": other, "share": share, "verdict": v2, "state": state, "reading": [],
+               "reading_from": ""}
+        if state == "disagree":
+            side = other if clean else where
+            rec["reading_from"] = side
+            rec["reading"] = _reading(quote, view if clean else corpus.only([where]))
+        out.append(rec)
+    return out
+
+
+def _reading(quote, view, cap=6):
+    """K025: where the one document in `view` reads differently from the quotation,
+    ``[[quoted, read there], ...]`` - located by the quotation's own 5-word shingles, compared
+    word by word. [] when no shingle lands (nothing to show is better than a wrong pair)."""
+    n = normalise(prepare_quote(quote))
+    words = n.split()
+    if len(words) < 5 or not view.paths:
+        return []
+    starts, pos = [], 0
+    for w in words:
+        pos = n.find(w, pos)
+        starts.append(pos)
+        pos += len(w)
+    src = None
+    for i in range(0, len(words) - 4, max(1, (len(words) - 5) // 8)):
+        p, off = view.find_pos(" ".join(words[i:i + 5]))
+        if p:
+            src = view.window(p, off - starts[i], len(n), before=80, after=80)
+            break
+    if src is None:
+        return []
+    a = [w.strip(_STRIP) for w in words]
+    b = [w.strip(_STRIP) for w in src.split()]
+    ops = difflib.SequenceMatcher(None, [x.lower() for x in a], [x.lower() for x in b],
+                                  autojunk=False).get_opcodes()
+    anchors = [k for k, o in enumerate(ops) if o[0] == "equal" and o[2] - o[1] >= 2]
+    if not anchors:
+        return []
+    out = []
+    for k, (tag, i1, i2, j1, j2) in enumerate(ops):
+        # outside the aligned span only a REPLACED quotation word is ours; the rest is window edge
+        if tag == "equal" or ((k < anchors[0] or k > anchors[-1]) and tag != "replace"):
+            continue
+        out.append([" ".join(a[i1:i2]), " ".join(b[j1:j2])])
+    return out[:cap]

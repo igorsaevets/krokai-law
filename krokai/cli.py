@@ -306,6 +306,20 @@ def cmd_quote(a):
         if verdict not in CLEAN:
             print("     The difference may be the OCR's misread, not yours - compare with the page "
                   "image before changing the quotation.")
+    # K025: the same question asked of every other copy of that document (advisory).
+    from .verify import copies_check
+    from .run import copy_line
+    for c in copies_check(text, verdict, where, corpus):
+        c = dict(c, file=os.path.relpath(c["path"], cfg.root),
+                 reading_from=os.path.relpath(c["reading_from"], cfg.root) if c["reading_from"] else "")
+        if c["state"] == "disagree":
+            print("  🟡 COPIES DISAGREE: %s.\n     One of the copies is an OCR misread - compare both "
+                  "with the page image before relying on the quotation." % copy_line(c, os.path.relpath(
+                      where, cfg.root)))
+        elif c["state"] == "agree":
+            print("  ✅ second copy: %s." % copy_line(c, ""))
+        else:
+            print("  · another copy: %s." % copy_line(c, ""))
 
     # 🔴 Shown for a quotation that PASSED, which is the whole reason it is here. A flagged quotation
     # already sends you to the source; a verified one is the one nobody opens again. The two

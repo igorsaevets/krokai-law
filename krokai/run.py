@@ -33,10 +33,10 @@ from .corpus import Corpus, walk
 from .extract import extract_quotes, citation_window, not_examined
 from .readers import read_any, OCR_CHECK, ocr_pages_cell, ocr_label
 from .verdicts import ORDER, DANGEROUS, CLEAN, UNCHECKABLE, MEANING, MARK, label, meaning
-from .verify import check
+from .verify import check, copies_check
 
 __all__ = ["scan_matter", "write_report", "print_not_examined", "print_markers", "draft_docs",
-           "print_editions", "editions", "ocr_counts",
+           "print_editions", "editions", "ocr_counts", "copy_counts", "copy_line",
            "SENTINEL", "SENTINELS", "SENTINEL_HEAD"]
 
 SENTINEL = "KROKAI-TOOL-OUTPUT"
@@ -188,13 +188,20 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
                 kind = "🟡 legal, but the cited authority is not in the corpus at all - probably a "\
                        "gap in the library, not a fabrication"
 
+        # K025: the same question asked of every other copy of that document (advisory)
+        copies = [{"file": os.path.relpath(c["path"], cfg.root), "share": c["share"],
+                   "verdict": c["verdict"], "state": c["state"], "reading": c["reading"],
+                   "reading_from": os.path.relpath(c["reading_from"], cfg.root)
+                   if c["reading_from"] else ""}
+                  for c in copies_check(rec["quote"], verdict, where, corpus)]
         rows.append({"verdict": verdict, "detail": detail, "quote": rec["quote"], "kind": kind,
                      "where": os.path.relpath(where, cfg.root) if where else "",
                      "where_abs": where or "",
                      "cites": near or far, "near": near, "sites": rec["sites"],
                      "address": address,
                      # K024: the source text this verdict was read from is an OCR layer
-                     "ocr_layer": corpus.ocr_layer(where), "ocr_cited": ocr_cited})
+                     "ocr_layer": corpus.ocr_layer(where), "ocr_cited": ocr_cited,
+                     "copies": copies})
         if not quiet and i % 200 == 0:
             printer("   ...%d/%d (%.0f s)" % (i, len(uniq), time.time() - t1))
 
@@ -614,6 +621,65 @@ def _ocr_md(res, root, cap=60):
     return md
 
 
+def copy_counts(res):
+    """K025: tier A+B rows whose source has another copy on the disk - those that read differently
+    there (``disagree``) and those every copy confirms (``confirmed``). One function, so the console
+    line and REPORT.md cannot disagree."""
+    out = {"disagree": 0, "confirmed": 0, "rows": [], "files": 0}
+    files = set()
+    for r in res["rows"]:
+        cs = r.get("copies") or []
+        if _tier_of(r) not in ("A", "B") or not cs:
+            continue
+        if any(c["state"] == "disagree" for c in cs):
+            out["disagree"] += 1
+            out["rows"].append(r)
+            files.add(r["where"])
+        elif any(c["state"] == "agree" for c in cs):
+            out["confirmed"] += 1
+    out["files"] = len(files)
+    return out
+
+
+def copy_line(c, where):
+    """K025: one copy's answer in words - the same sentence on the console, in REPORT.md and in
+    `quote`, so the three cannot drift."""
+    if c["state"] == "agree":
+        return "`%s` reads it the same way (%s)" % (c["file"], c["verdict"])
+    if c["state"] == "absent":
+        return "`%s` does not hold this passage (%s)" % (c["file"], c["verdict"])
+    pairs = "; ".join("quoted «%s», `%s` reads «%s»" % (q or "-", c["reading_from"], s or "-")
+                      for q, s in (c.get("reading") or [])[:4])
+    return ("`%s` gives %s where `%s` gives the verdict above%s"
+            % (c["file"], c["verdict"], where, (" - " + pairs) if pairs else ""))
+
+
+def _copies_md(res, cap=60):
+    o = copy_counts(res)
+    if not (o["disagree"] or o["confirmed"]):
+        return []
+    md = ["## Copies disagree - tiers A+B: %d quotation(s)" % o["disagree"], "",
+          "The same document is on this disk more than once, and one of the copies is an OCR text "
+          "layer (a second OCR run of one scan, the text extracted beside its PDF). These quotations "
+          "read one way in one copy and another way in the other: one of the two copies is an OCR "
+          "misread, and only the page image can say which. A clean verdict here rests on the copy "
+          "that happened to be read. (Advisory: the verdicts and the exit code are unchanged.)", ""]
+    for r in o["rows"][:cap]:
+        md += ["* **[%s] %s** · %s · `%s`" % (_tier_of(r), r["verdict"],
+                                              "; ".join(r["cites"]) if r["cites"] else "no citation",
+                                              r["where"]),
+               "  > %s" % r["quote"][:200].replace("\n", " ")]
+        md += ["  * %s" % copy_line(c, r["where"]) for c in r["copies"]]
+        md += [""]
+    if len(o["rows"]) > cap:
+        md += ["* … and %d more - `result.json` rows carry `copies`" % (len(o["rows"]) - cap), ""]
+    if o["confirmed"]:
+        md += ["Read the same way in every copy of their source: %d quotation(s) - a second reading "
+               "of the same page agrees (it is not an independent source: a typo on the page is in "
+               "both)." % o["confirmed"], ""]
+    return md
+
+
 def print_summary(res, lang="en", printer=print):
     grid = res["grid"]
     printer("\n%-25s %7s %7s %7s %7s" % ("verdict", "A filed", "B guides", "C research", "D tool"))
@@ -653,6 +719,15 @@ def print_summary(res, lang="en", printer=print):
     if o["not_found"]:
         printer("🟡 OCR TEXT LAYER, tiers A+B: %d NOT FOUND cite a source whose text is an OCR layer "
                 "- rule out cause 3 (an OCR misread) before fabrication." % o["not_found"])
+    # K025: advisory too - a quotation that reads differently in another copy of its source.
+    cc = copy_counts(res)
+    if cc["disagree"]:
+        printer("🟡 COPIES DISAGREE, tiers A+B: %d quotation(s) read differently in another copy of "
+                "the same document (%d file(s)) - one of the copies is an OCR misread: compare both "
+                "with the page image. REPORT.md shows both readings." % (cc["disagree"], cc["files"]))
+    if cc["confirmed"]:
+        printer("✅ SECOND COPY, tiers A+B: %d quotation(s) read the same way in every copy of their "
+                "source." % cc["confirmed"])
 
     for lbl, clean, flagged in res.get("mixed") or []:
         printer("🔴 %s is quoted both CLEAN (%d) and FLAGGED (%d) in this matter - the flagged "
@@ -706,6 +781,7 @@ def write_report(res, cfg, out_dir, lang="en"):
     md += _markers_md(res)
     md += _editions_md(res)
     md += _ocr_md(res, cfg.root)                                  # K024
+    md += _copies_md(res)                                         # K025
 
     if c.excluded_derived:
         md += ["## Excluded from the corpus as our own derived text", "",
@@ -765,6 +841,9 @@ def write_report(res, cfg, out_dir, lang="en"):
                 if r.get("ocr_layer"):
                     md += ["", "🟡 %s. The difference may be the OCR's misread, not the drafter's."
                            % ocr_label(r["ocr_layer"])]
+                for cp in r.get("copies") or []:
+                    if cp["state"] == "disagree":
+                        md += ["", "🟡 COPIES DISAGREE: %s." % copy_line(cp, r["where"])]
             md += [""]
 
     report_md = os.path.join(out_dir, "REPORT.md")
@@ -782,6 +861,7 @@ def write_report(res, cfg, out_dir, lang="en"):
                "corpus_no_text_layer": [os.path.relpath(p, cfg.root) for p in c.excluded_stub],
                "ocr_layers": [dict(f, file=os.path.relpath(p, cfg.root))
                               for p, f in (c.ocr_files() if hasattr(c, "ocr_files") else [])],
+               "copies": {k: v for k, v in copy_counts(res).items() if k != "rows"},
                "seconds": res["seconds"]}
     json.dump(payload, io.open(os.path.join(out_dir, "result.json"), "w", encoding="utf-8"),
               ensure_ascii=False, indent=1)

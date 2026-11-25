@@ -29,7 +29,31 @@ import re
 from .normalize import alnum, dehyph
 from .readers import corpus_text, no_text_layer, MIN_TEXT_LAYER, text_layer
 
-__all__ = ["Corpus", "walk"]
+__all__ = ["Corpus", "walk", "copy_print", "COPY_SHARE", "COPY_LEN"]
+
+# K025 - COPIES OF ONE DOCUMENT. Two files hold the same document when most of their text is the same
+# and they are about as long: a second OCR run of one scan, the text extracted beside its PDF. Told
+# by the text itself, never by a name (names are the user's own convention). Measured on a filed
+# petition's law library (4 folders, 302 indexed files, `private` K025): with this fingerprint every
+# OCR copy found shared 0.57-1.00 of its sampled 5-word shingles (13 OCR files with a copy), at a
+# length ratio of 0.98-1.00; a hash-sampled census of all 4 060 overlapping pairs put 2 between 0.4
+# and 0.5. The two numbers below sit on that gap, with a margin on length.
+# 🔴 Compared only where one of the two is an OCR text layer (K024): between two TYPESET texts the
+# same census found dated revisions of one FAQ («2021-22» vs «2022-23» academic year) and two
+# renderings of one manual chapter that differ in footnote numbers - a version or a rendering, not a
+# misread, and K028 owns editions. «Compare with the page image» is the right advice only for OCR.
+COPY_SHARE = 0.5
+COPY_LEN = 0.8
+_COPY_MIN = 20             # sampled shingles on the smaller side; fewer cannot be judged
+_COPY_WORD = re.compile(r"[a-z0-9]+")
+
+
+def copy_print(text):
+    """K025: a deterministic sample of a text's 5-word shingles - those that start at a 7-character
+    token. Content-defined, so two readings of one page pick the same places; no hash, so the
+    sample (and every verdict built on it) is the same in every process."""
+    w = _COPY_WORD.findall(text.lower())
+    return frozenset(" ".join(w[i:i + 5]) for i in range(len(w) - 4) if len(w[i]) == 7)
 
 # A file sitting in a sources directory that is OUR analysis rather than a primary source. The rule
 # used to live on the directory; it belongs on the file.
@@ -390,6 +414,8 @@ class Corpus(object):
             return self
         v = Corpus.__new__(Corpus)
         v.__dict__.update(self.__dict__)
+        for memo in ("_copies", "_prints", "_alens", "_only"):    # K025 memos belong to their corpus
+            v.__dict__.pop(memo, None)
         v.superseded = set()
 
         def blank(s, starts, sep):
@@ -409,6 +435,80 @@ class Corpus(object):
         v.texts = ["\x00" * len(t) if k in g else t for k, t in enumerate(self.texts)]
         v._current_view = v
         self._current_view = v
+        return v
+
+    # -- K025: copies of one document ------------------------------------------------------------
+    def copies_of(self, path):
+        """K025: ``[(other_path, share), ...]`` - the other indexed files that hold the SAME document
+        as `path` (see COPY_SHARE), best first, where `path` or the other file is an OCR text layer.
+        A superseded edition is never a copy (K028 owns editions). Computed per file on first ask."""
+        k = self._index_of.get(path) if path else None
+        if k is None or self.is_superseded(path):
+            return []
+        memo = self.__dict__.setdefault("_copies", {})
+        if path in memo:
+            return memo[path]
+        alens = self.__dict__.get("_alens")
+        if alens is None:
+            ends = self.astarts[1:] + [len(self.ajoined) + 1]
+            alens = self._alens = [e - 1 - s for s, e in zip(self.astarts, ends)]
+        prints = self.__dict__.setdefault("_prints", {})
+
+        def fp(j):
+            p = self.paths[j]
+            if p not in prints:
+                prints[p] = copy_print(self.texts[j])
+            return prints[p]
+
+        mine_ocr, out = bool(self.ocr_layer(path)), []
+        for j, other in enumerate(self.paths):
+            if j == k or self.is_superseded(other) or not (mine_ocr or self.ocr_layer(other)):
+                continue
+            lo, hi = sorted((alens[k], alens[j]))
+            if not hi or lo < COPY_LEN * hi:
+                continue
+            a, b = fp(k), fp(j)
+            if min(len(a), len(b)) < _COPY_MIN:
+                continue
+            share = len(a & b) / float(max(len(a), len(b)))
+            if share >= COPY_SHARE:
+                out.append((other, round(share, 2)))
+        out.sort(key=lambda x: (-x[1], x[0]))
+        memo[path] = out
+        return out
+
+    def only(self, paths):
+        """K025: this corpus cut down to `paths` (re-indexed) - «what does THIS copy say». Every
+        lookup and every verdict question runs on it unchanged. Cached per set of paths."""
+        key = tuple(p for p in paths if p in self._index_of)
+        memo = self.__dict__.setdefault("_only", {})
+        if key in memo:
+            return memo[key]
+        v = Corpus.__new__(Corpus)
+        v.__dict__.update(self.__dict__)
+        for name in ("_current_view", "_copies", "_prints", "_alens", "_only"):
+            v.__dict__.pop(name, None)
+        v.superseded = set()
+        v.paths = list(key)
+        v.texts = [self.texts[self._index_of[p]] for p in key]
+        v.starts, v.astarts, v.hstarts, abuf, hbuf = [], [], [], [], []
+        pos = apos = hpos = 0
+        for t in v.texts:
+            at, ht = alnum(t), dehyph(t)
+            v.starts.append(pos)
+            v.astarts.append(apos)
+            v.hstarts.append(hpos)
+            abuf.append(at)
+            hbuf.append(ht)
+            pos += len(t) + len(self.SEP)
+            apos += len(at) + 1
+            hpos += len(ht) + len(self.SEP)
+        v.joined = self.SEP.join(v.texts)
+        v.ajoined = "\x00".join(abuf)
+        v.hjoined = self.SEP.join(hbuf)
+        v.ends = [s + len(t) for s, t in zip(v.starts, v.texts)]
+        v._index_of = {p: i for i, p in enumerate(v.paths)}
+        memo[key] = v
         return v
 
     # -- lookup ---------------------------------------------------------------------------------

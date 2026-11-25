@@ -10,6 +10,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.23.0] - 2026-11-25
+
+Copies disagree. When one document is on the disk more than once and one copy is an OCR text
+layer - a second OCR run of one scan, the text extracted beside its PDF - krokai answered from
+whichever copy its search met first and never read the other. Measured on a copy of a real
+matter's law library: the two OCR readings of one decision disagree on 12.6 % of their number
+tokens, those of another on 16.1 %, so whether a quotation with a date verified depended on which
+copy happened to be read.
+
+### Added
+- Copies of one document are recognised by their text, never by their names: most of their
+  sampled five-word shingles in common, at a similar length. Only pairs where one side is an OCR
+  text layer are compared - between two typeset texts the same measurement found dated revisions
+  of one FAQ and two renderings of one manual chapter, a version or a rendering rather than a
+  misread (superseded editions stay with the law register).
+- A quotation whose words stand in a file with such a copy is asked again inside each copy alone:
+  the copy agrees, disagrees (one clean, the other not), or does not hold the passage. The copies
+  of every file holding the exact words are asked, so a reprint that sorts first cannot hide them.
+- `check`: a console line for the quotations the copies disagree on and one for those every copy
+  confirms (tiers A+B), a REPORT.md section with both readings (`quoted «…», <file> reads «…»`), a
+  note under a flagged row, `copies` on every `result.json` row and a `copies` count.
+- `quote`: the other copy's answer - `COPIES DISAGREE` with both readings, or `second copy` when
+  it agrees.
+
+Advisory, like the OCR label: no verdict and no exit code changes - on the copy of a filed
+petition every verdict row and both exit codes were identical before and after. Not covered yet:
+`appendix`, `bank add`, `coverage` and `review --audit` do not ask the copies, and a disagreement
+between two typeset texts is not reported.
+
 ## [0.22.0] - 2026-11-25
 
 A match in an OCR text layer says so. Many law PDFs are scans with an invisible text layer drawn
