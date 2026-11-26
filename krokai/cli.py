@@ -295,6 +295,12 @@ def cmd_quote(a):
     print("  %s" % meaning(verdict, lang))
     if where:
         print("  found in: %s" % os.path.relpath(where, cfg.root))
+        # K018: the PDF page the words stand on - the file's own page index, not a printed page
+        from .verify import page_of
+        pg = page_of(text, where, corpus)
+        if pg:
+            print("  %s%s" % (pg["label"], "" if pg["unknown"] else
+                              " (the page in the PDF file; a printed page number may differ)"))
     if detail:
         print("  %s" % detail)
     # K024: a match in an OCR text layer is what an OCR engine read, not what the page says.

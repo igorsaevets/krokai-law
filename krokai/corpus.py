@@ -27,7 +27,7 @@ import os
 import re
 
 from .normalize import alnum, dehyph
-from .readers import corpus_text, no_text_layer, MIN_TEXT_LAYER, text_layer
+from .readers import corpus_text, no_text_layer, MIN_TEXT_LAYER, text_layer, page_table
 
 __all__ = ["Corpus", "walk", "copy_print", "COPY_SHARE", "COPY_LEN"]
 
@@ -216,6 +216,7 @@ class Corpus(object):
         # K024: per indexed PDF, what drew its text (readers.text_layer) - an OCR layer is what an
         # OCR engine read, and every surface that shows a match there says so (ocr_layer below).
         self.layers = {}
+        self.cache_dir = cache_dir          # K018: where the pages file of each PDF is kept
         # Paths the law register knows to have been replaced by a newer edition of the same
         # provision. They stay INDEXED on purpose - the words really are in a source on this
         # disk, and pretending otherwise would produce a NOT_FOUND, which in this tool's
@@ -414,7 +415,7 @@ class Corpus(object):
             return self
         v = Corpus.__new__(Corpus)
         v.__dict__.update(self.__dict__)
-        for memo in ("_copies", "_prints", "_alens", "_only"):    # K025 memos belong to their corpus
+        for memo in ("_copies", "_prints", "_alens", "_only", "_pages"):    # memos belong to their corpus
             v.__dict__.pop(memo, None)
         v.superseded = set()
 
@@ -486,7 +487,7 @@ class Corpus(object):
             return memo[key]
         v = Corpus.__new__(Corpus)
         v.__dict__.update(self.__dict__)
-        for name in ("_current_view", "_copies", "_prints", "_alens", "_only"):
+        for name in ("_current_view", "_copies", "_prints", "_alens", "_only", "_pages"):
             v.__dict__.pop(name, None)
         v.superseded = set()
         v.paths = list(key)
@@ -510,6 +511,33 @@ class Corpus(object):
         v._index_of = {p: i for i, p in enumerate(v.paths)}
         memo[key] = v
         return v
+
+    # -- K018: the page of a match ----------------------------------------------------------------
+    def aspan(self, path):
+        """`(lo, hi)` - where `path`'s letters-and-digits text stands in `ajoined`; None if absent."""
+        k = self._index_of.get(path) if path else None
+        if k is None:
+            return None
+        lo = self.astarts[k]
+        return lo, (self.astarts[k + 1] - 1 if k + 1 < len(self.astarts) else len(self.ajoined))
+
+    def page_ends(self, path):
+        """K018: `(ends, why)` for an indexed PDF - `ends[i]` is the letters-and-digits offset (in
+        that file) where its page i+1 ends, checked against THIS corpus's text of the file
+        (`readers.page_table`); `(None, why)` when its pages cannot be told; `(None, "")` for a
+        file that has no pages (not an indexed PDF). Asked per file on first need, never at build:
+        most files never hold a match."""
+        span = self.aspan(path)
+        if span is None or not path.lower().endswith(".pdf"):
+            return None, ""
+        memo = self.__dict__.setdefault("_pages", {})
+        if path not in memo:
+            try:
+                memo[path] = page_table(path, self.ajoined[span[0]:span[1]],
+                                        self.__dict__.get("cache_dir"))
+            except Exception as exc:                              # noqa: BLE001 - advisory
+                memo[path] = (None, "%s while its pages were measured" % type(exc).__name__)
+        return memo[path]
 
     # -- lookup ---------------------------------------------------------------------------------
     def _owner(self, i):

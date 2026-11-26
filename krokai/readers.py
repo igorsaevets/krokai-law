@@ -13,7 +13,7 @@ import json
 import os
 import re
 
-from .normalize import normalise, strip_scrape_artifacts
+from .normalize import alnum, normalise, strip_scrape_artifacts
 from . import _pdfengine
 from .repair import is_broken_type3
 
@@ -33,7 +33,7 @@ class MissingReader(RuntimeError):
 __all__ = ["MissingReader", "read_any", "read_pdf", "read_docx", "no_text_layer", "engines_available",
            "_choose_extraction", "_form_values", "EXTRACTOR_VERSION", "MIN_CHARS_PER_PAGE",
            "is_broken_type3", "text_layer", "ocr_label", "ocr_pages_cell", "OCR_PAGE_SHARE",
-           "OCR_CHECK", "LAYER_VERSION"]
+           "OCR_CHECK", "LAYER_VERSION", "page_table", "page_check", "PAGES_VERSION"]
 
 _PAGE_MARK = re.compile(r"\[\[Page\s+[\w.-]+\]\]")
 _MD_FOOTNOTE = re.compile(r"\[\\?\[[^\]]*\\?\]\]\([^)]*\)")
@@ -85,6 +85,21 @@ _LAYER_MIN_CHARS = 20         # fewer counted characters: a page with no text to
 _INVISIBLE_TR = (3, 7)        # render modes that paint no glyph (7 only adds it to the clip path)
 OCR_CHECK = "check every number, date and name against the page image"
 _LAYER_MEMO = {}
+
+# 🔴 K018: A PINCITE NAMES A PAGE, AND THE EXTRACTED TEXT HAD NONE.
+#
+# `read_pdf` joins the pages into one string, so a quotation standing verbatim on one page of a
+# decision verified exactly like the same words cited to another page, and nothing could say where
+# they stand. The boundaries survive in letters-and-digits space with the cleaning unchanged: on a
+# copy of a real matter's law library `alnum(clean(pages joined)) == concat(alnum(clean(page)))`
+# held for 100 of 100 text PDFs with both engines (audit 2026-11-23). So a page is a COUNT of
+# letters and digits, kept beside the text cache with a hash of the pages' concatenation, and the
+# corpus re-checks that hash against the text it actually indexed before it names a page: when the
+# two disagree it says «page unknown», because a wrong page is worse than none. The number is the
+# page INDEX in the PDF file (1 = its first page), not the printed page a citation names - the two
+# differ wherever a decision starts in the middle of a volume.
+PAGES_VERSION = "1"
+_PAGES_MEMO = {}
 
 
 class _TrCounter(object):
@@ -194,6 +209,107 @@ def _write_layer(lp, facts):
             json.dump(facts, fh)
     except OSError:
         pass
+
+
+def _page_facts(pages, engine, fields):
+    """K018: letters and digits per page of the extraction the text came from, plus a hash of
+    them all. `fields`: form-field values were appended after the last page (they have no page)."""
+    al = [alnum(normalise(strip_scrape_artifacts(t or ""))) for t in pages]
+    return {"v": PAGES_VERSION, "engine": engine, "alnum": [len(a) for a in al],
+            "sha1": hashlib.sha1("".join(al).encode("utf-8")).hexdigest(), "fields": bool(fields)}
+
+
+def _pages_file(path, cache_dir):
+    return _cache_path(path, cache_dir)[:-4] + ".pages.json"
+
+
+def page_check(facts, at):
+    """K018: `(ends, "")` when the per-page counts in `facts` add up to `at` - the letters-and-digits
+    text the corpus INDEXED for that file - where `ends[i]` is the offset in `at` at which page i+1
+    ends; `(None, why)` otherwise. Only form-field values may stand after the last page."""
+    if not facts or not facts.get("alnum"):
+        return None, (facts or {}).get("why") or "the pages were not measured"
+    ends, n = [], 0
+    for k in facts["alnum"]:
+        n += k
+        ends.append(n)
+    if n > len(at) or (n < len(at) and not facts.get("fields")):
+        return None, ("its pages hold %d letters and digits, the indexed text %d - the clean-up "
+                      "joined something across a page break" % (n, len(at)))
+    if hashlib.sha1(at[:n].encode("utf-8")).hexdigest() != facts.get("sha1"):
+        return None, "its pages do not add up to the indexed text"
+    return ends, ""
+
+
+def _measure_pages(path, at):
+    """K018: the pages of a PDF whose text cache was written before the pages file existed:
+    re-read it page by page and keep the first engine whose pages add up to `at`. PyMuPDF first -
+    the faster one; the cached text may have come from either."""
+    fields, tried = bool(_form_values(path)), []
+    try:
+        fitz = _pdfengine.load()
+    except ImportError:
+        fitz = None
+    if fitz is not None:
+        try:
+            d = fitz.open(path)
+            try:
+                got = _page_facts([pg.get_text() for pg in d], "PyMuPDF", fields)
+            finally:
+                d.close()
+            if page_check(got, at)[0] is not None:
+                return got
+            tried.append("PyMuPDF")
+        except Exception:                                   # noqa: BLE001 - advisory
+            pass
+    try:
+        import pypdf
+        got = _page_facts([(pg.extract_text() or "") for pg in pypdf.PdfReader(path).pages],
+                          "pypdf", fields)
+        if page_check(got, at)[0] is not None:
+            return got
+        tried.append("pypdf")
+    except Exception:                                       # noqa: BLE001 - advisory
+        pass
+    return {"v": PAGES_VERSION, "alnum": None,
+            "why": ("re-read with %s, its pages do not add up to the indexed text - the clean-up "
+                    "joined something across a page break" % " and ".join(tried)) if tried
+            else "no PDF engine could re-read its pages"}
+
+
+def page_table(path, at, cache_dir=None):
+    """K018: `(ends, why)` for the PDF `path` whose indexed letters-and-digits text is `at`
+    (see `page_check`); `(None, why)` when the page of a match there cannot be told.
+
+    The counts come from this run's extraction, else from the pages file beside the text cache,
+    else from a re-read - and whichever it is, they are CHECKED against `at` before they are used:
+    counts that do not add up to the text name no page. Only counts that add up are kept."""
+    try:
+        key = _layer_key(path)
+    except OSError:
+        return None, "the file is gone"
+    lp = _pages_file(path, cache_dir) if cache_dir else None
+    facts = _PAGES_MEMO.get(key)
+    if facts is None and lp and os.path.exists(lp):
+        try:
+            with io.open(lp, encoding="utf-8") as fh:
+                got = json.load(fh)
+            if isinstance(got, dict) and got.get("v") == PAGES_VERSION:
+                facts = got
+        except (OSError, ValueError):
+            facts = None
+    if facts is not None:
+        ends, _why = page_check(facts, at)
+        if ends is not None:
+            return ends, ""
+    got = _measure_pages(path, at)
+    ends, why = page_check(got, at)
+    if ends is None:
+        return None, got.get("why") or why
+    _PAGES_MEMO[key] = got
+    if lp:
+        _write_layer(lp, got)
+    return ends, ""
 
 
 def _measure_layer(path):
@@ -526,7 +642,7 @@ def read_pdf(path, cache_dir=None):
     # turned into an error. The distinction has to be drawn at the import, not at the result.
     have_engine = False
 
-    primary = ""
+    primary, pparts, fpages = "", [], []          # K018: the pages each engine's text came from
     counts = engine = None
     try:
         import pypdf
@@ -544,7 +660,7 @@ def read_pdf(path, cache_dir=None):
                 parts.append(p.extract_text(visitor_operand_before=trc.before,
                                             visitor_operand_after=trc.after) or "")
                 trc.stop()
-            primary = "\n".join(parts)
+            primary, pparts = "\n".join(parts), parts
             counts, engine = trc.pages, "pypdf"
         except Exception:
             primary = ""
@@ -558,7 +674,8 @@ def read_pdf(path, cache_dir=None):
         have_engine = True
         try:
             d = fitz.open(path)
-            alt = "\n".join(pg.get_text() for pg in d)
+            fpages = [pg.get_text() for pg in d]
+            alt = "\n".join(fpages)
             if counts is None:              # K024: no pypdf count - the same one from PyMuPDF
                 try:
                     counts, engine = [_trace_counts(pg) for pg in d], "PyMuPDF"
@@ -575,6 +692,8 @@ def read_pdf(path, cache_dir=None):
             "Install one:  pip install \"krokai[pdf]\"   (or krokai[all])" % os.path.basename(path))
 
     text, _why = _choose_extraction(primary, alt)
+    # K018: `_choose_extraction` hands back one of the two objects it was given
+    pages, pengine = (fpages, "PyMuPDF") if text is alt and text is not primary else (pparts, "pypdf")
 
     # 🔴 A BROKEN PSCRIPT5 PDF RETURNS TEXT THAT LOOKS ALIVE BUT IS A SUBSTITUTION CIPHER.
     #
@@ -595,7 +714,8 @@ def read_pdf(path, cache_dir=None):
             try:
                 fix_broken_pdf(path, tmp)
                 d2 = _pdfengine.load().open(tmp)
-                text = "\n".join(pg.get_text() for pg in d2)
+                pages, pengine = [pg.get_text() for pg in d2], "krokai's OCR repair"
+                text = "\n".join(pages)
                 repaired_pages = d2.page_count
                 d2.close()
             finally:
@@ -639,6 +759,13 @@ def read_pdf(path, cache_dir=None):
             _LAYER_MEMO[_layer_key(path)] = facts
         except OSError:
             pass
+    # K018: the pages of the extraction just chosen - counted here, checked where they are used
+    pfacts = None if repair_failed else _page_facts(pages, pengine, fields)
+    if pfacts is not None:
+        try:
+            _PAGES_MEMO[_layer_key(path)] = pfacts
+        except OSError:
+            pass
     if cache_dir and not repair_failed and len(text.strip()) >= MIN_TEXT_LAYER:
         os.makedirs(cache_dir, exist_ok=True)
         try:
@@ -647,6 +774,8 @@ def read_pdf(path, cache_dir=None):
             pass
         if facts is not None:
             _write_layer(_layer_file(path, cache_dir), facts)
+        if pfacts is not None:
+            _write_layer(_pages_file(path, cache_dir), pfacts)
     return text
 
 

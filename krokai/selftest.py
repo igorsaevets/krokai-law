@@ -6341,6 +6341,183 @@ def suite_k026_front_door(tmp):
             sys.modules["requests"] = real_mod
 
 
+def suite_k018_pages(tmp):
+    """K018 (2026-11-26): a match in a PDF says which page OF THE FILE it stands on - `quote`,
+    `check` (result.json, REPORT.md) - or «page unknown» with the reason. The pages are counted in
+    letters and digits beside the text cache and checked against the indexed text before any page
+    is named. Before, the extracted text was one string with no page in it: a quotation verbatim on
+    one page verified exactly like the same words cited to another, so no pincite could be checked."""
+    import builtins
+    import json
+    import subprocess as _sp
+    from krokai import readers as R
+    from krokai.normalize import alnum as _al, normalise as _nm, strip_scrape_artifacts as _ss
+    from krokai.corpus import Corpus
+    from krokai.verify import check, page_of
+    from krokai.verdicts import CLEAN
+
+    # -- the arithmetic, with no PDF engine at all ---------------------------------------------
+    pages = ["Alpha beta 12.", "", "Gamma delta.", "Epsilon."]
+    f = R._page_facts(pages, "t", False)
+    at = "".join(_al(_nm(_ss(t))) for t in pages)
+    ok("k018: page counts that add up to the indexed text give the page ends; an empty page takes "
+       "no room", R.page_check(f, at) == ([11, 11, 21, 28], ""), str(R.page_check(f, at)))
+    bad = [R.page_check(f, at[:-1] + "x"), R.page_check(f, at + "tail"), R.page_check(f, at[:-3]),
+           R.page_check(dict(f, alnum=None, why="w"), at)]
+    ok("k018: counts that do NOT add up name no page - another text, a tail with no form fields, a "
+       "shorter text, an unmeasured file", all(b[0] is None and b[1] for b in bad), str(bad))
+    ok("k018: form-field values may stand after the last page",
+       R.page_check(R._page_facts(pages, "t", True), at + "fieldvalue")[0] == [11, 11, 21, 28])
+
+    try:
+        from krokai import _pdfengine
+        fz = _pdfengine.load()
+    except ImportError:
+        fz = None
+    if fz is None:
+        print("note: k018 page fixture pins skipped - PyMuPDF builds the fixtures and is not "
+              "installed here")
+        return
+    try:
+        import pypdf  # noqa: F401
+        have_pypdf = True
+    except ImportError:
+        have_pypdf = False
+
+    root = os.path.join(tmp, "k018m")
+    law, case = os.path.join(root, "law"), os.path.join(root, "case")
+    os.makedirs(law)
+    os.makedirs(case)
+    io.open(os.path.join(root, "casefile.json"), "w", encoding="utf-8").write(json.dumps({
+        "bank": "QUOTE-BANK.md", "queue": "QUOTE-QUEUE.md", "library_index": "law/INDEX.md",
+        "sources": ["law"], "drafts": [{"tier": "A", "label": "filed", "path": "case"}],
+        "citation_packs": ["us-immigration", "us-federal"]}))
+
+    def make(path, pgs):
+        d = fz.open()
+        for lines in pgs:
+            pg = d.new_page()
+            for i, ln in enumerate(lines):
+                pg.insert_text((50, 60 + 14 * i), ln, fontsize=9)
+        d.save(path)
+        d.close()
+
+    def fill(tag):
+        return ["Filler line %d of the %s page keeps this fixture above every reader floor." % (i, tag)
+                for i in range(6)]
+
+    REP_S = "The applicant bears the burden of proof in every proceeding under this part."
+    P2_S = "An officer may request additional evidence when the record does not establish eligibility."
+    CROSS_A = "A decision on the application shall be made in writing and shall"
+    CROSS_B = "state the reasons for any denial of the benefit requested."
+    CROSS = CROSS_A + " " + CROSS_B
+    P3_S = "The record shall include every document the applicant submitted with the form."
+    ELL = "The record shall include every document ... submitted with the form."
+    UNK_S = "Each petition under this section shall be filed with the fee the form prescribes."
+    MD_S = "A notice of intent to deny shall give the applicant thirty days to respond."
+    pdf4, pdfu = os.path.join(law, "8CFR-296.pdf"), os.path.join(law, "8CFR-295.pdf")
+    # REP_S opens page 4: its first letter IS the first letter of that page (the boundary case)
+    make(pdf4, [["Sec. 296.1 Fixture rule.", REP_S] + fill("first"),
+                [P2_S] + fill("second") + [CROSS_A], [CROSS_B, P3_S] + fill("third"),
+                [REP_S] + fill("fourth")])
+    # a footnote link split by the page break: the clean-up removes it from the joined text only
+    make(pdfu, [["Sec. 295.1 Fixture rule.", UNK_S] + fill("fifth") + ["See [12](https://x.gov/pm/v7"],
+                ["#footnote-12) for the rule."] + fill("sixth")])
+    io.open(os.path.join(law, "8CFR-294.md"), "w", encoding="utf-8").write(
+        "# Sec. 294.1 Fixture rule.\n\n%s\n\n%s\n" % (MD_S, "\n".join(fill("text"))))
+
+    cache = os.path.join(tmp, "k018cache")
+    R._PAGES_MEMO.clear()
+    R.read_pdf(pdf4, cache)
+    pf = R._pages_file(pdf4, cache)
+    disk = json.load(io.open(pf, encoding="utf-8")) if os.path.exists(pf) else {}
+    ok("k018: read_pdf keeps the page counts of the extraction it chose beside the text cache",
+       disk.get("v") == R.PAGES_VERSION and len(disk.get("alnum") or []) == 4
+       and disk.get("engine") in ("pypdf", "PyMuPDF"), str(disk)[:200])
+
+    def pg(q, c):
+        v, w, _d = check(q, c)
+        return v, page_of(q, w, c)
+
+    corp = Corpus([law], quiet=True, cache_dir=cache)
+    got = [pg(q, corp) for q in (P2_S, CROSS, REP_S, ELL)]
+    labels = [(g or {}).get("label") for _v, g in got]
+    ok("k018: the page of a match - one page, across a page break, a sentence the file repeats (on "
+       "the page that STARTS with it too), an ellipsis quotation",
+       labels == ["PDF page 2 of 4", "PDF pages 2-3 of 4", "PDF page 1 of 4 (also on page 4)",
+                  "PDF page 3 of 4"] and all(v in CLEAN for v, _g in got[:3]), str(got))
+    v5, g5 = pg(UNK_S, corp)
+    ok("k018: «page unknown» with its reason when the page counts do not add up to the indexed text "
+       "(a link removed across a page break) - and the verdict is untouched",
+       v5 in CLEAN and (g5 or {}).get("label", "").startswith("page unknown - ")
+       and not (g5 or {}).get("pdf_pages"), str((v5, g5)))
+    v6, g6 = pg(MD_S, corp)
+    v7, g7 = pg("The officer may waive every requirement of this part at any time for any reason.", corp)
+    ok("k018: a match in a text source, and a quotation found nowhere, name no page",
+       v6 in CLEAN and g6 is None and v7 == "NOT_FOUND" and g7 is None, str((v6, g6, v7, g7)))
+
+    if os.path.exists(pf):            # absent only when the pin above is already red
+        os.remove(pf)
+    R._PAGES_MEMO.clear()
+    g8 = pg(P2_S, Corpus([law], quiet=True, cache_dir=cache))[1]
+    ok("k018: a text cache written before the pages file existed gets its pages re-read, checked "
+       "and kept", (g8 or {}).get("label") == "PDF page 2 of 4" and os.path.exists(pf), str(g8))
+
+    if have_pypdf:
+        real_import = builtins.__import__
+
+        def imp(name, *a, **k):
+            if name.split(".")[0] in ("fitz", "pymupdf"):
+                raise ImportError("hidden by the k018 selftest: %s" % name)
+            return real_import(name, *a, **k)
+
+        R._PAGES_MEMO.clear()
+        builtins.__import__ = imp
+        try:
+            g9 = pg(CROSS, Corpus([law], quiet=True))[1]
+        finally:
+            builtins.__import__ = real_import
+        ok("k018: with pypdf alone the same pages come back", (g9 or {}).get("label")
+           == "PDF pages 2-3 of 4", str(g9))
+    else:
+        print("note: k018 pypdf-alone pin skipped - pypdf is not installed here")
+
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def cli(*args):
+        p = _sp.run([sys.executable, "-m", "krokai"] + list(args), cwd=repo, env=env,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+    q1, q2, q3 = (cli("quote", "--dir", root, q)[1] for q in (CROSS, UNK_S, MD_S))
+    ok("k018: `quote` prints the PDF page, «page unknown» with its reason, and no page line for a "
+       "text source", "PDF pages 2-3 of 4 (the page in the PDF file" in q1 and "page unknown - " in q2
+       and "PDF page" not in q3 and "page unknown" not in q3, (q1[:300] + " || " + q2[:300]))
+    DRIFT = CROSS.replace("in writing and", "in writing, and")
+    io.open(os.path.join(case, "petition.md"), "w", encoding="utf-8").write(
+        'Under 8 C.F.R. § 296.1, "%s"\n\nUnder 8 C.F.R. § 296.1, "%s"\n\n'
+        'Under 8 C.F.R. § 295.1, "%s"\n\nUnder 8 C.F.R. § 294.1, "%s"\n' % (P2_S, DRIFT, UNK_S, MD_S))
+    out_dir = os.path.join(tmp, "k018o")
+    _rc, out = cli("check", "--dir", root, "--out", out_dir)
+    rj = os.path.join(out_dir, "result.json")
+    rows = (json.load(io.open(rj, encoding="utf-8")) if os.path.exists(rj) else {}).get("rows", [])
+
+    def row(marker):
+        return next((r for r in rows if marker in r["quote"]), {})
+
+    md = (io.open(os.path.join(out_dir, "REPORT.md"), encoding="utf-8").read()
+          if os.path.exists(os.path.join(out_dir, "REPORT.md")) else "")
+    r1, r2, r3, r4 = row("request additional"), row("writing, and"), row("fee the form"), row("thirty days")
+    ok("k018: result.json rows carry the page or why not, and REPORT.md prints it beside «Found in»",
+       (r1.get("page") or {}).get("pdf_pages") == [[2, 2]] and r2.get("verdict") == "PUNCTUATION"
+       and (r2.get("page") or {}).get("pdf_pages") == [[2, 3]]
+       and (r3.get("page") or {}).get("unknown") and r4.get("verdict") in CLEAN
+       and r4.get("page") is None and "8CFR-296.pdf` - PDF pages 2-3 of 4" in md,
+       str([(r.get("verdict"), r.get("page")) for r in (r1, r2, r3, r4)]) + " || " + out[-300:])
+
+
 def suite_k025_copies(tmp):
     """K025 (2026-11-25): when one document is on the disk twice and one copy is an OCR text layer,
     the quotation is asked again inside every other copy, and «copies disagree» shows both readings
@@ -6563,6 +6740,7 @@ def main():
         suite_k025_copies(tmp)
         suite_k026_front_door(tmp)
         suite_k030_edge_ellipsis(tmp)
+        suite_k018_pages(tmp)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)

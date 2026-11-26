@@ -33,7 +33,7 @@ from .corpus import Corpus, walk
 from .extract import extract_quotes, citation_window, not_examined
 from .readers import read_any, OCR_CHECK, ocr_pages_cell, ocr_label
 from .verdicts import ORDER, DANGEROUS, CLEAN, UNCHECKABLE, MEANING, MARK, label, meaning
-from .verify import check, copies_check
+from .verify import check, copies_check, page_of
 
 __all__ = ["scan_matter", "write_report", "print_not_examined", "print_markers", "draft_docs",
            "print_editions", "editions", "ocr_counts", "copy_counts", "copy_line",
@@ -201,6 +201,8 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
                      "address": address,
                      # K024: the source text this verdict was read from is an OCR layer
                      "ocr_layer": corpus.ocr_layer(where), "ocr_cited": ocr_cited,
+                     # K018: the PDF page(s) the words stand on, or why no page can be named
+                     "page": page_of(rec["quote"], where, corpus),
                      "copies": copies})
         if not quiet and i % 200 == 0:
             printer("   ...%d/%d (%.0f s)" % (i, len(uniq), time.time() - t1))
@@ -837,7 +839,8 @@ def write_report(res, cfg, out_dir, lang="en"):
             if len(r["sites"]) > 12:
                 md += ["* … and %d more" % (len(r["sites"]) - 12)]
             if r["where"]:
-                md += ["", "Found in: `%s`" % r["where"]]
+                md += ["", "Found in: `%s`%s" % (r["where"], " - %s" % r["page"]["label"]
+                                                 if r.get("page") else "")]
                 if r.get("ocr_layer"):
                     md += ["", "🟡 %s. The difference may be the OCR's misread, not the drafter's."
                            % ocr_label(r["ocr_layer"])]

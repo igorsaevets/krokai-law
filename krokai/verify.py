@@ -9,6 +9,7 @@ lost gets "simplified" back out six months later by someone who cannot see what 
 """
 from __future__ import annotations
 
+import bisect
 import difflib
 import os
 import re
@@ -935,6 +936,80 @@ def check(quote, corpus, *a, **kw):
 
 
 # ------------------------------------------------------------------------------------------------
+def _page_ranges(pairs):
+    return ", ".join(("%d" % a) if a == b else ("%d-%d" % (a, b)) for a, b in pairs)
+
+
+def page_of(quote, where, corpus, cap=6):
+    """K018 - which page(s) of the PDF `where` the quotation's words stand on.
+
+    None when `where` is not an indexed PDF or the words are not all in it (a verdict that found
+    them elsewhere or in pieces names no page). Otherwise a dict: `pdf_pages` - `[first, last]` per
+    occurrence in the file (last > first: the words cross a page break; an ellipsis quotation spans
+    from its first piece to its last), `of` - the file's page count, `unknown` - why no page can be
+    named ("" when one can), and `label` - the line every surface prints.
+
+    🔴 Every occurrence, not the first. A sentence a decision repeats stands on two pages, and a
+    pincite to the SECOND is right; naming only the first page would call it wrong. The numbers are
+    the PDF's own page index: `label` says «PDF page», never a bare «page», because the printed page
+    a citation names differs from it wherever a decision starts in the middle of a volume.
+
+    The words are found by their letters and digits (the alnum index), so the page is the same for
+    a punctuation drift, a hyphen healed across a line, a ``[sic]`` kept and an exact match."""
+    if not where or not where.lower().endswith(".pdf") or not hasattr(corpus, "page_ends"):
+        return None
+    span = corpus.aspan(where)
+    if span is None:
+        return None
+    lo, hi = span
+    aj = corpus.ajoined
+    found = []
+    for keep in (False, True):
+        n = normalise(prepare_quote(quote, keep_tags=keep))
+        pieces = [alnum(p) for p in (ellipsis_parts(n, 10) if ELLIPSIS_RE.search(n) else [n])]
+        pieces = [p for p in pieces if p]
+        if not pieces:
+            continue
+        i = aj.find(pieces[0], lo, hi)
+        while i >= 0 and len(found) < cap:
+            end = i + len(pieces[0])
+            for p in pieces[1:]:
+                j = aj.find(p, end, hi)
+                end = -1 if j < 0 else j + len(p)
+                if end < 0:
+                    break
+            if end < 0:
+                break                 # not after this start - so not after any later start either
+            found.append((i - lo, end - lo))
+            i = aj.find(pieces[0], i + 1, hi)
+        if found:
+            break
+    if not found:
+        return None
+    ends, why = corpus.page_ends(where)
+    if not ends:
+        why = why or "its pages could not be measured"
+        return {"pdf_pages": [], "of": None, "unknown": why, "label": "page unknown - %s" % why}
+    pairs = []
+    for s, e in found:
+        if s >= ends[-1]:
+            continue                  # in the form-field values appended after the last page
+        a = bisect.bisect_right(ends, s) + 1
+        b = min(bisect.bisect_right(ends, e - 1) + 1, len(ends))
+        if [a, b] not in pairs:
+            pairs.append([a, b])
+    if not pairs:
+        why = "the words are in the form-field values, which stand after the last page"
+        return {"pdf_pages": [], "of": len(ends), "unknown": why, "label": "page unknown - %s" % why}
+    a, b = pairs[0]
+    label = ("PDF page %d of %d" % (a, len(ends)) if a == b
+             else "PDF pages %d-%d of %d" % (a, b, len(ends)))
+    if len(pairs) > 1:
+        label += " (also on page%s %s)" % ("s" if len(pairs) > 2 or pairs[1][0] != pairs[1][1]
+                                           else "", _page_ranges(pairs[1:]))
+    return {"pdf_pages": pairs, "of": len(ends), "unknown": "", "label": label}
+
+
 def copies_check(quote, verdict, where, corpus):
     """K025 - COPIES DISAGREE: the same question asked of every other COPY of the file a verdict
     names, each copy alone (`Corpus.copies_of`, `Corpus.only`).
