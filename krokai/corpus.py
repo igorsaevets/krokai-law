@@ -27,7 +27,8 @@ import os
 import re
 
 from .normalize import alnum, dehyph
-from .readers import corpus_text, no_text_layer, MIN_TEXT_LAYER, text_layer, page_table
+from .readers import (corpus_text, no_text_layer, MIN_TEXT_LAYER, text_layer, page_table,  # noqa: F401
+                      pdf_text_verdict)
 
 __all__ = ["Corpus", "walk", "copy_print", "COPY_SHARE", "COPY_LEN"]
 
@@ -213,6 +214,7 @@ class Corpus(object):
         self.excluded_derived, self.excluded_stub, self.unreadable = [], [], []
         self.excluded_empty, self.short_sources = [], []
         self.excluded_placeholder = []
+        self.stub_why = {}                  # K093: path in excluded_stub -> why it has no usable text
         # K024: per indexed PDF, what drew its text (readers.text_layer) - an OCR layer is what an
         # OCR engine read, and every surface that shows a match there says so (ocr_layer below).
         self.layers = {}
@@ -280,10 +282,17 @@ class Corpus(object):
                 # had not reached: a long scan accumulates enough page furniture to pass any
                 # document-wide floor, so the biggest scans were exactly the ones indexed as
                 # thin garbage. The extraction is already cached, so the re-ask is cheap.
+                # K093: and a SHORT PDF that reads as a typeset document on every count (see
+                # readers.STAMP_BAND) is indexed with the short-source warning, like a short text
+                # file - the reason is kept for the one that is not.
                 if p.lower().endswith(".pdf"):
-                    if no_text_layer(p, cache_dir):
+                    dead, why = pdf_text_verdict(p, cache_dir)
+                    if dead:
                         self.excluded_stub.append(p)
+                        self.stub_why[p] = why
                         continue
+                    if len(t.strip()) < MIN_TEXT_LAYER:
+                        self.short_sources.append(p)     # warned below, and indexed all the same
                 elif len(t.strip()) < MIN_TEXT_LAYER:
                     self.excluded_stub.append(p)
                     continue
@@ -349,6 +358,8 @@ class Corpus(object):
             print("  NO TEXT LAYER (scan without OCR, or a stub) - %d:" % len(self.excluded_stub))
             for p in self.excluded_stub:
                 print("     %s" % p)
+                if getattr(self, "stub_why", {}).get(p):
+                    print("         (%s)" % self.stub_why[p])
             print("     A quotation from these produces a FALSE miss. OCR them with a real OCR "
                   "engine - never by asking a language model to read the image.")
         if self.excluded_empty:

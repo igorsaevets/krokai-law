@@ -37,7 +37,7 @@ import time
 
 from .corpus import walk
 from .normalize import strip_invisibles
-from .readers import read_pdf, MIN_TEXT_LAYER, EXTRACTOR_VERSION
+from .readers import read_pdf, MIN_TEXT_LAYER, EXTRACTOR_VERSION, pdf_text_verdict
 from .run import SENTINEL_HEAD          # R77 F-C: the sentinel/extractor head window (2000).
 
 __all__ = ["build", "SUFFIX"]
@@ -138,7 +138,9 @@ def build(source_dirs, force=False, dry_run=False, cache_dir=None, printer=print
             failed += 1
             printer("  FAILED  %s :: %s" % (os.path.basename(src)[:70], type(exc).__name__))
             continue
-        if len(text.strip()) < MIN_TEXT_LAYER:
+        # K093: the corpus's own question (readers.pdf_text_verdict), so a short typeset document
+        # gets its sidecar and a label over a scan does not - the two used to disagree only by length.
+        if len(text.strip()) < MIN_TEXT_LAYER and pdf_text_verdict(src, cache_dir)[0]:
             no_layer.append(src)
             continue
         if dry_run:

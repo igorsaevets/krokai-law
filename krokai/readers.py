@@ -33,7 +33,8 @@ class MissingReader(RuntimeError):
 __all__ = ["MissingReader", "read_any", "read_pdf", "read_docx", "no_text_layer", "engines_available",
            "_choose_extraction", "_form_values", "EXTRACTOR_VERSION", "MIN_CHARS_PER_PAGE",
            "is_broken_type3", "text_layer", "ocr_label", "ocr_pages_cell", "OCR_PAGE_SHARE",
-           "OCR_CHECK", "LAYER_VERSION", "page_table", "page_check", "PAGES_VERSION"]
+           "OCR_CHECK", "LAYER_VERSION", "page_table", "page_check", "PAGES_VERSION",
+           "pdf_text_verdict", "STAMP_BAND", "PICTURE_COVER"]
 
 _PAGE_MARK = re.compile(r"\[\[Page\s+[\w.-]+\]\]")
 _MD_FOOTNOTE = re.compile(r"\[\\?\[[^\]]*\\?\]\]\([^)]*\)")
@@ -52,6 +53,31 @@ MIN_TEXT_LAYER = 200          # fewer characters than this means "no usable text
 # three pages up, because a genuinely short one-page proclamation is not a scan.
 MIN_CHARS_PER_PAGE = 40
 PAGES_BEFORE_RATE_APPLIES = 3
+
+# 🔴 K093: A SHORT PDF IS NOT A SCAN BECAUSE IT IS SHORT - AND A SHORT TYPESET TEXT IS NOT A
+# DOCUMENT BECAUSE IT IS TYPESET.
+#
+# Until 0.26.0 every PDF under MIN_TEXT_LAYER was excluded as «a scan or a stub» and the user was
+# told to OCR it, while a text file of the same length is indexed with a warning (corpus.py: «it may
+# equally be a real short provision») - a one-paragraph typeset notice could never verify. The census
+# that raised it (11 of 325 filed exhibit PDFs of a real matter: one page each, under 200 characters,
+# typeset by render mode) was then read with a second instrument - Tesseract on each page rendered
+# WITH its text, minus the words its text layer holds - and all 11 are PICTURES carrying a typeset
+# label: each page shows 13 to 562 words its text layer lacks (typeset pages with no picture: 0-20
+# on hundreds of words). Their 2-4 label lines stand in the outer tenth of the page on 10 of 11, and
+# a picture covers 22-100 % of the page on 10 of 11 (the 11th draws its words as vector shapes, its
+# label lines all in the margin). That is exactly the trap: a Bates stamp or an exhibit label over a
+# scan is short TYPESET text, and so is a bot wall saved as a PDF. So a short PDF is indexed - as a
+# short source, with the warning - only when it reads as a typeset document on every count:
+#   * its text layer is typeset (K024's class): an OCR layer that thin is a scan the engine misread;
+#   * no picture covers PICTURE_COVER of any page: a picture can hold the page's words;
+#   * some text line stands inside the page body: a stamp, an exhibit label, a running header or a
+#     browser's print header and footer sit in the outer STAMP_BAND of the page by construction.
+# Anything else stays excluded, now with its reason. The geometry needs PyMuPDF; without it a short
+# PDF is excluded as before and the reason says why. A bot wall that passes all three is still
+# caught after this, by `corpus.looks_like_placeholder` - with «re-fetch it», not «OCR it».
+STAMP_BAND = 0.10
+PICTURE_COVER = 0.10
 
 # 🔴 Bumped whenever extraction changes what it puts on disk. It is part of the sidecar freshness
 # key, because a downloaded statute never changes and `mtime` alone therefore cannot notice that
@@ -571,7 +597,13 @@ def _choose_extraction(primary, alt):
     p, a = primary.strip(), alt.strip()
     if len(p) < MIN_TEXT_LAYER <= len(a):
         return alt, "primary extraction dead"
-    if not a or not p:
+    # 🔴 K093: an EMPTY primary used to win here whenever the alternate was under the floor too - so
+    # with pypdf absent (or failing on the file) a short PyMuPDF text came back '' and a real short
+    # document read as «no text at all», while pypdf alone kept the same text (BACKLOG K010, found by
+    # K003's fixture). Some text beats none; the length rules below are for two texts.
+    if not p:
+        return alt, ("primary extraction empty" if a else "")
+    if not a:
         return primary, ""
     tp, ta = _alpha_tokens(primary), _alpha_tokens(alt)
     # 🔴 Truncation needs BOTH axes to agree, and it is tested in BOTH directions. Two findings
@@ -884,18 +916,75 @@ def no_text_layer(path, cache_dir=None):
     # followed: there is no image. Since `read_pdf` now appends the field values, the length test
     # below already sees them; the explicit check is here so the answer is right even when only the
     # labels are short and the fields carry everything.
+    return pdf_text_verdict(path, cache_dir)[0]
+
+
+def pdf_text_verdict(path, cache_dir=None):
+    """`(True, why)` when the PDF `path` has no usable text layer - a scan without OCR, a stamp or a
+    label over a picture, a stub - and `(False, "")` when its text can be indexed; a short one is then
+    indexed WITH the short-source warning, as a short text file is (K093 - see STAMP_BAND)."""
     if _form_values(path):
-        return False
+        return False, ""
     text = read_pdf(path, cache_dir).strip()
-    if len(text) < MIN_TEXT_LAYER:
-        return True
     # 🔴 THE RATE, NOT ONLY THE TOTAL - see MIN_CHARS_PER_PAGE. A document-wide floor is passed by
     # any scan long enough, because per-page furniture accumulates: page numbers, a running header,
     # an OCR engine's empty-page marker. The longer the scan, the safer it looks.
     pages = _page_count(path)
     if pages >= PAGES_BEFORE_RATE_APPLIES and len(text) / float(pages) < MIN_CHARS_PER_PAGE:
-        return True
-    return False
+        return True, ("%d characters over %d pages - fewer than %d a page: page furniture over "
+                      "scanned pages" % (len(text), pages, MIN_CHARS_PER_PAGE))
+    if len(text) < MIN_TEXT_LAYER:
+        why = _short_pdf_why(path, len(text), cache_dir)
+        return (True, why) if why else (False, "")
+    return False, ""
+
+
+def _short_pdf_why(path, n, cache_dir):
+    """K093: "" when a PDF whose text is `n` (< MIN_TEXT_LAYER) characters reads as a real short
+    typeset document; otherwise why it does not."""
+    if not n:
+        return "no text at all - a scan without OCR, or an empty page"
+    cls = (text_layer(path, cache_dir) or {}).get("class")
+    if cls in ("ocr", "mixed"):
+        return ("an OCR text layer of %d characters - the words of a scan, and the OCR engine read "
+                "almost none of them" % n)
+    if cls != "typeset":
+        return "%d characters - too few on any page to be a text layer" % n
+    try:
+        fitz = _pdfengine.load()
+    except ImportError:
+        return ("%d characters of typeset text - without PyMuPDF a stamp over a scan cannot be told "
+                "from a short document" % n)
+    body = False
+    try:
+        d = fitz.open(path)
+        try:
+            for pg in d:
+                r = pg.rect
+                area = abs(r) or 1.0
+                cover = sum(abs(fitz.Rect(im["bbox"]) & r) for im in pg.get_image_info()) / area
+                if cover >= PICTURE_COVER:
+                    return ("%d characters of typeset text over a picture that covers %d %% of page "
+                            "%d - the picture can hold the page's words" % (n, min(100, round(100 * cover)),
+                                                                         pg.number + 1))
+                w, h = r.width or 1.0, r.height or 1.0
+                for blk in pg.get_text("dict").get("blocks", []):
+                    for ln in blk.get("lines", []):
+                        if not "".join(s.get("text", "") for s in ln.get("spans", [])).strip():
+                            continue
+                        x0, y0, x1, y1 = ln["bbox"]
+                        cx, cy = (x0 + x1) / 2.0 - r.x0, (y0 + y1) / 2.0 - r.y0
+                        if (STAMP_BAND * w <= cx <= (1 - STAMP_BAND) * w
+                                and STAMP_BAND * h <= cy <= (1 - STAMP_BAND) * h):
+                            body = True
+        finally:
+            d.close()
+    except Exception as exc:                                # noqa: BLE001 - the answer stays «excluded»
+        return "%d characters - its pages could not be measured (%s)" % (n, type(exc).__name__)
+    if not body:
+        return ("its only text (%d characters) stands in the page margin - a stamp, an exhibit label "
+                "or a header; the page's own words are in a picture, drawn as shapes, or missing" % n)
+    return ""
 
 
 def _page_count(path):

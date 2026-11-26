@@ -2160,8 +2160,11 @@ def suite_readers_signature():
     ok("readers: a /Sig field is skipped by type", '"/Sig"' in src and "continue" in src)
     ok("readers: and a non-scalar value is skipped whatever its type says",
        "isinstance(v, (str, int, float))" in src)
+    # K093: the rate moved with the rest of the PDF question into `pdf_text_verdict`, which
+    # `no_text_layer` now answers through - the behaviour is pinned by r77 #351 (thin-scan.pdf).
     ok("readers: the text-layer test has a PER-PAGE rate, not only a total",
-       R.MIN_CHARS_PER_PAGE > 0 and "MIN_CHARS_PER_PAGE" in inspect.getsource(R.no_text_layer),
+       R.MIN_CHARS_PER_PAGE > 0 and "MIN_CHARS_PER_PAGE" in inspect.getsource(R.pdf_text_verdict)
+       and "pdf_text_verdict" in inspect.getsource(R.no_text_layer),
        "%d chars/page from %d pages up" % (R.MIN_CHARS_PER_PAGE, R.PAGES_BEFORE_RATE_APPLIES))
 
 
@@ -6518,6 +6521,173 @@ def suite_k018_pages(tmp):
        str([(r.get("verdict"), r.get("page")) for r in (r1, r2, r3, r4)]) + " || " + out[-300:])
 
 
+def suite_k093_short_pdf(tmp):
+    """K093 (2026-11-26): a SHORT PDF (under MIN_TEXT_LAYER) that reads as a typeset document on
+    every count - a typeset layer, no picture, a line in the page body - is INDEXED with the
+    short-source warning, as a short text file is; a stamp or a label over a picture, a margin-only
+    label, an OCR layer that thin and an empty page stay excluded, now with the reason; a typeset bot
+    wall is a FAILED DOWNLOAD (re-fetch), not «OCR it». Before, every PDF under the floor was excluded
+    with «OCR it» - and the census that raised it found its 11 short «typeset» exhibits to be
+    pictures carrying a label (readers.STAMP_BAND)."""
+    import builtins
+    import contextlib
+    import json
+    import subprocess as _sp
+    from krokai import readers as R
+    from krokai import sidecar as SC
+    from krokai.corpus import Corpus
+
+    ok("k093: an EMPTY primary extraction no longer beats a short alternate (BACKLOG K010)",
+       R._choose_extraction("", "Short notice.")[0] == "Short notice."
+       and R._choose_extraction(" \n", "")[0] == "", repr(R._choose_extraction("", "Short notice.")))
+    try:
+        from krokai import _pdfengine
+        fz = _pdfengine.load()
+    except ImportError:
+        fz = None
+    if fz is None:
+        print("note: k093 short-PDF fixture pins skipped - PyMuPDF builds the fixtures and is not "
+              "installed here")
+        return
+
+    root = os.path.join(tmp, "k093m")
+    law, case = os.path.join(root, "law"), os.path.join(root, "case")
+    os.makedirs(law)
+    os.makedirs(case)
+    io.open(os.path.join(root, "casefile.json"), "w", encoding="utf-8").write(json.dumps({
+        "bank": "QUOTE-BANK.md", "queue": "QUOTE-QUEUE.md", "library_index": "law/INDEX.md",
+        "sources": ["law"], "drafts": [{"tier": "A", "label": "filed", "path": "case"}],
+        "citation_packs": ["us-immigration", "us-federal"]}))
+    NOTE_A = "The office is closed on the day of the hearing."
+    NOTE_B = "A filing due that day is due on the next business day."
+
+    def make(name, body=(), margin=(), picture=None, invisible=False):
+        d = fz.open()
+        pg = d.new_page()                                   # 595 x 842: the body band is y 84-758
+        if picture is not None:
+            pix = fz.Pixmap(fz.csGRAY, fz.IRect(0, 0, 40, 60), 0)
+            pix.clear_with(190)
+            pg.insert_image(fz.Rect(*picture), pixmap=pix, keep_proportion=False)   # fills the box
+        for i, ln in enumerate(body):
+            pg.insert_text((72, 300 + 16 * i), ln, fontsize=11, render_mode=3 if invisible else 0)
+        for y, ln in margin:
+            pg.insert_text((72, y), ln, fontsize=8)
+        p = os.path.join(law, name)
+        d.save(p)
+        d.close()
+        return p
+
+    notice = make("8CFR-293.pdf", body=(NOTE_A, NOTE_B))
+    make("8CFR-292.pdf", margin=((40, "EXHIBIT K-12"), (820, "ABC-000123")), picture=(0, 0, 595, 842))
+    make("8CFR-291.pdf", body=("Photograph of the office entrance on the day of the inspection.",),
+         picture=(100, 60, 495, 280))
+    make("8CFR-290.pdf", margin=((40, "EXHIBIT C-7"), (820, "Page 1 of 1 - ABC-000777")))
+    make("8CFR-289.pdf", body=("Just a moment...", "Checking your browser before accessing the site.",
+                               "Enable JavaScript and cookies to continue."))
+    make("8CFR-288.pdf")
+    make("8CFR-287.pdf", body=("The clerk may extend a deadline for good cause shown.",), invisible=True)
+
+    def base(ps):
+        return sorted(os.path.basename(p) for p in ps)
+
+    c = Corpus([law], quiet=True)
+    why = {os.path.basename(p): w for p, w in getattr(c, "stub_why", {}).items()}
+    ok("k093: a short typeset document - a line in the page body, no picture - is INDEXED as a short "
+       "source, not excluded as a scan", "8CFR-293.pdf" in base(c.paths)
+       and "8CFR-293.pdf" in base(c.short_sources) and "8CFR-293.pdf" not in base(c.excluded_stub),
+       "paths=%s short=%s stub=%s" % (base(c.paths), base(c.short_sources), base(c.excluded_stub)))
+    ok("k093: a stamp and a label over a page-sized picture are still excluded - the reason names the "
+       "picture", "8CFR-292.pdf" in base(c.excluded_stub) and "covers 100 %" in why.get("8CFR-292.pdf", ""),
+       str(why))
+    ok("k093: a caption in the page body over a picture is excluded too - the picture can hold the "
+       "page's words", "8CFR-291.pdf" in base(c.excluded_stub)
+       and "picture that covers" in why.get("8CFR-291.pdf", ""), str(why))
+    ok("k093: typeset text only in the page margin, with no picture, is a label - excluded",
+       "8CFR-290.pdf" in base(c.excluded_stub) and "page margin" in why.get("8CFR-290.pdf", ""), str(why))
+    ok("k093: an OCR layer that thin and an empty page stay excluded, each with its own reason",
+       "OCR text layer" in why.get("8CFR-287.pdf", "") and "no text at all" in why.get("8CFR-288.pdf", ""),
+       str(why))
+    ok("k093: a typeset bot wall is a FAILED DOWNLOAD (re-fetch) - neither indexed nor sent to OCR",
+       base(c.excluded_placeholder) == ["8CFR-289.pdf"]
+       and "8CFR-289.pdf" not in base(c.excluded_stub) + base(c.paths),
+       "placeholder=%s" % base(c.excluded_placeholder))
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        c.print_build()
+    out = buf.getvalue()
+    lines = out.splitlines()
+    i292 = next((i for i, ln in enumerate(lines) if ln.strip().endswith("8CFR-292.pdf")), None)
+    short_at = out.find("SHORT text source (INDEXED")
+    ok("k093: the build output prints each excluded PDF's reason under it, and the short typeset one "
+       "only under SHORT (INDEXED)", i292 is not None and i292 + 1 < len(lines)
+       and lines[i292 + 1].strip().startswith("(") and "picture" in lines[i292 + 1]
+       and short_at > 0 and "8CFR-293.pdf" in out[short_at:] and "8CFR-293.pdf" not in out[:short_at],
+       out[:700])
+
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def cli(*args):
+        p = _sp.run([sys.executable, "-m", "krokai"] + list(args), cwd=repo, env=env,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+    _rc, qout = cli("quote", "--dir", root, NOTE_A)
+    ok("k093: `quote` verifies a sentence of the short typeset PDF - it used to come back NOT FOUND",
+       "VERIFIED" in qout and "8CFR-293.pdf" in qout and "NOT FOUND" not in qout.upper().replace("_", " "),
+       qout[:600])
+    io.open(os.path.join(case, "brief.md"), "w", encoding="utf-8").write(
+        'Under 8 C.F.R. § 293.1, "%s" The rule goes on: "%s"\n' % (NOTE_A, NOTE_B))
+    _rc, _cout = cli("check", "--dir", root, "--out", os.path.join(tmp, "k093o"))
+    rep_md = os.path.join(tmp, "k093o", "REPORT.md")
+    md = io.open(rep_md, encoding="utf-8").read() if os.path.exists(rep_md) else ""
+    sec = (md.split("## Corpus files with no text layer", 1)[-1].split("\n## ", 1)[0]
+           if "## Corpus files with no text layer" in md else "").replace("\\", "/")
+    ok("k093: REPORT.md lists each excluded PDF with its reason - and not the short typeset one",
+       "`law/8CFR-292.pdf` - " in sec and "covers 100 %" in sec and "page margin" in sec
+       and "8CFR-293.pdf" not in sec, sec[:500] or md[:300])
+
+    _made, _sk, nol, _fl = SC.build([law], dry_run=True, printer=lambda *a, **k: None)
+    ok("k093: `sidecar` asks the corpus's question - the short typeset PDF is not listed as without a "
+       "text layer, the label over a picture and the margin label are",
+       "8CFR-293.pdf" not in base(nol) and {"8CFR-292.pdf", "8CFR-290.pdf", "8CFR-288.pdf"} <= set(base(nol)),
+       str(base(nol)))
+
+    real_import = builtins.__import__
+
+    def without(names):
+        def imp(name, *a, **k):
+            if name.split(".")[0] in names:
+                raise ImportError("hidden by the k093 selftest: %s" % name)
+            return real_import(name, *a, **k)
+        R._LAYER_MEMO.clear()
+        R._PAGES_MEMO.clear()
+        builtins.__import__ = imp
+        try:
+            return R.pdf_text_verdict(notice)
+        finally:
+            builtins.__import__ = real_import
+            R._LAYER_MEMO.clear()
+            R._PAGES_MEMO.clear()
+
+    try:
+        import pypdf  # noqa: F401
+        have_pypdf = True
+    except ImportError:
+        have_pypdf = False
+    if have_pypdf:
+        v1 = without(("fitz", "pymupdf"))
+        ok("k093: with pypdf alone a short PDF stays excluded, and the reason says PyMuPDF is needed to "
+           "tell a stamp over a scan from a document", v1[0] is True and "without PyMuPDF" in v1[1], str(v1))
+    else:
+        print("note: k093 pypdf-alone pin skipped - pypdf is not installed here")
+    v2 = without(("pypdf",))
+    ok("k093: with PyMuPDF alone the short typeset PDF is read and kept - an empty pypdf result used "
+       "to win (K010)", v2 == (False, ""), str(v2))
+
+
 def suite_k025_copies(tmp):
     """K025 (2026-11-25): when one document is on the disk twice and one copy is an OCR text layer,
     the quotation is asked again inside every other copy, and «copies disagree» shows both readings
@@ -6741,6 +6911,7 @@ def main():
         suite_k026_front_door(tmp)
         suite_k030_edge_ellipsis(tmp)
         suite_k018_pages(tmp)
+        suite_k093_short_pdf(tmp)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)

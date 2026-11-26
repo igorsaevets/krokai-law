@@ -793,7 +793,9 @@ def write_report(res, cfg, out_dir, lang="en"):
         md += ["## Corpus files with no text layer", "",
                "A scan without OCR, or a stub. A quotation from these yields a FALSE miss. "
                "🔴 Run them through a real OCR engine - never a language model.", ""]
-        md += ["* `%s`" % os.path.relpath(p, cfg.root) for p in c.excluded_stub] + [""]
+        why = getattr(c, "stub_why", {})                              # K093: the reason, per file
+        md += ["* `%s`%s" % (os.path.relpath(p, cfg.root), " - %s" % why[p] if why.get(p) else "")
+               for p in c.excluded_stub] + [""]
 
     if res.get("mixed"):
         md += ["## 🔴 One provision, two texts", "",
