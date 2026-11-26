@@ -235,6 +235,7 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
         grid[_tier_of(r)][r["verdict"]] += 1
 
     return {"rows": rows, "grid": grid, "per_file": per_file, "corpus": corpus, "splits": splits, "facts": fres,
+            "docs": docs,                                         # K047: the drafts as read, for the reading list
             "not_examined": unexamined, "min_len": cfg["min_quote_length"], "markers": marks,
             "editions": eds,
             "drop_cyrillic": bool(cfg["drop_cyrillic_quotes"]),
@@ -1050,4 +1051,10 @@ def write_report(res, cfg, out_dir, lang="en"):
                "seconds": res["seconds"]}
     json.dump(payload, io.open(os.path.join(out_dir, "result.json"), "w", encoding="utf-8"),
               ensure_ascii=False, indent=1)
+    # K047: every quotation of the filed tier beside its source passage - flagged first, then the rest by the
+    # facts noted (reading.py says why there is no verdict label beside a clean one). Written on EVERY run,
+    # a clean one included: the clean quotations are the ones nobody opens again.
+    from . import reading as reading_mod
+    rpath, rcounts = reading_mod.write(reading_mod.build(res), out_dir, lang, SENTINEL)
+    res["reading"] = dict(rcounts, file=rpath)
     return report_md

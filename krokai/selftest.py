@@ -6150,6 +6150,175 @@ def suite_k030_edge_ellipsis(tmp):
        v not in CLEAN, "%s :: %s" % (v, dd))
 
 
+def suite_k047_reading_list(tmp):
+    """K047 (2026-11-26): `check` writes READING-LIST.md beside REPORT.md - every quotation of the filed tier, the
+    draft sentence, the source passage +-2 sentences and the question; flagged ones first in REPORT.md's order, the
+    rest by the facts noted (OCR layer, another speaker, may against must, a limiter, words left out, no citation,
+    numbers); never a clean verdict's label; written on a clean round too; tool-output sentinel at its head."""
+    import json
+    import subprocess as _sp
+    from krokai import config as _config
+    from krokai import reading as R
+    from krokai.run import scan_matter, write_report, _is_tool_output
+    from krokai.verdicts import label as _label
+    LAW = ("# 8 CFR 214.7 Transfers (fixture)\n\n"
+           "(a) A student may transfer to another school at any time during the program. However, a transfer "
+           "during the first term needs the approval of the school official.\n\n"
+           "(b) The school shall notify the agency within 30 days of the transfer. The notice is filed "
+           "**electronically** through the system. The agency answers each notice in writing.\n\n"
+           "(c) The officer may extend the stay of a student for a period of one year if the program requires "
+           "it. No other extension is granted.\n\n"
+           "(e) The school records the address of each student, the program of study, and the date of the last "
+           "attendance. The records are kept by the school for three years after the student leaves.\n\n"
+           "(f) Under 8 U.S.C. 1101 the term student has the meaning given there. A student keeps the status "
+           "while enrolled in the program. The school reports a student who leaves.\n")
+    T = "A student may transfer to another school at any time during the program"
+    X = "The officer may extend the stay of a student for a period of one year if the program requires it"
+    N = "The school shall notify the agency within 30 days of the transfer"
+    S = "The school records the address of each student ... and the date of the last attendance"
+    K = "The records are kept by the school for three years after the student leaves"
+    F = "The school must refund every fee paid by the student at once to the family"
+    DRAFT = ('The transfer is open to him: "%s".\n\n'
+             'The officer must grant the extension, because "%s".\n\n'
+             "The school's duty is set out below:\n\n> \"%s\"\n\n"
+             'Records exist: "%s".\n\n'
+             'They keep them: "%s". Later we say it again: "%s" in another sentence.\n\n'
+             'The school promised that "%s".\n' % (T, X, N, S, K, K, F))
+
+    def matter(name, drafts, tier="A"):
+        root = os.path.join(tmp, name)
+        os.makedirs(os.path.join(root, "law"))
+        os.makedirs(os.path.join(root, "case"))
+        io.open(os.path.join(root, "law", "8CFR-214.md"), "w", encoding="utf-8").write(LAW)
+        for fn, text in drafts.items():
+            io.open(os.path.join(root, "case", fn), "w", encoding="utf-8").write(text)
+        io.open(os.path.join(root, "casefile.json"), "w", encoding="utf-8").write(json.dumps({
+            "bank": "QUOTE-BANK.md", "queue": "QUOTE-QUEUE.md", "library_index": "law/INDEX.md",
+            "sources": ["law"], "drafts": [{"tier": tier, "label": "filed" if tier == "A" else "guides",
+                                            "path": "case"}],
+            "citation_packs": ["us-immigration", "us-federal"]}))
+        return root
+
+    def read(p):
+        try:
+            return io.open(p, encoding="utf-8").read()
+        except OSError:
+            return ""
+
+    # --- the helpers alone -------------------------------------------------------------------------------
+    sp = R.sentence_spans("See 8 U.S.C. 1255(k) and 8 C.F.R. 245.1. The rule applies. Sec. 3 says so, e.g. here.")
+    ok("k047: the splitter keeps «U.S.C. 1255», «C.F.R. 245.1» and «Sec. 3» inside their sentences - 3 sentences",
+       len(sp) == 3, str(sp))
+    ocr = R.signals({"quote": "the words", "ocr_layer": {"class": "ocr", "pages": 3, "source": "tesseract"},
+                     "near": ["x"], "verdict": "VERIFIED"}, None, [])
+    spk = R.signals({"quote": "the words", "near": ["x"], "verdict": "WRONG_SPEAKER", "detail": "a commenter"},
+                    None, [])
+    cit = R.signals({"quote": "the words", "near": [], "verdict": "VERIFIED", "where": "law/x.md"}, None, [])
+    edge = R.signals({"quote": "… a transfer during the first term needs the approval", "near": ["x"],
+                      "verdict": "ASSEMBLED"},
+                     {"pieces": [("a transfer during the first term needs the approval", True)], "own_before": "",
+                      "own_after": "", "next": ""}, [])
+    ok("k047: the row-borne facts - an OCR layer, another speaker, no citation, an ellipsis at the edge - each "
+       "noted, and a plain row gets none of them",
+       [n for n, _x in ocr] == ["ocr"] and [n for n, _x in spk] == ["speaker"]
+       and [n for n, _x in cit] == ["uncited"] and [n for n, _x in edge] == ["omitted"]
+       and not R.signals({"quote": "the words", "near": ["x"], "verdict": "VERIFIED"}, None, []),
+       "%s | %s | %s | %s" % (ocr, spk, cit, edge))
+
+    def ent(names, places=1, sites=1, index=0):
+        return {"signals": [(n, "") for n in names], "places": [None] * places,
+                "row": {"sites": [None] * sites}, "index": index}
+    order = sorted([ent(["digits", "uncited", "limiter"], index=0), ent(["ocr"], index=1),
+                    ent(["limiter"], index=2), ent([], index=3), ent(["limiter"], places=3, index=4)],
+                   key=R.order_key)
+    ok("k047: the order - the strongest fact first (an OCR layer alone beats three weaker ones), then more facts, "
+       "then the quotation used in more places, then REPORT.md's order; no facts last",
+       [e["index"] for e in order] == [1, 0, 4, 2, 3], str([e["index"] for e in order]))
+
+    # --- one matter end to end through the CLI -------------------------------------------------------------
+    root = matter("k047m", {"petition.md": DRAFT})
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    out = os.path.join(tmp, "k047o")
+    p = _sp.run([sys.executable, "-m", "krokai", "check", "--dir", root, "--out", out], cwd=repo, env=env,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
+    cout = (p.stdout or "") + (p.stderr or "")
+    path = os.path.join(out, R.FILE)
+    md = read(path)
+    try:
+        verdicts = {" ".join(r["quote"].split()): r["verdict"] for r in
+                    json.load(io.open(os.path.join(out, "result.json"), encoding="utf-8"))["rows"]}
+    except (OSError, ValueError, KeyError):
+        verdicts = {}
+    part1, _s, part2 = md.partition("## Part 2")
+
+    def entry(q, text=md):
+        """The block of the entry whose Quoted line is `q`."""
+        for blk in re.split(r"^### \d+\. ", text, flags=re.M)[1:]:
+            if "**Quoted:**\n> %s" % q in blk:
+                return blk
+        return ""
+
+    ok("k047: the fixture graded as built - five clean (one ASSEMBLED), one NOT FOUND",
+       [verdicts.get(q) for q in (T, X, N, K)] == ["VERIFIED"] * 4 and verdicts.get(S) == "ASSEMBLED"
+       and verdicts.get(F) == "NOT_FOUND", "%s | %s" % (verdicts, cout[-500:]))
+    ok("k047: `check` writes READING-LIST.md beside REPORT.md and says so with its counts",
+       bool(md) and os.path.isfile(os.path.join(out, "REPORT.md"))
+       and "reading list -> " in cout and "6 quotation(s) of the filed documents: 1 flagged first" in cout,
+       cout[-700:])
+    ok("k047: the list carries the tool-output sentinel - a later check counts it as tool output (tier D)",
+       bool(md) and _is_tool_output(path), md[:200])
+    ok("k047: part 1 = the flagged quotation with no passage and a pointer to REPORT.md; part 2 never holds it",
+       bool(entry(F, part1)) and "no passage shown" in entry(F, part1) and "REPORT.md" in entry(F, part1)
+       and not entry(F, part2), part1[-600:])
+    pos = [part2.find("**Quoted:**\n> %s" % q) for q in (X, T, S, N, K)]
+    ok("k047: part 2's order - may-against-must, the limiter, the left-out words, numbers, then the plain one",
+       all(x >= 0 for x in pos) and pos == sorted(pos), str(pos))
+    ok("k047: each fact noted in plain words - «may» vs «must», «However» opening the next sentence, the "
+       "words left out shown in italics, numbers; the plain quotation gets only the missing citation",
+       "the source says «may»; the sentence around it says «must»" in entry(X)
+       and "«However» opening the next sentence" in entry(T)
+       and "words left out between the quoted pieces" in entry(S) and "_[left out: , the program of study,]_" in entry(S)
+       and "numbers in the quotation" in entry(N)
+       and re.search(r"\*\*Noted:\*\* no citation printed beside the quotation[^·\n]*\n", entry(K)) is not None,
+       entry(K)[:400])
+    ok("k047: the passage is the quoted words in bold with TWO sentences after them - not one, not three",
+       "**%s**" % T in entry(T) and "(b) The school shall notify the agency within 30 days of the transfer." in entry(T)
+       and "The notice is filed" not in entry(T), entry(T)[-500:])
+    ok("k047: «8 U.S.C. 1101» does not end a sentence - the two sentences after the words are whole",
+       "Under 8 U.S.C. 1101 the term student has the meaning given there. A student keeps the status while "
+       "enrolled in the program." in entry(K) and "The school reports a student" not in entry(K), entry(K)[-400:])
+    ok("k047: the source's own bold (**electronically**) is dropped from the passage - bold marks the quoted "
+       "words only", "filed electronically through the system" in entry(N) and "**electronically**" not in md,
+       entry(N)[-300:])
+    ok("k047: a blockquote's claim is the sentence before it; a quotation used twice shows both sentences",
+       "the sentence before the quotation:\n> The school's duty is set out below:" in entry(N)
+       and "> They keep them:" in entry(K) and "> Later we say it again:" in entry(K), entry(N)[:400])
+    ok("k047: no clean verdict's label anywhere - the clean part shows facts, words and the question",
+       bool(md) and "**%s**" % _label("VERIFIED") not in md and "VERIFIED" not in md
+       and "**%s**" % _label("ASSEMBLED") not in md, md[:300])
+    ok("k047: the question stands under every passage shown (5) and nowhere else",
+       md.count(R.QUESTION) == 5, str(md.count(R.QUESTION)))
+
+    # --- the green path (E-1072): a clean round still writes the list; a matter with no filed tier says so ---
+    root2 = matter("k047g", {"clean.md": 'They keep them: "%s".\n' % K})
+    res2 = scan_matter(_config.load(root2), quiet=True, printer=lambda *a: None)
+    out2 = os.path.join(tmp, "k047go")
+    write_report(res2, _config.load(root2), out2) if res2 else None
+    md2 = read(os.path.join(out2, R.FILE))
+    ok("k047: a clean round still writes the list - no part 1, the quotation in part 2 with its passage and question",
+       bool(md2) and "## Part 1" not in md2 and "## Part 2" in md2 and "**Quoted:**\n> %s" % K in md2
+       and md2.count(R.QUESTION) == 1, md2[-500:])
+    root3 = matter("k047b", {"guide.md": 'They keep them: "%s".\n' % K}, tier="B")
+    res3 = scan_matter(_config.load(root3), quiet=True, printer=lambda *a: None)
+    out3 = os.path.join(tmp, "k047bo")
+    write_report(res3, _config.load(root3), out3) if res3 else None
+    md3 = read(os.path.join(out3, R.FILE))
+    ok("k047: only the filed tier (A) is listed - a guide's quotation is not, and the list says none was found",
+       "No quotation was found in a document of the filed tier (A)" in md3 and "**Quoted:**" not in md3, md3[:600])
+
+
 def suite_k094_condition_cuts(tmp):
     """🔴 K094 (2026-11-26): a verbatim quotation cut so that it drops the CONDITION it hangs on.
 
@@ -7876,6 +8045,7 @@ def main():
         suite_k046_fact_bank(tmp)
         suite_k092_exhibit_ids(tmp)
         suite_k045_exhibit_list(tmp)
+        suite_k047_reading_list(tmp)
         suite_k094_condition_cuts(tmp)
         suite_word_diff()
         suite_citations()

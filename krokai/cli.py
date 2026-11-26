@@ -243,6 +243,9 @@ def cmd_check(a):
                                 "check-" + __import__("time").strftime("%Y-%m-%d-%H%M"))
     path = write_report(res, cfg, out, cfg["language"])
     print("\nreport -> %s" % path)
+    if res.get("reading"):                      # K047: the reading list, beside REPORT.md
+        from .reading import summary
+        print("reading list -> %s\n   %s" % (res["reading"]["file"], summary(res["reading"])))
     _keep_markers(cfg, res)
     print("took %.0f s" % res["seconds"])
     # 🔴 `--strict` fails on EITHER, and with distinct codes so a hook can tell them apart:
