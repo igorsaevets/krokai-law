@@ -7371,6 +7371,115 @@ def suite_k092_exhibit_ids(tmp):
        and F.exhibit_id("Y-3") == "Y-3" and F.exhibit_id(CYR_C + "-26") == "C-26", F._masked("as Exhibit Y-3 shows"))
 
 
+def suite_k045_exhibit_list(tmp):
+    """K045 (2026-11-26): the exhibit LIST a petition prints, against its sentences and the disk. Measured on a copy of
+    a real filed petition: 281 ids listed in 9 documents (tables with an «Exhibit» column, lines «Exhibit K28 - …»);
+    «X-13 (= P-07)» rows answered 7 of 23 «cited, no file»; 118 listed ids no sentence uses (a second, literal search
+    agreed: 117 + one heading); 2 files the list never names. Advisory sections - the exit code is unchanged."""
+    import subprocess as _sp
+    import zipfile as _zf
+    from krokai import exhibit_check as X
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base = os.path.join(tmp, "k045")
+
+    def touch(*parts, text=None):
+        p = os.path.join(base, *parts)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with io.open(p, "w", encoding="utf-8") as fh:
+            fh.write(text or "")
+        return p
+
+    md = ("# Index of Exhibits\n\n| Exhibit | Description |\n|---|---|\n| **B-1** | Letter |\n| J-1 | DS-2019 |\n"
+          "| X-13 (= P-07) | Copy |\n| B-3 – B-5 | Letters |\n\n| Criterion | Evidence |\n|---|---|\n| Prong 1 | see B-6 |\n"
+          "\nExhibit K28 - Letter from the lab\n- C-2: Article\nExhibit C-9 - " + "word " * 70 + "\nC-4 was filed late.\n")
+    entries, used = X.exhibit_list(md)
+    got = {e: a for _n, e, a in entries}
+    ok("k045: the list = rows under an «Exhibit» column (bold stripped, a bare J-1 read because the header says Exhibit, "
+       "«B-3 – B-5» lists B-4 too) + lines «Exhibit K28 - …» / «- C-2: …»; not a «Criterion» table, a 300+ character "
+       "paragraph or «C-4 was filed»", set(got) == {"B-1", "J-1", "X-13", "B-3", "B-4", "B-5", "K-28", "C-2"},
+       str(sorted(got)))
+    ok("k045: «X-13 (= P-07)» lists X-13 with the alias P-7", got.get("X-13") == ["P-7"], str(got.get("X-13")))
+    rr = X.range_ids("Exhibits B-1 through B-5 and (K60-K66); see V-67-1, A-12-2024, B-1 - B-80, M-1 to M-5")
+    ok("k045: a range cites both ends and the middle («B-1 through B-5», «(K60-K66)»); a part «V-67-1», a date "
+       "«A-12-2024», a span over 50 and the memoranda series are not ranges",
+       rr == {"B-%d" % k for k in range(1, 6)} | {"K-%d" % k for k in range(60, 67)}, str(sorted(rr)))
+    ok("k045: a long list prints as runs - «K-1…K-3», a pair as two ids, a part alone",
+       X._runs(["H-10a", "K-1", "K-2", "K-3", "K-5", "K-6"]) == "**H-10a**, **K-1…K-3**, **K-5**, **K-6**",
+       X._runs(["H-10a", "K-1", "K-2", "K-3", "K-5", "K-6"]))
+
+    # --- a Word petition: its table row stays one line, so the «Exhibit» column is still a column ---------------
+    W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+    def cell(t):
+        return "<w:tc><w:p><w:r><w:t>%s</w:t></w:r></w:p></w:tc>" % t
+    xml = ('<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="%s"><w:body>'
+           '<w:p><w:r><w:t>The form (Exh</w:t></w:r><w:r><w:t>ibit J-1) shows it.</w:t></w:r></w:p>'
+           '<w:tbl><w:tr>%s%s</w:tr><w:tr>%s%s</w:tr></w:tbl></w:body></w:document>'
+           % (W, cell("Exhibit"), cell("Description"), cell("J-1"), cell("DS-2019 form")))
+    docx = os.path.join(base, "word", "brief.docx")
+    os.makedirs(os.path.dirname(docx), exist_ok=True)
+    with _zf.ZipFile(docx, "w") as z:
+        z.writestr("word/document.xml", xml)
+    dtext = X._read_text(docx)
+    dent, _u = X.exhibit_list(dtext)
+    ok("k045: a .docx table row reads as «| J-1 | DS-2019 form |» and its «Exhibit» column lists J-1; the run-split "
+       "sentence before it still cites J-1", "| J-1 | DS-2019 form |" in dtext and [e for _n, e, _a in dent] == ["J-1"]
+       and "The form (Exhibit J-1) shows it." in dtext, dtext[:200])
+
+    # --- reconcile: red paths ------------------------------------------------------------------------------------
+    pet = touch("red", "petition.md", text=(
+        "# Index of Exhibits\n\n| Exhibit | Description |\n|---|---|\n| B-1 | Letter |\n| B-2 | Article |\n"
+        "| B-3 | Award |\n| X-13 (= P-7) | Copy of the passport |\n| H-10 | Letters |\n\n"
+        "The letters (Exhibits B-1 through B-2) show it. The award letters (Exhibit H-10a), the passport (Exhibit P-7) "
+        "and the press (Exhibit C-4). The plan (Exhibits D-1 through D-3).\n"))
+    for fn in ("B-1 letter.pdf", "B-2 article.pdf", "B-3 award.pdf", "P-7 passport.pdf", "H-10a letters.pdf",
+               "C-4 press.pdf", "C-5 extra.pdf", "D-1 a.pdf", "D-2 b.pdf", "D-3 c.pdf"):
+        touch("red-ex", fn)
+    r = X.reconcile([pet], [os.path.join(base, "red-ex")])
+    rep = "\n".join(r["report_lines"])
+    ok("k045: listed and no sentence uses it -> B-3; a part cited («H-10a») answers its whole («H-10»), an alias cited "
+       "(P-7) answers X-13", r["listed_not_cited"] == ["B-3"], str(r["listed_not_cited"]))
+    ok("k045: cited in a sentence and not in the list -> C-4 and the range D-1 … D-3 (its middle D-2 included)",
+       r["cited_not_listed"] == ["C-4", "D-1", "D-2", "D-3"], str(r["cited_not_listed"]))
+    ok("k045: a file the list never names -> C-4, C-5, D-1 … D-3; «H-10a letters» is a part of the listed H-10",
+       r["file_not_listed"] == ["C-4", "C-5", "D-1", "D-2", "D-3"], str(r["file_not_listed"]))
+    ok("k045: «X-13 (= P-7)» - X-13 has no file of its own but its alias has: not CITED-NO-FILE, and the report says "
+       "which file answers it", r["alias_ok"] == {"X-13": ["P-7"]} and "X-13" not in r["cited_no_file"]
+       and "X-13 → P-7" in rep, str(r["alias_ok"]))
+    ok("k045: a file cited only inside a range («D-1 through D-3») is cited - D-2 is not FILE-NO-CITE",
+       "D-2" not in r["file_no_cite"] and r["file_no_cite"] == {"C-5"}, str(sorted(r["file_no_cite"])))
+    ok("k045: the three list sections and their summary rows are printed with counts",
+       "## LISTED, NEVER CITED IN A SENTENCE — 1" in rep and "## CITED IN A SENTENCE, NOT IN THE EXHIBIT LIST — 4" in rep
+       and "## FILE NOT IN THE EXHIBIT LIST — 5" in rep and "| Listed, never cited in a sentence | 1 |" in rep,
+       rep[rep.find("## EXHIBIT LIST"):][:400])
+
+    # --- no list: said loudly, nothing invented -------------------------------------------------------------------
+    pet0 = touch("nolist", "petition.md", text="The letter (Exhibit B-1).\n")
+    touch("nolist-ex", "B-1 letter.pdf")
+    r0 = X.reconcile([pet0], [os.path.join(base, "nolist-ex")])
+    rep0 = "\n".join(r0["report_lines"])
+    ok("k045: no list in the documents -> «EXHIBIT LIST — none found», the list checks did NOT run, nothing listed",
+       "## EXHIBIT LIST — none found" in rep0 and "did NOT run" in rep0 and r0["listed"] == {}
+       and r0["file_not_listed"] == [], rep0[rep0.find("## EXHIBIT"):][:200])
+
+    # --- green path through the CLI (E-1072) ----------------------------------------------------------------------
+    gpet = touch("green", "petition.md", text=(
+        "| Exhibit | Description |\n|---|---|\n| B-1 | Letter |\n| B-2 | Article |\n\n"
+        "The letter (Exhibit B-1) and the article (Exhibit B-2).\n"))
+    for fn in ("B-1 letter.pdf", "B-2 article.pdf"):
+        touch("green-ex", fn)
+    p = _sp.run([sys.executable, "-m", "krokai", "check-exhibits", "--petition", gpet, "--exhibits",
+                 os.path.join(base, "green-ex")], cwd=repo, env=env, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=240)
+    out = (p.stdout or "") + (p.stderr or "")
+    ok("k045: green path through the CLI - list = sentences = files: exit 0, the list found (2 ids), all three list "
+       "sections 0", p.returncode == 0 and "## EXHIBIT LIST — 2 ids listed" in out
+       and "| Listed, never cited in a sentence | 0 |" in out and "| Cited in a sentence, not in the exhibit list | 0 |"
+       in out and "| File, not in the exhibit list | 0 |" in out, "rc %s %s" % (p.returncode, out[-500:]))
+
+
 def suite_k093_short_pdf(tmp):
     """K093 (2026-11-26): a SHORT PDF (under MIN_TEXT_LAYER) that reads as a typeset document on
     every count - a typeset layer, no picture, a line in the page body - is INDEXED with the
@@ -7766,6 +7875,7 @@ def main():
         suite_k097_split_quotation(tmp)
         suite_k046_fact_bank(tmp)
         suite_k092_exhibit_ids(tmp)
+        suite_k045_exhibit_list(tmp)
         suite_k094_condition_cuts(tmp)
         suite_word_diff()
         suite_citations()

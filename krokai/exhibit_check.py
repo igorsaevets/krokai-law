@@ -238,6 +238,150 @@ def declared_series(root):
     return found | {s for s, v in nums.items() if len(v) >= 2}
 
 
+# ------------------------------------------------------------------------------- the exhibit LIST (K045)
+
+# 🔴 K045: a petition prints an exhibit LIST - table rows whose id column is headed «Exhibit» / «Ex.» / «No.», or lines
+# that open with an id and a description («Exhibit K28 - Letter from …») - and its ARGUMENT cites exhibits in sentences.
+# Before K045 every id counted as «cited», so an exhibit the list promises and no sentence ever uses, a citation the
+# list forgot and a file the list never names were all invisible. Measured on the AOS copy (the filed petition, 11
+# documents): 43 of 76 tables carry such a column and list 274 ids; a bare «J-1» / «H-2» under an «Exhibit» header is an
+# exhibit (the header is the context word - E-1099); «X-13 (= P-07)» names one exhibit twice (an alias: a file under
+# either id serves both); «(K60-K66)» cites K-60 … K-66 - the product read only K-66 (`_K_RE` refuses an id followed
+# by a dash), so every range start and middle read as «never cited».
+_ID_HEADER = re.compile(r"^\s*(?:exhibits?|exh\.?|ex\.?|tabs?|id|no\.?|#|№)\s*(?:no\.?|#|id)?\s*$", re.I)
+_TABLE_SEP = re.compile(r"^\s*\|?\s*:?-{3,}")
+_LIST_MARK = re.compile(r"^\s*(?:[-*+•]\s+|\d{1,3}[.)]\s+)?")
+_DESC_SEP = re.compile(r"^\s*[—–:\-.)]\s*\S.{4,}")
+_ALIAS_SEP = re.compile(r"=|\bsame\s+as\b", re.I)
+INDEX_LINE_MAX = 300        # a list line is short; a paragraph that opens with «Exhibit B-3 - …» is an argument
+RANGE_MAX = 50              # «B-1 through B-50» at most; a wider «range» is two unrelated ids
+RANGE_RE = re.compile(
+    r"(?<![^\W\d_])(?:Exhibits?\s+|Exh\.\s*|Ex\.\s*)?(?P<let>[A-Z])\s*[-–—]?\s*0*(?P<a>\d{1,4})"
+    r"\s*(?:[-–—]|(?i:to|through|thru)\b)\s*(?:(?i:exhibits?)\s+)?(?P=let)\s*[-–—]?\s*0*(?P<b>\d{1,4})(?![-–—]?[\d\w])")
+
+
+def _plain(s):
+    """A markdown cell or line without emphasis and link targets: «**K28**» -> «K28», «[A-1](a.pdf)» -> «A-1»."""
+    s = re.sub(r"\[([^\]\n]*)\]\([^)\n]*\)", r"\1", s or "")
+    return re.sub(r"\*\*|__|`", "", s).replace(" ", " ")
+
+
+def _cell_entries(cell, series, anchored):
+    """[(id, [aliases])] for an id cell: «B-3» -> one entry; «X-13 (= P-07)» -> X-13 with the alias P-7; «B-1, B-2» ->
+    two entries. Under an id-column header the cell reads as if «Exhibit» stood before it; the cell must OPEN with an
+    id - a description that mentions an exhibit is not an id cell."""
+    c = _plain(cell).strip()
+    if not c:
+        return []
+    probe = c if (not anchored or re.match(r"(?i)ex", c)) else "Exhibit " + c
+    found = sorted(text_ids(probe, series), key=lambda t: t[1].start())
+    if not found or re.sub(r"(?i)\b(?:exhibits?|exh|ex|tabs?|no)\b\.?|[#\s.:(]", "", probe[:found[0][1].start()]):
+        return []
+    out = [(found[0][0], [])]
+    for k in range(1, len(found)):
+        if _ALIAS_SEP.search(probe[found[k - 1][1].end():found[k][1].start()]):
+            out[-1][1].append(found[k][0])
+        else:
+            out.append((found[k][0], []))
+    have = {e for e, _a in out} | {a for _e, al in out for a in al}
+    out.extend((e, []) for e in sorted(range_ids(probe, series) - have))      # «B-1 – B-5» lists B-2 … B-4 too
+    return out
+
+
+def _runs(ids):
+    """«K-1, K-2, K-3, K-5» -> «**K-1…K-3**, **K-5**»: a list of 100+ ids stays readable; a part («H-10a») stands
+    alone. `ids` sorted by series and number."""
+    out, i = [], 0
+    while i < len(ids):
+        m = re.match(r"^([A-Z])-(\d+)$", ids[i])
+        j = i
+        while m and j + 1 < len(ids):
+            n = re.match(r"^([A-Z])-(\d+)$", ids[j + 1])
+            if not (n and n.group(1) == m.group(1) and int(n.group(2)) == int(m.group(2)) + j + 1 - i):
+                break
+            j += 1
+        out.extend([ids[i]] if j == i else [ids[i], ids[j]] if j == i + 1 else ["%s…%s" % (ids[i], ids[j])])
+        i = j + 1
+    return ", ".join("**%s**" % x for x in out)
+
+
+def _fam(e):
+    """An exhibit's family key: «H-10a» and «H-10» are one exhibit's part and whole."""
+    return re.sub(r"(?<=\d)[a-z]\d?$", "", e)
+
+
+def _covered(e, pool):
+    """`e` is in `pool` itself, as its whole («H-10» covers «H-10a») or as a part («X-23a» answers «X-23»)."""
+    return e in pool or _fam(e) in pool or any(_fam(x) == e for x in pool)
+
+
+def _table_entries(rows, series):
+    """[(line number, id, aliases)] of one table: the column headed «Exhibit» / «Ex.» / «No.» (any letter there is an
+    id), else column 0 when most rows open with an id. A .docx table arrives as «| a | b |» rows with no separator."""
+    cells = [r.strip().strip("|").split("|") for _n, r in rows]
+    col, anchored, start = None, False, 0
+    if cells and any(_ID_HEADER.match(_plain(c)) for c in cells[0]):
+        col = next(k for k, c in enumerate(cells[0]) if _ID_HEADER.match(_plain(c)))
+        anchored, start = True, 1
+    data = [(n, c) for (n, r), c in list(zip(rows, cells))[start:] if not _TABLE_SEP.match(r)]
+    if col is None:
+        if cells and len(rows) > 1 and _TABLE_SEP.match(rows[1][1]):
+            data = data[1:] if data and data[0][0] == rows[0][0] else data      # a markdown header with no id word
+        firsts = sum(1 for _n, c in data if c and _cell_entries(c[0], series, False))
+        if len(data) < 2 or firsts < 0.6 * len(data):
+            return []
+        col = 0
+    out = []
+    for n, c in data:
+        if col < len(c):
+            for eid, al in _cell_entries(c[col], series, anchored):
+                out.append((n, eid, al))
+    return out
+
+
+def exhibit_list(text, series=None):
+    """The exhibit LIST a document prints (🔴 K045): ([(line number, id, aliases)], {line numbers of the list}). A list
+    entry is a row of a table with an id column (`_table_entries`) or a line (<= INDEX_LINE_MAX characters, after a
+    bullet) that opens with an id followed by a dash / colon and a description. Every other mention is a citation."""
+    act = DEFAULT_SERIES if series is None else series
+    lines = (text or "").splitlines()
+    entries, used = [], set()
+    i = 0
+    while i < len(lines):
+        if lines[i].lstrip().startswith("|"):
+            j = i
+            while j < len(lines) and lines[j].lstrip().startswith("|"):
+                j += 1
+            got = _table_entries([(n + 1, lines[n]) for n in range(i, j)], act)
+            entries.extend(got)
+            used.update(n for n, _e, _a in got)
+            i = j
+            continue
+        s = _plain(lines[i])
+        if len(s.strip()) <= INDEX_LINE_MAX:
+            pos = _LIST_MARK.match(s).end()
+            found = sorted(text_ids(s, act), key=lambda t: t[1].start())
+            pos += re.match(r"(?:Exhibits?\s+|Exh\.\s*|Ex\.\s*)?", s[pos:], re.I).end()      # «Exhibit K28 - …»
+            if found and found[0][1].start() <= pos and _DESC_SEP.match(s[found[0][1].end():]):
+                entries.append((i + 1, found[0][0], []))
+                used.add(i + 1)
+        i += 1
+    return entries, used
+
+
+def range_ids(text, series=None):
+    """Every id a range names, both ends included: «Exhibits B-1 through B-5», «B-1 – B-5», «(K60-K66)» (🔴 K045 - the
+    same letter on both ends, rising, at most RANGE_MAX apart; a part «V-67-1» or a date «A-12-2024» is not a range)."""
+    act = {s.upper() for s in (DEFAULT_SERIES if series is None else series)}
+    out = set()
+    for m in RANGE_RE.finditer(text or ""):
+        let, a, b = _fold(m.group("let")), int(m.group("a")), int(m.group("b"))
+        if let in DOC_SERIES or (let not in act and not re.match(r"(?i)ex", m.group(0))) or not a < b <= a + RANGE_MAX:
+            continue
+        out.update("%s-%d" % (let, k) for k in range(a, b + 1))
+    return out
+
+
 # ------------------------------------------------------------------------------- form IDs
 
 # Form references in text: "Form I-485", "Forms I-20", "Form G-1450", "Form ETA-9089"
@@ -289,15 +433,33 @@ def _read_docx(path):
             with z.open("word/document.xml") as f:
                 tree = ET.parse(f)
         paras = []
-        for p in tree.iter(ns + "p"):
+
+        def ptext(p):
             pieces = []
             for el in p.iter():
                 if el.tag == ns + "t" and el.text:
                     pieces.append(el.text)
                 elif el.tag in (ns + "tab", ns + "br"):
                     pieces.append(" ")
-            if pieces:
-                paras.append("".join(pieces))
+            return "".join(pieces)
+
+        # 🔴 K045: a table row is ONE line «| a | b |» - the exhibit list of a Word petition is a table, and a row read
+        # as one line per cell lost which id stands in the «Exhibit» column (`exhibit_list`). Paragraphs keep their
+        # order; content controls and other wrappers are walked into.
+        def walk(node):
+            for ch in node:
+                if ch.tag == ns + "p":
+                    t = ptext(ch)
+                    if t:
+                        paras.append(t)
+                elif ch.tag == ns + "tbl":
+                    for tr in ch.findall(ns + "tr"):
+                        cells = [" ".join(t for t in (ptext(p) for p in tc.iter(ns + "p")) if t)
+                                 for tc in tr.findall(ns + "tc")]
+                        paras.append("| " + " | ".join(c.replace("|", "/") for c in cells) + " |")
+                else:
+                    walk(ch)
+        walk(tree.getroot())
         return "\n".join(paras)
     except Exception as exc:
         # 🔴 R77 (#F-D, agy37flash MAJOR, probe-proven): a parse failure used to be swallowed to
@@ -472,6 +634,7 @@ def reconcile(petition_paths, exhibit_dirs, form_dirs=None, series=None, out=Non
     # three unreadable PDFs, `docs_read` was 1, the REFUSED guard below stayed quiet, and every
     # reference living only in the PDFs was simply absent from the reconciliation.
     unread = []
+    listed, argued, aliases = {}, {}, {}
 
     def _take(fp, fn):
         nonlocal docs_read
@@ -495,7 +658,17 @@ def reconcile(petition_paths, exhibit_dirs, form_dirs=None, series=None, out=Non
                                    "failure; re-save it from Word and re-run"))
             return
         found = text_ids(text, active)
-        refs = {eid for eid, _m in found}
+        refs = {eid for eid, _m in found} | range_ids(text, active)
+        # 🔴 K045: the exhibit LIST this document prints, and the ids its sentences cite (the list lines blanked)
+        entries, list_lines = exhibit_list(text, active)
+        for _n, eid, al in entries:
+            listed.setdefault(eid, set()).add(fn)
+            for a in al:
+                aliases.setdefault(eid, set()).add(a)
+                aliases.setdefault(a, set()).add(eid)
+        body = "\n".join("" if k + 1 in list_lines else ln for k, ln in enumerate(text.splitlines()))
+        for eid in {e for e, _m in text_ids(body, active)} | range_ids(body, active):
+            argued.setdefault(eid, set()).add(fn)
         for eid, m in found:
             typed = m.groupdict().get("let") or ""
             if typed.upper() in LOOKALIKE:
@@ -583,22 +756,34 @@ def reconcile(petition_paths, exhibit_dirs, form_dirs=None, series=None, out=Non
         say("")
 
     # --- exhibits: cited but no file ---
+    def _idkey(s):
+        return (s[0], int(re.sub(r"\D", "", s[2:]) or "0"), s)
+
     cited_no_file = cited - set(on_disk)
+    # 🔴 K045: «X-13 (= P-07)» in an exhibit list - a file under either id serves both
+    alias_ok = {e: sorted(a for a in aliases.get(e, ()) if a in on_disk) for e in cited_no_file}
+    alias_ok = {e: v for e, v in alias_ok.items() if v}
+    cited_no_file -= set(alias_ok)
     say("## CITED-NO-FILE: referenced in petition, no file on disk — %d" % len(cited_no_file))
     say("")
     if cited_no_file:
         say("The adjudicator follows the reference and finds nothing. This is the class that "
             "costs a filing.")
         say("")
-        for eid in sorted(cited_no_file, key=lambda s: (s[0], int(re.sub(r"\D", "", s[2:]) or "0"), s)):
+        for eid in sorted(cited_no_file, key=_idkey):
             who = sorted(d for d, ss in per_doc.items() if eid in ss)
-            say("* **%s** — cited in: %s" % (eid, ", ".join(who)))
+            say("* **%s** — cited in: %s%s" % (eid, ", ".join(who),
+                                              " · in the exhibit list" if eid in listed else ""))
     else:
         say("*(none)*")
+    if alias_ok:
+        say("")
+        say("Answered by an alias the exhibit list names («X-13 (= P-07)»): %s"
+            % ", ".join("%s → %s" % (e, "/".join(v)) for e, v in sorted(alias_ok.items(), key=lambda t: _idkey(t[0]))))
     say("")
 
     # --- exhibits: file exists but not cited ---
-    file_no_cite = set(on_disk) - cited
+    file_no_cite = {e for e in set(on_disk) - cited if not any(a in cited for a in aliases.get(e, ()))}
     say("## FILE-NO-CITE: file exists, not referenced in any petition document — %d"
         % len(file_no_cite))
     say("")
@@ -612,6 +797,47 @@ def reconcile(petition_paths, exhibit_dirs, form_dirs=None, series=None, out=Non
     else:
         say("*(none)*")
     say("")
+
+    # --- the exhibit LIST against the sentences and the disk (K045) ---
+    listed_pool = set(listed) | {a for e in listed for a in aliases.get(e, ())}
+    argued_pool = set(argued) | {a for e in argued for a in aliases.get(e, ())}
+    listed_not_cited, cited_not_listed, file_not_listed = [], [], []
+    if listed:
+        listed_not_cited = sorted((e for e in listed if not _covered(e, argued_pool)
+                                   and not any(_covered(a, argued_pool) for a in aliases.get(e, ()))), key=_idkey)
+        cited_not_listed = sorted((e for e in argued if not _covered(e, listed_pool)), key=_idkey)
+        file_not_listed = sorted((e for e in on_disk if not _covered(e, listed_pool)), key=_idkey)
+        docs_l = collections.Counter(d for v in listed.values() for d in v)
+        say("## EXHIBIT LIST — %d ids listed (a table column headed «Exhibit» / «Ex.» / «No.», or lines "
+            "«Exhibit B-3 - …»)" % len(listed))
+        say("")
+        say("in: %s" % ", ".join("`%s` (%d)" % (d, n) for d, n in sorted(docs_l.items())))
+        say("A part and its whole count as one exhibit here («H-10a» / «H-10»), and so do two ids the list "
+            "joins with «=».")
+        say("")
+        for title, ids, why in (
+                ("LISTED, NEVER CITED IN A SENTENCE", listed_not_cited,
+                 "The list promises the exhibit and no sentence of the argument uses it: supporting material, dead "
+                 "weight, or an argument that lost its exhibit (a renumbering slip lands here). A human decides."),
+                ("CITED IN A SENTENCE, NOT IN THE EXHIBIT LIST", cited_not_listed,
+                 "The officer looks the exhibit up in the list and does not find it."),
+                ("FILE NOT IN THE EXHIBIT LIST", file_not_listed,
+                 "A file in the package that the list never announces.")):
+            say("## %s — %d" % (title, len(ids)))
+            say("")
+            if ids:
+                say(why)
+                say("")
+                say(_runs(ids))
+            else:
+                say("*(none)*")
+            say("")
+    else:
+        say("## EXHIBIT LIST — none found")
+        say("")
+        say("No table column headed «Exhibit» / «Ex.» / «No.» and no line «Exhibit B-3 - …» in the documents: the "
+            "list checks (listed but never cited, cited but not listed, file not listed) did NOT run.")
+        say("")
 
     # --- duplicates (multiple files, no part suffix) ---
     # 🔴 R77 (#346, kimik3/grokbuild, probe-proven): the part suffix is searched AFTER the
@@ -778,6 +1004,10 @@ def reconcile(petition_paths, exhibit_dirs, form_dirs=None, series=None, out=Non
     say("| Cited, no file | %d |" % len(cited_no_file))
     say("| File, no citation | %d |" % len(file_no_cite))
     say("| Duplicates | %d |" % len(duplicates))
+    if listed:
+        say("| Listed, never cited in a sentence | %d |" % len(listed_not_cited))
+        say("| Cited in a sentence, not in the exhibit list | %d |" % len(cited_not_listed))
+        say("| File, not in the exhibit list | %d |" % len(file_not_listed))
     if form_dirs:
         say("| Forms matched | %d |" % len(form_matched))
         say("| Form cited, no file | %d |" % len(form_cited_no_file))
@@ -805,4 +1035,11 @@ def reconcile(petition_paths, exhibit_dirs, form_dirs=None, series=None, out=Non
         "declared": sorted(declared),
         "lookalikes": look_files + [k for k in sorted(looks)],
         "not_exhibit": notex,
+        "listed": {e: sorted(v) for e, v in listed.items()},
+        "argued": sorted(argued),
+        "aliases": {e: sorted(v) for e, v in aliases.items()},
+        "alias_ok": alias_ok,
+        "listed_not_cited": listed_not_cited,
+        "cited_not_listed": cited_not_listed,
+        "file_not_listed": file_not_listed,
     }
