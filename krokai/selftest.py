@@ -7245,6 +7245,132 @@ def suite_k046_fact_bank(tmp):
        and "## Facts held to their slices" not in nmd and "FACTS:" not in (p.stdout or ""), (p.stdout or "")[:300])
 
 
+def suite_k092_exhibit_ids(tmp):
+    """K092 (2026-11-26): exhibit ids krokai could not read. Measured on a names copy of a real matter: a third of one
+    package (255 files of series N, O, Q, Y - 23 typed with a CYRILLIC look-alike letter) had «no id»; «Exhibit J-1»
+    was dropped as a visa code although the package holds J-1; «V-67-1» was refused whole. The series a package uses is
+    read from its own folders and names, the word Exhibit decides for the token right after it, a look-alike letter is
+    read AND named, a part suffix is a part."""
+    import json
+    import subprocess as _sp
+    import unicodedata as _ud
+    from krokai import exhibit_check as X
+    from krokai import facts as F
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    CYR_O, CYR_C = "О", "С"
+    base = os.path.join(tmp, "k092")
+
+    def touch(*parts, text=""):
+        p = os.path.join(base, *parts)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        io.open(p, "w", encoding="utf-8").write(text)
+        return p
+
+    # --- the readers alone ------------------------------------------------------------------------------------------
+    ok("k092: the look-alike table is Unicode's - 37 Cyrillic / Greek capitals, each to ONE Latin capital",
+       len(X.LOOKALIKE) == 37 and all("A" <= v <= "Z" for v in X.LOOKALIKE.values())
+       and all(("CYRILLIC" in _ud.name(k) or "GREEK" in _ud.name(k)) for k in X.LOOKALIKE), str(len(X.LOOKALIKE)))
+    got = X.ids_in_text("Her status (Exhibit J-1). Her J-1 visa. Exhibit D-1 - I-20 form. Form G-1145, H-1B.")
+    ok("k092: after the word Exhibit a code is an exhibit (J-1); bare it is not; «Exhibit D-1 - I-20» does not chain "
+       "the dash to the form number", got == {"J-1", "D-1"}, str(sorted(got)))
+    got = X.ids_in_text("See Exhibit V-67-1 and V-68-2; dated A-12-2024; X-1–X-5; COVID-19.")
+    ok("k092: «V-67-1» is part 1 of V-67 (and V-68-2 of V-68), a date «A-12-2024» stays no id, a range «X-1–X-5» "
+       "reads both ends", got == {"V-67", "V-68", "X-1", "X-5"}, str(sorted(got)))
+    got = X.ids_in_text("Exhibit %s-3 and Exhibit %s-2" % (CYR_C, CYR_O))
+    ok("k092: a Cyrillic look-alike letter after Exhibit is read as the Latin one (С-3 -> C-3, О-2 -> O-2)",
+       got == {"C-3", "O-2"}, str(sorted(got)))
+    d_y = list(X.DEFAULT_SERIES) + ["Y", "N"]
+    ok("k092: a bare id of a series outside the list is read only when the series is given (Y-3), a bare form "
+       "number never (N-400), a memoranda id never (Exhibit M-3)",
+       X.ids_in_text("Y-3; N-4; N-400; Exhibit M-3") == set() and
+       X.ids_in_text("Y-3; N-4; N-400; Exhibit M-3", d_y) == {"Y-3", "N-4"},
+       "%s / %s" % (sorted(X.ids_in_text("Y-3; N-4; N-400; Exhibit M-3")),
+                    sorted(X.ids_in_text("Y-3; N-4; N-400; Exhibit M-3", d_y))))
+    n1, n2 = X.name_id("Exhibit %s1 award.pdf" % CYR_O, None), X.name_id("Cross Exhibit V-67-1 part.pdf", None)
+    ok("k092: a file name «Exhibit О1 …» (Cyrillic О) reads O-1 and says which letter was typed; «Cross Exhibit V-67-1 "
+       "…» reads V-67", bool(n1 and n1[0] == "O-1" and n1[1] == CYR_O and n2 and n2[0] == "V-67"), "%r %r" % (
+           n1 and n1[:2], n2 and n2[:2]))
+    for fn in ("I-485 form.pdf", "I-131.pdf", "G-1450 a.pdf", "G-1145 b.pdf", "N-400.pdf", "N-600.pdf"):
+        touch("forms-only", fn)
+    for fn in ("N-1 a.pdf", "N-2 b.pdf"):
+        touch("n-pair", fn)
+    touch("Exhibit Q", "q-index.pdf")
+    dec = (X.declared_series(os.path.join(base, "forms-only")), X.declared_series(os.path.join(base, "n-pair")),
+           X.declared_series(os.path.join(base, "Exhibit Q")))
+    ok("k092: a package declares a series by a folder «Exhibit Q» or by 2+ numbered names (N-1, N-2); a forms folder "
+       "(I-485, G-1450, N-400 …) declares none", dec == (set(), {"N"}, {"Q"}), str(dec))
+
+    # --- check-exhibits end to end ----------------------------------------------------------------------------------
+    pet = touch("case", "petition.md", text=(
+        "The degree (Exhibit Y-3) and the award (Exhibit %s-2). See Exhibit V-67-1. Her J-1 visa (Exhibit J-1).\n"
+        "Exhibit D-1 - I-20 form. Exhibit Z-9.\n\n| Y-4 | Letter |\n\nN-400 was not filed.\n" % CYR_O))
+    ex = os.path.join(base, "ex")
+    for parts in (("Exhibit Y", "Exhibit Y3 degree.pdf"), ("Exhibit Y", "Exhibit Y4 letter.pdf"),
+                  ("Exhibit O", "Exhibit %s2 award.pdf" % CYR_O), ("V", "Cross Exhibit V-67-1 part.pdf"),
+                  ("V", "Cross Exhibit V-67-2 part.pdf"), ("J", "J-1 letter.pdf"), ("J", "J-2 letter.pdf"),
+                  ("D-1 statement.pdf",), ("forms", "G-1450 fee.pdf"), ("Z-1 single.pdf",)):
+        touch("ex", *parts)
+    r = X.reconcile([pet], [ex])
+    rep = "\n".join(r["report_lines"])
+    ok("k092: check-exhibits reads the series its exhibit folder declares (folder «Exhibit Y», names «Exhibit Y3 …» "
+       "with no dash; a bare «Y-4» in the table) and names those series",
+       {"Y-3", "Y-4"} <= r["matched"] and "use them (not in krokai's default list): **O, Y**" in rep,
+       "matched %s" % sorted(r["matched"]))
+    ok("k092: «(Exhibit J-1)» cites J-1 and the file «J-1 letter» beside «J-2 letter» IS exhibit J-1 (the folder uses "
+       "series J) - matched, not dropped as a visa code", "J-1" in r["matched"], str(sorted(r["matched"])))
+    ok("k092: a form in a folder that declares no series stays a form - and is LISTED, not dropped silently",
+       "G-1450" not in r["file_no_cite"] and "NAMES READ AS A FORM / VISA CODE" in rep and "`G-1450 fee.pdf`" in rep,
+       rep[-600:])
+    ok("k092: a Cyrillic look-alike letter is read as the Latin one in the file name AND in the petition, and both are "
+       "named with the character (U+041E)", "O-2" in r["matched"] and rep.count("U+041E CYRILLIC CAPITAL LETTER O") == 2,
+       str(rep.count("U+041E")))
+    ok("k092: «Exhibit V-67-1» cites V-67; «Cross Exhibit V-67-1 / -2» are its parts, not duplicates",
+       "V-67" in r["matched"] and not r["duplicates"], str(r["duplicates"]))
+    ok("k092: a name that starts like an id of a series nobody else uses says why it has no id",
+       "* `Z-1 single.pdf` — starts like an id of series Z" in rep, rep[rep.find("WITHOUT RECOGNIZED"):][:300])
+    ok("k092: an id of any series after the word Exhibit is checked - «Exhibit Z-9» with no file is CITED-NO-FILE; "
+       "«I-20», «N-400» and a bare «J-1 visa» are not cited", r["cited_no_file"] == {"Z-9"} and not (
+           {"I-20", "N-400"} & (r["matched"] | r["cited_no_file"])), str(sorted(r["cited_no_file"])))
+
+    def cli(petition, exhibits):
+        p = _sp.run([sys.executable, "-m", "krokai", "check-exhibits", "--petition", petition, "--exhibits", exhibits],
+                    cwd=repo, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+    clean_pet = touch("clean", "petition.md", text="The degree (Exhibit Y-1) and the letter (Exhibit Y-2).\n")
+    for fn in ("Exhibit Y1 degree.pdf", "Exhibit Y2 letter.pdf"):
+        touch("clean-ex", "Exhibit Y", fn)
+    rc_c, out_c = cli(clean_pet, os.path.join(base, "clean-ex"))
+    rc_r, out_r = cli(pet, ex)
+    ok("k092: green path through the CLI - a petition citing Y-1, Y-2 and a folder «Exhibit Y» holding them exits 0 "
+       "with both matched and no look-alike section; the fixture above exits 1 (Z-9 has no file)",
+       rc_c == 0 and "| Exhibits matched | 2 |" in out_c and "LOOK-ALIKE" not in out_c and rc_r == 1
+       and "LOOK-ALIKE LETTERS" in out_r, "rc %s / %s" % (rc_c, rc_r))
+
+    # --- facts ------------------------------------------------------------------------------------------------------
+    root = os.path.join(tmp, "k092-facts")
+    for d in ("law", "case", "exhibits"):
+        os.makedirs(os.path.join(root, d), exist_ok=True)
+    io.open(os.path.join(root, "law", "8CFR-204.md"), "w", encoding="utf-8").write(
+        "# 8 CFR 204.5 (fixture)\n\n(k) An alien who is a member of the professions must show the degree.\n")
+    io.open(os.path.join(root, "exhibits", "Exhibit Y3 Degree.md"), "w", encoding="utf-8").write(
+        "Northfield Institute confers the degree of Master of Science on Ada Testperson on June 5, 2019.\n")
+    io.open(os.path.join(root, "casefile.json"), "w", encoding="utf-8").write(json.dumps({
+        "bank": "QUOTE-BANK.md", "queue": "QUOTE-QUEUE.md", "library_index": "law/INDEX.md", "sources": ["law"],
+        "drafts": [{"tier": "A", "label": "filed", "path": "case"}], "citation_packs": ["us-federal"],
+        "exhibits": ["exhibits"]}))
+    p = _sp.run([sys.executable, "-m", "krokai", "facts", "add", "--exhibit", "Y-3", "--from", "Northfield Institute",
+                 "--to", "June 5, 2019", "--dir", root], cwd=repo, env=env, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=240)
+    out = (p.stdout or "") + (p.stderr or "")
+    ok("k092: `facts add --exhibit Y-3` finds «Exhibit Y3 Degree» although no other file declares series Y (dry run)",
+       p.returncode == 0 and "Exhibit Y3 Degree.md" in out and "exhibit : Y-3" in out, out[:400])
+    ok("k092: a fact sentence's «Exhibit Y-3» and «Exhibit V-67-1» are ids, not facts (their digits are blanked)",
+       "3" not in F._masked("as Exhibit Y-3 shows") and "67" not in F._masked("see Exhibit V-67-1 here")
+       and F.exhibit_id("Y-3") == "Y-3" and F.exhibit_id(CYR_C + "-26") == "C-26", F._masked("as Exhibit Y-3 shows"))
+
+
 def suite_k093_short_pdf(tmp):
     """K093 (2026-11-26): a SHORT PDF (under MIN_TEXT_LAYER) that reads as a typeset document on
     every count - a typeset layer, no picture, a line in the page body - is INDEXED with the
@@ -7639,6 +7765,7 @@ def main():
         suite_k096_picture_pages(tmp)
         suite_k097_split_quotation(tmp)
         suite_k046_fact_bank(tmp)
+        suite_k092_exhibit_ids(tmp)
         suite_k094_condition_cuts(tmp)
         suite_word_diff()
         suite_citations()

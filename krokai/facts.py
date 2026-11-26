@@ -173,11 +173,12 @@ def _cleaned(sentence):
 
 def _masked(text, packs=None):
     """`text` with every non-fact span blanked (same length, so offsets stay the sentence's own)."""
-    from .exhibit_check import DEFAULT_SERIES, _K_RE, _build_id_re
+    from .exhibit_check import ANCHORED_ID_RE, DEFAULT_SERIES, _K_RE, _build_id_re
     s = text
     spans = []
+    # K092: an id right after the word Exhibit is blanked whatever its letter («Exhibit Y-3»: the 3 is no fact).
     for rx in (_MARKER_RE, _URL_RE, _CITE_RE, _SECTION_RE, _SUBSEC_RE, _FORM_RE, _build_id_re(DEFAULT_SERIES),
-               _K_RE, _VISA_RE, _EXH_WORD_RE, _LIST_RE):
+               ANCHORED_ID_RE, _K_RE, _VISA_RE, _EXH_WORD_RE, _LIST_RE):
         spans += [(m.start(), m.end()) for m in rx.finditer(s)]
     if packs is not None:
         for cite, pos in packs.find_positions(s):
@@ -366,12 +367,9 @@ def read_bank(path):
 
 def exhibit_id(s):
     """The exhibit id in `s` («K-4», «Exhibit D-19a», «K12») in `exhibit_check`'s canonical form, or None."""
-    from .exhibit_check import DEFAULT_SERIES, _K_RE, _build_id_re, canon
-    m = _build_id_re(DEFAULT_SERIES).search(s or "")
-    if m:
-        return canon(*m.groups())
-    m = _K_RE.search(s or "")
-    return canon("K", m.group(1), m.group(2)) if m else None
+    # K092: any series letter - the user named an exhibit («Y-3» of the I-140 package), and a look-alike letter folds.
+    from .exhibit_check import id_of
+    return id_of(s)
 
 
 def _sha(path):
@@ -402,7 +400,7 @@ def run_add(a, printer=print):
     from .bank_add import LONG_SLICE_WARN, _norm_anchor, _slice, _write_atomic
     from .config import load
     from .corpus import Corpus
-    from .exhibit_check import scan_exhibit_dir
+    from .exhibit_check import DEFAULT_SERIES, name_id, scan_exhibit_dir
     from .verify import page_of
 
     cfg = load(a.dir)
@@ -420,13 +418,15 @@ def run_add(a, printer=print):
         if not os.path.isfile(path):
             printer("🔴 --file %s does not exist." % a.file)
             return 3
-        if exhibit_id(os.path.basename(path)) != eid:
+        got = name_id(os.path.basename(path), None)
+        if not got or got[0] != eid:
             printer("🟡 the file name does not carry %s as krokai reads exhibit ids - the entry keeps the id you gave."
                     % eid)
     else:
         found = []
         for d in cfg["exhibits"]:
-            files, _probs = scan_exhibit_dir(cfg.abs(d))
+            # K092: the requested id's own series is read even where no other file declares it.
+            files, _probs = scan_exhibit_dir(cfg.abs(d), series=list(DEFAULT_SERIES) + [eid.split("-")[0]])
             found += files.get(eid, [])
         if not found:
             printer("🔴 no file carries exhibit %s in its name under %s." % (eid, ", ".join(cfg["exhibits"])))

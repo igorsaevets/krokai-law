@@ -19,9 +19,11 @@ cannot be read is now a LOUD report row, never a quiet zero.
 """
 from __future__ import annotations
 
+import collections
 import io
 import os
 import re
+import unicodedata
 
 from .corpus import walk_error
 from .readers import MissingReader
@@ -69,14 +71,58 @@ NOT_EXHIBIT = frozenset({
 # not files in the exhibit tree. They live in the petition folder, not the exhibit folder.
 DOC_SERIES = frozenset({"M", "W"})
 
+# 🔴 K092 (2026-11-26): 23 files of the I-140 package carried a CYRILLIC letter where the Latin one is meant (21 «О»
+# U+041E in series O, 2 «С» U+0421 in series C) - the eye cannot tell, a Russian keyboard types them, and every id
+# reader saw no id. The table is Unicode's own: UTS #39 confusables.txt (version 18.0.0, 2026-08-06), the Cyrillic and
+# Greek CAPITAL letters it maps to ONE Latin capital (a small letter folds through `.upper()`; reading is case-blind).
+# A folded letter is read AND named in the report: the name still sorts, searches and prints as another letter.
+LOOKALIKE = dict(zip(
+    "АВСЕԌНЈКМОРԚЅТѴԜХУҮ"
+    "ΑΒϹΕϜΗͿΚΜϺΝΟΡΤΧΥϒΖ",
+    "ABCEGHJKMOPQSTVWXYY" "ABCEFHJKMMNOPTXYYZ"))
+_LOOK = "".join(sorted(LOOKALIKE))
+
+
+def _fold(ch):
+    """The Latin capital a typed series letter stands for («О» U+041E -> «O», «k» -> «K»)."""
+    up = ch.upper()
+    return LOOKALIKE.get(up, up)
+
+
 # Exhibit-ID extraction from document TEXT. The pattern must be strict: in prose, "I-485",
 # "H-1B", "F-1" are visa/form codes, not exhibit numbers. Only the declared series match.
 # Sub-exhibit suffixes (D-19a, D-19c) are captured. Leading zeros are stripped in canon().
+#
+# 🔴 K092 (2026-11-26), measured on a names copy of the AOS matter (`private\reports\K092\probe*.log`):
+#  - the WORD decides. «(Exhibit J-1)», «(Exhibit F-1)», «(Exhibit L-1)» stood in the drafts 16-46 times each and were
+#    dropped, because NOT_EXHIBIT (codes standing bare) was applied after the word «Exhibit» too - and the filed I-485
+#    package HAS J-1, J-2, L-1, H-1 and 12 parts of H-2. After «Exhibit / Exhibits / Ex. / Exh.» any letter is an
+#    exhibit id; a BARE token must still be a series letter and not a code (`text_ids`). Only the token right after
+#    the word: «Exhibit D-1 - I-20» would chain the dash to a form number - 209 times in the drafts.
+#  - «V-67-1» is part 1 of V-67: the old `(?![-–—\d])` refused the whole id - 3 filed copies «Cross Exhibit V-67-1 …»
+#    had no id and 56 mentions in the drafts were not read. A date «A-12-2024» stays refused (a digit after the part).
+#  - a letter of another script that looks Latin (LOOKALIKE) is read as the Latin one, and named.
+_ANCH = r"(?P<anch>Exhibits?\s+|Exh\.\s*|Ex\.\s*)"
+_TAIL = r"\s*[-–—]\s*0*(?P<num>\d{1,4})(?P<suf>[a-zA-Z]?\d?)(?:[-–—](?P<part>\d{1,2}))?(?![-–—]?\d)"
+
+
+def _letter_class(series):
+    """The Latin letters of `series` and every look-alike of them; `series` None = any letter."""
+    if series is None:
+        return "[A-Z%s]" % _LOOK
+    lat = "".join(sorted({s.upper() for s in series if len(s) == 1}))
+    return "[%s%s]" % (lat, "".join(c for c in sorted(LOOKALIKE) if LOOKALIKE[c] in lat))
+
+
 def _build_id_re(series):
-    s = "|".join(sorted(series, key=len, reverse=True))
-    return re.compile(
-        r"(?<![A-Za-z])(?:Exhibit\s+)?(%s)\s*[-–—]\s*0*(\d{1,4})([a-zA-Z]?\d?)"
-        r"(?![-–—\d])" % s, re.I)
+    """Ids of `series` in text, after the word Exhibit or bare; `series` None = any letter. Groups: anch, let, num,
+    suf, part - canonical id = canon(_fold(let), num, suf)."""
+    return re.compile(r"(?<![^\W\d_])" + _ANCH + "?(?P<let>" + _letter_class(series) + ")" + _TAIL, re.I)
+
+
+_ID_TEXT_RE = _build_id_re(None)
+# Right after the word Exhibit, any letter - `facts._masked` blanks these like series ids (their digits are no fact).
+ANCHORED_ID_RE = re.compile(r"(?<![^\W\d_])" + _ANCH + "(?P<let>" + _letter_class(None) + ")" + _TAIL, re.I)
 
 # K-series: often written WITHOUT hyphen ("K1", "K12") in some briefs.
 _K_RE = re.compile(r"(?<![A-Za-z])\bK\s*[-–—]?\s*0*(\d{1,4})([a-zA-Z]?)(?![-–—\d])")
@@ -84,10 +130,17 @@ _K_RE = re.compile(r"(?<![A-Za-z])\bK\s*[-–—]?\s*0*(\d{1,4})([a-zA-Z]?)(?![-
 # Exhibit-ID extraction from FILENAMES. More lenient: the hyphen between letter and number
 # is optional because some files are named "Exhibit P01 - ..." without the hyphen.
 def _build_file_re(series):
-    s = "|".join(sorted(series, key=len, reverse=True))
-    return re.compile(
-        r"^(?:Exhibit\s+)?(%s)\s*[-–—]?\s*0*(\d{1,4})([a-zA-Z]?\d?)"
-        r"(?![0-9])" % s, re.I)
+    """Ids of `series` at the START of a file name; `series` None = any letter. Groups: let, num, suf."""
+    return re.compile(r"^(?:Exhibit\s+)?(?P<let>" + _letter_class(series) + r")\s*[-–—]?\s*0*(?P<num>\d{1,4})"
+                      r"(?P<suf>[a-zA-Z]?\d?)(?![0-9])", re.I)
+
+
+_NAME_RE = _build_file_re(None)
+# A USCIS form number standing bare - never an exhibit of a series learned from a folder (`text_ids`), and never a
+# name that teaches a series (`declared_series`): a forms folder holds I-485, G-1450, N-400.
+_FORM_SHAPED = re.compile(r"^(?:I-\d{2,4}|N-\d{3})(?![0-9])")
+_FORM_NAME = re.compile(r"^(?:I-\d{2,4}|G-\d{2,4}|N-\d{3})(?![0-9])")
+_SERIES_DIR = re.compile(r"^Exhibits?\s+(" + _letter_class(None) + r")\s*$", re.I)
 
 # Multi-part file suffix: B-03_1, B-03_2 are parts of the same exhibit, not duplicates.
 PART_RE = re.compile(r"[-_](\d{1,2})(?:\D|$)")
@@ -110,21 +163,79 @@ def canon(series, num, suf):
     return "%s-%s%s" % (series.upper(), num.lstrip("0") or "0", suf.lower())
 
 
+def _canon_m(m):
+    return canon(_fold(m.group("let")), m.group("num"), m.group("suf"))
+
+
+def text_ids(text, series=None):
+    """(canonical id, match) for every exhibit id `text` cites. After the word Exhibit / Exhibits / Ex. / Exh. any
+    letter is an id (the word says so, codes included: «Exhibit J-1»); a BARE token needs a letter of `series`, and
+    must be neither a code (NOT_EXHIBIT) nor a bare form number. The memoranda series (DOC_SERIES) never count."""
+    act = {s.upper() for s in (DEFAULT_SERIES if series is None else series)}
+    out = []
+    for m in _ID_TEXT_RE.finditer(text or ""):
+        letter = _fold(m.group("let"))
+        eid = canon(letter, m.group("num"), m.group("suf"))
+        if letter in DOC_SERIES:
+            continue
+        if not m.group("anch") and (letter not in act or eid in NOT_EXHIBIT or _FORM_SHAPED.match(eid)):
+            continue
+        out.append((eid, m))
+    if "K" in act:
+        for m in _K_RE.finditer(text or ""):
+            out.append((canon("K", m.group(1), m.group(2)), m))
+    return out
+
+
 def ids_in_text(text, series=None):
     """Extract all exhibit IDs from document text. Returns a set of canonical IDs."""
-    if series is None:
-        series = DEFAULT_SERIES
-    id_re = _build_id_re(series)
-    out = set()
-    for m in id_re.finditer(text):
-        eid = canon(*m.groups())
-        if eid in NOT_EXHIBIT or eid.split("-")[0] in DOC_SERIES:
-            continue
-        out.add(eid)
-    if "K" in series:
-        for m in _K_RE.finditer(text):
-            out.add(canon("K", m.group(1), m.group(2)))
-    return out
+    return {eid for eid, _m in text_ids(text, series)}
+
+
+def id_of(s):
+    """The first exhibit id in `s` with ANY series letter - a user who types `--exhibit Y-3` has named an exhibit."""
+    m = _ID_TEXT_RE.search(s or "")
+    if m:
+        return _canon_m(m)
+    m = _K_RE.search(s or "")
+    return canon("K", m.group(1), m.group(2)) if m else None
+
+
+def name_id(fn, series=None):
+    """(canonical id, the letter as typed, match) read from a file NAME, or None: at the start («Exhibit O1 …», «Y-12
+    …», the dash optional), else the first id of `series` - or any id right after the word Exhibit - in its first 50
+    characters («Cross Exhibit V-67-1 …»). `series` None = any letter."""
+    act = None if series is None else {s.upper() for s in series}
+    m = _NAME_RE.match(fn)
+    if m and (act is None or _fold(m.group("let")) in act):
+        return _canon_m(m), m.group("let"), m
+    for m in _ID_TEXT_RE.finditer(fn[:50]):
+        if act is None or m.group("anch") or _fold(m.group("let")) in act:
+            return _canon_m(m), m.group("let"), m
+    return None
+
+
+def declared_series(root):
+    """The series a package declares itself (🔴 K092): a folder named «Exhibit Y» / «Exhibits Y», or a letter that
+    starts the names of 2+ files with different numbers. A form-shaped name (I-485, G-1450, N-400) never teaches a
+    series - a forms folder would declare I, G and N. Measured on the AOS copy: the I-140 package declares
+    ABCDEFGHKNOQVXY (its folders «Exhibit N» … «Exhibit Y»), the I-485 package BCDEGHJKLPX, the forms folder nothing."""
+    nums = {}
+    found = set()
+    if not os.path.isdir(root):
+        return found
+    for dp, dirs, fns in os.walk(root, onerror=walk_error):
+        m = _SERIES_DIR.match(os.path.basename(os.path.normpath(dp)))
+        if m:
+            found.add(_fold(m.group(1)))
+        for fn in fns:
+            if os.path.splitext(fn)[1].lower() not in DOC_EXTS:
+                continue
+            m = _NAME_RE.match(fn)
+            if not m or _FORM_NAME.match(_canon_m(m)):
+                continue
+            nums.setdefault(_fold(m.group("let")), set()).add(int(m.group("num")))
+    return found | {s for s, v in nums.items() if len(v) >= 2}
 
 
 # ------------------------------------------------------------------------------- form IDs
@@ -246,12 +357,12 @@ def scan_exhibit_dir(root, series=None):
     """
     if series is None:
         series = DEFAULT_SERIES
-    file_re = _build_file_re(series)
-    id_re = _build_id_re(series)
     files = {}
     problems = []
     if not os.path.isdir(root):
         return files, problems
+    declared = declared_series(root)
+    active = {s.upper() for s in series} | declared
     for dp, dirs, fns in os.walk(root, onerror=walk_error):
         dirs.sort()
         for fn in sorted(fns):
@@ -261,15 +372,22 @@ def scan_exhibit_dir(root, series=None):
                 continue
             if _is_tool_output(full):
                 continue                     # a sidecar beside its PDF is not a second exhibit
-            m = file_re.match(fn) or id_re.search(fn[:50])
-            if not m:
+            got = name_id(fn, active)
+            if not got:
                 problems.append(("NO-ID", full))
                 continue
-            eid = canon(*m.groups())
-            if eid in NOT_EXHIBIT or eid.split("-")[0] in DOC_SERIES:
+            eid, typed = got[0], got[1]
+            letter = eid.split("-")[0]
+            # 🔴 K092: a code-shaped NAME (H-1, J-1, L-1, F-2, G-28) is an exhibit when the package itself uses the
+            # series. The filed I-485 package holds 18 such files (J-1, J-2, L-1, H-1, 12 parts of H-2), the I-140
+            # package 10 (F-2, F-3, G-28, H-1, H-2) - all 28 were dropped as NOT-EXHIBIT with no line in the report.
+            # A forms folder declares no series, so «G-1450.pdf» there stays a form (and is listed).
+            if letter in DOC_SERIES or (eid in NOT_EXHIBIT and letter not in declared):
                 problems.append(("NOT-EXHIBIT", full))
                 continue
             files.setdefault(eid, []).append(full)
+            if typed.upper() in LOOKALIKE:
+                problems.append(("LOOKALIKE", full))
             if ACTION_RE.search(fn):
                 problems.append(("ACTION-MARKER", full))
     return files, problems
@@ -335,6 +453,13 @@ def reconcile(petition_paths, exhibit_dirs, form_dirs=None, series=None, out=Non
 
     say("# Exhibit / Form reconciliation: documents vs. disk")
     say("")
+    # 🔴 K092: the series the exhibit folders declare themselves (`declared_series`) are read in the petition's text
+    # too - a bare «Y-3» in an exhibit table cites the I-140 package's series Y.
+    declared = set()
+    for d in exhibit_dirs:
+        declared |= declared_series(d)
+    active = {s.upper() for s in series} | declared
+    looks = collections.Counter()
 
     # --- read petition documents ---
     cited = set()
@@ -369,7 +494,12 @@ def reconcile(petition_paths, exhibit_dirs, form_dirs=None, series=None, out=Non
                 unread.append((fn, "the .docx produced no text - empty document or extraction "
                                    "failure; re-save it from Word and re-run"))
             return
-        refs = ids_in_text(text, series)
+        found = text_ids(text, active)
+        refs = {eid for eid, _m in found}
+        for eid, m in found:
+            typed = m.groupdict().get("let") or ""
+            if typed.upper() in LOOKALIKE:
+                looks[(fn, typed, eid)] += 1
         frefs = forms_in_text(text)
         per_doc[fn] = refs
         per_doc_forms[fn] = frefs
@@ -430,6 +560,10 @@ def reconcile(petition_paths, exhibit_dirs, form_dirs=None, series=None, out=Non
     total_exhibit_files = sum(len(v) for v in on_disk.values())
     say("exhibit files on disk: **%d** files in **%d** exhibit IDs" % (
         total_exhibit_files, len(on_disk)))
+    extra = sorted(declared - {s.upper() for s in series})
+    if extra:
+        say("series read because the exhibit folders use them (not in krokai's default list): **%s**"
+            % ", ".join(extra))
     say("")
 
     # --- scan form directories ---
@@ -486,9 +620,6 @@ def reconcile(petition_paths, exhibit_dirs, form_dirs=None, series=None, out=Non
     # true for every set of files that spell their ID with a hyphen, and this class had never
     # once fired. Position is the key, the R51 lesson: the same characters mean a part suffix
     # after the ID and the ID itself before it.
-    dup_re = _build_file_re(series)
-    idr = _build_id_re(series)
-
     def _part_after_id(x):
         b = os.path.basename(x)
         # 🔴 R77 (#F-F, grokbuild MINOR, probe-proven): the file was ADMITTED via
@@ -498,7 +629,11 @@ def reconcile(petition_paths, exhibit_dirs, form_dirs=None, series=None, out=Non
         # the ID the same way, search AFTER its end. Whole-name only when no ID is found at
         # all. Position is the invariant (R51: same characters mean a part suffix AFTER the ID
         # and the ID itself BEFORE it).
-        m = dup_re.match(b) or idr.search(b[:50])
+        # 🔴 K092: the id reader now takes «V-67-1» whole (part 1 of V-67) - its part group IS the part suffix.
+        got = name_id(b, active)
+        m = got[2] if got else None
+        if m is not None and m.groupdict().get("part"):
+            return True
         return bool(PART_RE.search(b[m.end():] if m else b))
 
     duplicates = {k: v for k, v in on_disk.items()
@@ -562,13 +697,52 @@ def reconcile(petition_paths, exhibit_dirs, form_dirs=None, series=None, out=Non
             say("* `%s`" % os.path.basename(p))
         say("")
 
+    # --- look-alike letters (K092) ---
+    look_files = [p for k, p in all_problems if k == "LOOKALIKE"]
+    if look_files or looks:
+        say("## LOOK-ALIKE LETTERS: another script typed for a Latin series letter — %d"
+            % (len(look_files) + len(looks)))
+        say("")
+        say("A Cyrillic or Greek letter that looks Latin (a Russian keyboard types «С», «О», «Р», «Х»). krokai reads "
+            "the id as the Latin letter; a search, a sort and other tools do not - retype the letter.")
+        say("")
+        for p in look_files:
+            b = os.path.basename(p)
+            got = name_id(b, None)
+            ch = got[1] if got else "?"
+            say("* file `%s` — «%s» is U+%04X %s, read as **%s**" % (
+                b, ch, ord(ch[0]), unicodedata.name(ch[0], "?"), got[0] if got else "?"))
+        for (fn, ch, eid), n in sorted(looks.items()):
+            say("* petition `%s` — «%s» is U+%04X %s, read as **%s** (%d×)" % (
+                fn, ch, ord(ch), unicodedata.name(ch, "?"), eid, n))
+        say("")
+
+    # --- names read as codes (K092: they were dropped with no line) ---
+    notex = [p for k, p in all_problems if k == "NOT-EXHIBIT"]
+    if notex:
+        say("## NAMES READ AS A FORM / VISA CODE OR A MEMORANDA SERIES, NOT AN EXHIBIT — %d" % len(notex))
+        say("")
+        say("Not counted as exhibits: the name starts with a code (G-1450, H-1, J-1 ...) of a series no other file of "
+            "this folder uses, or with the memoranda series (%s). If one IS an exhibit, a folder named «Exhibit "
+            "<letter>» around it declares the series." % ", ".join(sorted(DOC_SERIES)))
+        say("")
+        for p in notex:
+            say("* `%s`" % os.path.basename(p))
+        say("")
+
     # --- files without recognized ID ---
     noname = [p for k, p in all_problems if k == "NO-ID"]
     if noname:
         say("## FILES WITHOUT RECOGNIZED EXHIBIT ID — %d" % len(noname))
         say("")
         for p in noname:
-            say("* `%s`" % os.path.basename(p))
+            b = os.path.basename(p)
+            m = _NAME_RE.match(b)
+            hint = ""
+            if m and _fold(m.group("let")) not in active:
+                hint = (" — starts like an id of series %s, which krokai's list lacks and no other file here uses; a "
+                        "folder «Exhibit %s» declares it" % (_fold(m.group("let")), _fold(m.group("let"))))
+            say("* `%s`%s" % (b, hint))
         say("")
 
     # --- numbering gaps ---
@@ -628,4 +802,7 @@ def reconcile(petition_paths, exhibit_dirs, form_dirs=None, series=None, out=Non
         "report_lines": L,
         "refused": False,
         "unread": unread,
+        "declared": sorted(declared),
+        "lookalikes": look_files + [k for k in sorted(looks)],
+        "not_exhibit": notex,
     }
