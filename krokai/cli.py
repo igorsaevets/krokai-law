@@ -381,6 +381,13 @@ def cmd_quote(a):
                   "or name\n        makes a correct quotation unfindable. Compare with the page "
                   "image before rewriting the quotation."
                   % (os.path.relpath(p, cfg.root), ocr_pages_cell(corpus.ocr_layer(p))))
+        # K096: cause 3 may be live anywhere in the corpus - a picture's words were never in the text.
+        pics = corpus.picture_files() if hasattr(corpus, "picture_files") else []
+        if pics:
+            print("\n     🟡 Cause 3 may be live: %d indexed file(s) have PICTURE PAGES - words in a "
+                  "picture or drawn\n        as shapes, not in the text (`krokai library` lists the "
+                  "pages). If the quotation comes from\n        a scan, a photo or a screenshot of a "
+                  "document, OCR that page and check again." % len(pics))
         printed = 0
         for key in sorted(cite_keys):
             s = suggest_for_key(key)
@@ -629,6 +636,34 @@ def _print_ocr_layers(cfg):
             print("     %s  (%s)" % (os.path.relpath(p, cfg.root), ocr_pages_cell(lay)))
         print("  Not detected by this test: an OCR engine that draws its text visibly (the page "
               "then looks typeset).")
+    _print_picture_pages(cfg, pdfs)
+
+
+def _print_picture_pages(cfg, pdfs):
+    """K096: the pages of each source PDF whose words are in a picture or drawn as shapes while its
+    text layer holds little more than a label there (readers.picture_pages; cached beside the text
+    cache). Needs PyMuPDF - without it the count says so instead of reading as zero."""
+    from .readers import picture_pages, picture_pages_cell, PICTURE_ADVICE
+    found, unknown = [], 0
+    for p in pdfs:
+        try:
+            f = picture_pages(p, cfg.cache)
+        except Exception:                                                # noqa: BLE001
+            f = None
+        if f is None:
+            unknown += 1
+        elif f.get("flagged"):
+            found.append((p, f))
+    print("\nPicture pages: %d of %d PDF(s)%s" % (len(found), len(pdfs), (
+        " (%d NOT checked - this needs PyMuPDF, or the file could not be read)" % unknown) if unknown else ""))
+    if found:
+        print("  On these pages %s:" % PICTURE_ADVICE)
+        for p, f in found:
+            print("     %s  (%s; page %d: %s)" % (os.path.relpath(p, cfg.root), picture_pages_cell(f),
+                                                  f["flagged"][0][0], f["flagged"][0][1]))
+        print("  Not detected by this test: a picture under 50 or more characters of body text (an "
+              "embedded screenshot),\n  a picture under a tenth of the page, a font that maps its "
+              "glyphs to the wrong letters.")
 
 
 def cmd_library(a):

@@ -28,7 +28,7 @@ import re
 
 from .normalize import alnum, dehyph
 from .readers import (corpus_text, no_text_layer, MIN_TEXT_LAYER, text_layer, page_table,  # noqa: F401
-                      pdf_text_verdict)
+                      pdf_text_verdict, picture_pages)
 
 __all__ = ["Corpus", "walk", "copy_print", "COPY_SHARE", "COPY_LEN"]
 
@@ -218,6 +218,9 @@ class Corpus(object):
         # K024: per indexed PDF, what drew its text (readers.text_layer) - an OCR layer is what an
         # OCR engine read, and every surface that shows a match there says so (ocr_layer below).
         self.layers = {}
+        # K096: per indexed PDF, its picture pages (readers.picture_pages) - words in a picture or
+        # drawn as shapes while the text layer holds little more than a label there. None: unmeasured.
+        self.pictures = {}
         self.cache_dir = cache_dir          # K018: where the pages file of each PDF is kept
         # Paths the law register knows to have been replaced by a newer edition of the same
         # provision. They stay INDEXED on purpose - the words really are in a source on this
@@ -325,6 +328,10 @@ class Corpus(object):
                     self.layers[p] = text_layer(p, cache_dir)
                 except Exception:                                   # noqa: BLE001 - advisory
                     self.layers[p] = None
+                try:
+                    self.pictures[p] = picture_pages(p, cache_dir)
+                except Exception:                                   # noqa: BLE001 - advisory
+                    self.pictures[p] = None
             self.paths.append(p)
             self.starts.append(pos)
             self.astarts.append(apos)
@@ -396,6 +403,15 @@ class Corpus(object):
         if n_ocr:
             print("  OCR text layer - %d indexed file(s): a match there is what an OCR engine read "
                   "(`krokai library` lists them)" % n_ocr)
+        pics = self.picture_files()
+        if pics:
+            print("  PICTURE PAGES - %d page(s) in %d indexed file(s): their words are in a picture or "
+                  "drawn as shapes, not in the text - a quotation from them comes back NOT FOUND "
+                  "(`krokai library` lists them)" % (sum(len(f["flagged"]) for _p, f in pics), len(pics)))
+        unm = [p for p in self.paths if p.lower().endswith(".pdf") and getattr(self, "pictures", {}).get(p) is None]
+        if unm:
+            print("  picture pages NOT checked in %d PDF(s) - this needs PyMuPDF (pip install "
+                  "\"krokai[all]\"), or the file could not be read" % len(unm))
 
     def ocr_layer(self, path):
         """K024: the layer facts when `path` is an indexed PDF whose text is wholly or partly an
@@ -405,6 +421,15 @@ class Corpus(object):
 
     def ocr_files(self):
         return [(p, self.layers[p]) for p in self.paths if self.ocr_layer(p)]
+
+    def picture_pages(self, path):
+        """K096: the picture-page facts of an indexed PDF that has at least one such page; None
+        for any other file (see readers.picture_pages)."""
+        f = getattr(self, "pictures", {}).get(path) if path else None
+        return f if f and f.get("flagged") else None
+
+    def picture_files(self):
+        return [(p, self.pictures[p]) for p in self.paths if self.picture_pages(p)]
 
     def is_superseded(self, path):
         return bool(path) and os.path.normcase(os.path.abspath(path)) in self.superseded

@@ -37,7 +37,8 @@ import time
 
 from .corpus import walk
 from .normalize import strip_invisibles
-from .readers import read_pdf, MIN_TEXT_LAYER, EXTRACTOR_VERSION, pdf_text_verdict
+from .readers import (read_pdf, MIN_TEXT_LAYER, EXTRACTOR_VERSION, pdf_text_verdict, picture_pages,
+                      picture_pages_cell, PICTURE_ADVICE)
 from .run import SENTINEL_HEAD          # R77 F-C: the sentinel/extractor head window (2000).
 
 __all__ = ["build", "SUFFIX"]
@@ -121,11 +122,12 @@ def build(source_dirs, force=False, dry_run=False, cache_dir=None, printer=print
     Returns `(made, skipped, no_text_layer, failed)`.
     """
     made = skipped = failed = 0
-    no_layer = []
+    no_layer, texted = [], []
     for src in walk(source_dirs, (".pdf",)):
         dst = src[:-4] + SUFFIX
         if not force and _current(dst, src):
             skipped += 1
+            texted.append(src)
             continue
         try:
             # 🔴 The invisible characters come out, and nothing else does. This file is written to
@@ -143,6 +145,7 @@ def build(source_dirs, force=False, dry_run=False, cache_dir=None, printer=print
         if len(text.strip()) < MIN_TEXT_LAYER and pdf_text_verdict(src, cache_dir)[0]:
             no_layer.append(src)
             continue
+        texted.append(src)
         if dry_run:
             made += 1
             continue
@@ -165,4 +168,18 @@ def build(source_dirs, force=False, dry_run=False, cache_dir=None, printer=print
                 "and plausible text in a quotation is exactly the failure being prevented here.")
         for p in no_layer:
             printer("     %s" % p)
+    # K096: a sidecar holds the text layer, so a page whose words are in a picture is as blind in
+    # grep as in the corpus - named here, where the user meets the sidecars.
+    pics = []
+    for src in texted:
+        try:
+            f = picture_pages(src, cache_dir)
+        except Exception:                                   # noqa: BLE001 - advisory
+            f = None
+        if f and f.get("flagged"):
+            pics.append((src, f))
+    if pics:
+        printer("\n🟡 PICTURE PAGES - their words are NOT in the sidecars either: %s." % PICTURE_ADVICE)
+        for p, f in pics:
+            printer("     %s  (%s)" % (p, picture_pages_cell(f)))
     return made, skipped, no_layer, failed

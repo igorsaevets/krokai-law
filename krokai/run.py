@@ -31,7 +31,7 @@ from . import address as addr_mod
 from .citations import load_packs
 from .corpus import Corpus, walk
 from .extract import extract_quotes, citation_window, not_examined
-from .readers import read_any, OCR_CHECK, ocr_pages_cell, ocr_label
+from .readers import read_any, OCR_CHECK, ocr_pages_cell, ocr_label, PICTURE_ADVICE, picture_pages_cell
 from .verdicts import ORDER, DANGEROUS, CLEAN, UNCHECKABLE, MEANING, MARK, label, meaning
 from .verify import check, copies_check, page_of
 
@@ -721,6 +721,13 @@ def print_summary(res, lang="en", printer=print):
     if o["not_found"]:
         printer("🟡 OCR TEXT LAYER, tiers A+B: %d NOT FOUND cite a source whose text is an OCR layer "
                 "- rule out cause 3 (an OCR misread) before fabrication." % o["not_found"])
+    # K096: advisory as well - a NOT FOUND may quote a picture's words that were never in the text.
+    nf = sum(1 for r in res["rows"] if r["verdict"] == "NOT_FOUND")
+    pics = res["corpus"].picture_files() if hasattr(res["corpus"], "picture_files") else []
+    if nf and pics:
+        printer("🟡 PICTURE PAGES: %d indexed file(s) have pages whose words are in a picture, not in "
+                "the text - %d NOT FOUND may quote one of them (REPORT.md lists the pages)."
+                % (len(pics), nf))
     # K025: advisory too - a quotation that reads differently in another copy of its source.
     cc = copy_counts(res)
     if cc["disagree"]:
@@ -796,6 +803,15 @@ def write_report(res, cfg, out_dir, lang="en"):
         why = getattr(c, "stub_why", {})                              # K093: the reason, per file
         md += ["* `%s`%s" % (os.path.relpath(p, cfg.root), " - %s" % why[p] if why.get(p) else "")
                for p in c.excluded_stub] + [""]
+    pics = c.picture_files() if hasattr(c, "picture_files") else []        # K096
+    if pics:
+        md += ["## Indexed files with picture pages", "",
+               "These files ARE searched - but on the pages named here %s." % PICTURE_ADVICE, ""]
+        md += ["* `%s` - %s; page %d: %s" % (os.path.relpath(p, cfg.root), picture_pages_cell(f),
+                                               f["flagged"][0][0], f["flagged"][0][1]) for p, f in pics[:60]]
+        if len(pics) > 60:
+            md += ["* … and %d more (`krokai library`; `result.json` `picture_pages`)" % (len(pics) - 60)]
+        md += [""]
 
     if res.get("mixed"):
         md += ["## 🔴 One provision, two texts", "",
@@ -822,6 +838,10 @@ def write_report(res, cfg, out_dir, lang="en"):
         md += ["", "## %s - %d (A %d · B %d · C %d · D %d)"
                % (label(st, lang), len(sel), grid["A"][st], grid["B"][st], grid["C"][st],
                   grid["D"][st]), "", meaning(st, lang), ""]
+        if st == "NOT_FOUND" and pics:                                # K096: cause 3, live here
+            md += ["🟡 %d indexed file(s) have PICTURE PAGES (listed under «Indexed files with picture "
+                   "pages»): a quotation of a picture's words reads NOT FOUND here - look at those pages "
+                   "before calling a quotation invented." % len(pics), ""]
         for j, r in enumerate(sel, 1):
             md += ["### %d. [%s] %s" % (j, _tier_of(r),
                                         "; ".join(r["cites"]) if r["cites"] else
@@ -866,6 +886,10 @@ def write_report(res, cfg, out_dir, lang="en"):
                "corpus_no_text_layer": [os.path.relpath(p, cfg.root) for p in c.excluded_stub],
                "ocr_layers": [dict(f, file=os.path.relpath(p, cfg.root))
                               for p, f in (c.ocr_files() if hasattr(c, "ocr_files") else [])],
+               # K096: pages whose words are in a picture or drawn as shapes, not in the text
+               "picture_pages": [{"file": os.path.relpath(p, cfg.root), "pages": [n for n, _w in f["flagged"]],
+                                  "of": f["pages"], "why": {str(n): w for n, w in f["flagged"]}}
+                                 for p, f in pics],
                "copies": {k: v for k, v in copy_counts(res).items() if k != "rows"},
                "seconds": res["seconds"]}
     json.dump(payload, io.open(os.path.join(out_dir, "result.json"), "w", encoding="utf-8"),

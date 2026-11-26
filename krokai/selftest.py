@@ -6670,6 +6670,233 @@ def suite_k018_pages(tmp):
        str([(r.get("verdict"), r.get("page")) for r in (r1, r2, r3, r4)]) + " || " + out[-300:])
 
 
+def suite_k096_picture_pages(tmp):
+    """K096 (2026-11-26): a page of an INDEXED PDF whose words are in a picture or drawn as shapes
+    while its text layer holds little more than a label there is named - in the build output, REPORT.md,
+    result.json, `quote`'s NOT FOUND ladder, `library` and `sidecar`. A background picture under body
+    text, a letterhead and an OCR engine's page are not; the geometry is the same on a ROTATED page
+    (PyMuPDF's boxes are unrotated, `page.rect` is not - K093 compared them directly)."""
+    import builtins
+    import contextlib
+    import json
+    import subprocess as _sp
+    from krokai import readers as R
+    from krokai import sidecar as SC
+    from krokai.corpus import Corpus
+    from krokai.verdicts import SIX_CAUSES
+    try:
+        from krokai import _pdfengine
+        fz = _pdfengine.load()
+    except ImportError:
+        fz = None
+    ok("k096: NOT_FOUND's cause 3 names the picture page, in the tool and in the assistant snippet",
+       "PICTURE PAGE" in SIX_CAUSES[2] and "picture page" in io.open(
+           os.path.join(data_dir("templates"), "CLAUDE.md.snippet"), encoding="utf-8").read().split(
+           "3. **The corpus copy is damaged", 1)[-1][:400], SIX_CAUSES[2][:160])
+    if fz is None:
+        print("note: k096 picture-page fixture pins skipped - PyMuPDF builds the fixtures and is not "
+              "installed here")
+        return
+
+    LETTER = ("The applicant submitted the following evidence in support of the petition. "
+              "Each item is labelled with its exhibit number and the page it was filed on. "
+              "The originals were shown to the officer at the interview and returned. ")
+    MISSING = "The entrance of the office stayed closed for the whole week of the scheduled hearing."
+
+    def make(folder, name, pages):
+        d = fz.open()
+        for spec in pages:
+            pg = d.new_page()                                # 595 x 842: the body band is y 84-758
+            if spec.get("picture"):
+                pix = fz.Pixmap(fz.csGRAY, fz.IRect(0, 0, 40, 60), 0)
+                pix.clear_with(190)
+                pg.insert_image(fz.Rect(*spec["picture"]), pixmap=pix, keep_proportion=False)
+            for i in range(spec.get("shapes", 0)):           # words drawn as vector shapes
+                x, y = 80 + (i % 30) * 14, 300 + (i // 30) * 20
+                pg.draw_rect(fz.Rect(x, y, x + 6, y + 9), color=(0, 0, 0), fill=(0, 0, 0))
+            x0, y0 = spec.get("at", (72, 300))
+            for i, ln in enumerate(spec.get("body", ())):
+                pg.insert_text((x0, y0 + 16 * i), ln, fontsize=11)
+            for y, ln in spec.get("margin", ()):
+                pg.insert_text((72, y), ln, fontsize=8, render_mode=3 if spec.get("invisible") else 0)
+            if spec.get("rot"):
+                pg.set_rotation(spec["rot"])
+        p = os.path.join(folder, name)
+        d.save(p)
+        d.close()
+        return p
+
+    root = os.path.join(tmp, "k096m")
+    law, case = os.path.join(root, "law"), os.path.join(root, "case")
+    os.makedirs(law)
+    os.makedirs(case)
+    io.open(os.path.join(root, "casefile.json"), "w", encoding="utf-8").write(json.dumps({
+        "bank": "QUOTE-BANK.md", "queue": "QUOTE-QUEUE.md", "library_index": "law/INDEX.md",
+        "sources": ["law"], "drafts": [{"tier": "A", "label": "filed", "path": "case"}],
+        "citation_packs": ["us-immigration", "us-federal"]}))
+    typeset = {"body": (LETTER[:74], LETTER[75:152], LETTER[153:])}
+    label = {"picture": (0, 0, 595, 842), "margin": ((40, "EXHIBIT K-12"), (820, "ABC-000123"))}
+    exhibit = make(law, "8CFR-279.pdf", [typeset, label])
+    backgr = make(law, "8CFR-278.pdf", [dict(typeset, picture=(0, 0, 595, 842))])
+    letterhead = make(law, "8CFR-277.pdf", [dict(typeset, picture=(0, 0, 595, 100))])
+    turned = make(law, "8CFR-276.pdf", [typeset, dict(label, rot=90)])
+    shapes = make(law, "8CFR-274.pdf", [typeset, {"shapes": 60, "margin": ((40, "EXHIBIT C-7"),)}])
+    ocrpage = make(law, "8CFR-273.pdf", [typeset, dict(label, margin=((40, "EXHIBIT D-2 OCR READ THE LABEL"),),
+                                                       invisible=True)])
+    # a short typeset notice on a page turned 90 degrees: its lines stand in the page body as the page
+    # is SHOWN, in the bottom margin of the unrotated page that PyMuPDF's boxes describe
+    notice = make(law, "8CFR-275.pdf", [{"body": ("The office is closed on the day of the hearing.",
+                                                  "A filing due that day is due on the next business day."),
+                                         "at": (150, 620), "rot": 90}])
+
+    def flagged(p):
+        R._PICTURES_MEMO.clear()
+        f = R.picture_pages(p)
+        return [n for n, _w in (f or {}).get("flagged", ())], f
+
+    pages, f_ex = flagged(exhibit)
+    ok("k096: a page-sized picture under a margin label is a picture page - only that page of the file",
+       pages == [2] and "covers 100 %" in f_ex["flagged"][0][1] and R.picture_pages_cell(f_ex) == "page 2 of 2",
+       str(f_ex))
+    ok("k096: a background picture under body text is NOT a picture page (the text layer holds the page)",
+       flagged(backgr)[0] == [], str(flagged(backgr)[1]))
+    ok("k096: a letterhead picture over a typeset letter is NOT a picture page", flagged(letterhead)[0] == [],
+       str(flagged(letterhead)[1]))
+    pages, f_tu = flagged(turned)
+    ok("k096: on a page turned 90 degrees the picture still covers 100 % - the boxes are rotated first",
+       pages == [2] and "covers 100 %" in f_tu["flagged"][0][1], str(f_tu))
+    pages, f_sh = flagged(shapes)
+    ok("k096: a page whose words are drawn as vector shapes, under a margin label, is a picture page",
+       pages == [2] and "vector shapes" in f_sh["flagged"][0][1], str(f_sh))
+    ok("k096: a page an OCR engine already read (an invisible layer) is left to the OCR label",
+       flagged(ocrpage)[0] == [], str(flagged(ocrpage)[1]))
+    R._LAYER_MEMO.clear()
+    R._PICTURES_MEMO.clear()
+    v = R.pdf_text_verdict(notice)
+    ok("k093/k096: a short notice on a turned page is read where it is SHOWN - in the body, so it is "
+       "indexed (the unrotated boxes put it in the bottom margin)", v == (False, ""), str(v))
+
+    cache = os.path.join(tmp, "k096cache")
+    os.makedirs(cache)
+    R._PICTURES_MEMO.clear()
+    first = R.picture_pages(exhibit, cache)
+    real_load = _pdfengine.load
+
+    def no_engine():
+        raise ImportError("hidden by the k096 selftest")
+    R._PICTURES_MEMO.clear()
+    _pdfengine.load = no_engine
+    try:
+        again = R.picture_pages(exhibit, cache)
+        R._PICTURES_MEMO.clear()
+        bare = R.picture_pages(backgr, cache)
+    finally:
+        _pdfengine.load = real_load
+    ok("k096: the pages are kept beside the text cache and read back without PyMuPDF; a file never "
+       "measured reads None (unmeasured), not «no picture pages»",
+       again == first and bool(first and first["flagged"]) and bare is None
+       and any(n.endswith(".pictures.json") for n in os.listdir(cache)), "again=%s bare=%s" % (again, bare))
+
+    R._PICTURES_MEMO.clear()
+    R._LAYER_MEMO.clear()
+    c = Corpus([law], quiet=True)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        c.print_build()
+    out = buf.getvalue()
+    ok("k096: the build output counts the picture pages and the files they stand in",
+       "PICTURE PAGES - 3 page(s) in 3 indexed file(s)" in out and "8CFR-275.pdf" in "".join(
+           os.path.basename(p) for p in c.short_sources), out[-700:])
+
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def cli(*args):
+        p = _sp.run([sys.executable, "-m", "krokai"] + list(args), cwd=repo, env=env,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+    _rc, qout = cli("quote", "--dir", root, MISSING)
+    ok("k096: `quote` on a NOT FOUND says cause 3 may be live - the corpus has picture pages",
+       "NOT FOUND" in qout.upper().replace("_", " ") and "Cause 3 may be live" in qout
+       and "PICTURE PAGES" in qout, qout[-900:])
+    io.open(os.path.join(case, "brief.md"), "w", encoding="utf-8").write(
+        'The letter says: "%s" And the officer wrote: "%s"\n' % (LETTER[:74], MISSING))
+    _rc, cout = cli("check", "--dir", root, "--out", os.path.join(tmp, "k096o"))
+    md_p = os.path.join(tmp, "k096o", "REPORT.md")
+    md = io.open(md_p, encoding="utf-8").read() if os.path.exists(md_p) else ""
+    sec = (md.split("## Indexed files with picture pages", 1)[-1].split("\n## ", 1)[0]
+           if "## Indexed files with picture pages" in md else "").replace("\\", "/")
+    ok("k096: REPORT.md lists the files with picture pages and their pages - not the background or the "
+       "letterhead", "`law/8CFR-279.pdf` - page 2 of 2; page 2: a picture covers 100 %" in sec
+       and "8CFR-278.pdf" not in sec and "8CFR-277.pdf" not in sec and "--redo-ocr" in sec, sec[:600] or md[:300])
+    nf = md.split("\n## not found", 1)[-1][:900] if "\n## not found" in md else ""
+    ok("k096: REPORT.md's NOT FOUND section says a picture's words read NOT FOUND here",
+       "PICTURE PAGES (listed under" in nf, nf[:400] or md[-600:])
+    rj = os.path.join(tmp, "k096o", "result.json")
+    pj = json.load(io.open(rj, encoding="utf-8")).get("picture_pages") if os.path.exists(rj) else None
+    ok("k096: result.json carries picture_pages - file, pages, of, why",
+       bool(pj) and any(x["file"].replace("\\", "/") == "law/8CFR-279.pdf" and x["pages"] == [2] and x["of"] == 2
+                        and "covers 100 %" in x["why"]["2"] for x in pj), str(pj)[:400])
+    ok("k096: the check console names the picture pages beside the NOT FOUND", "🟡 PICTURE PAGES:" in cout,
+       cout[-600:])
+    _rc, lout = cli("library", "--dir", root)
+    ok("k096: `library` lists the picture pages with the page and the reason",
+       "Picture pages: 3 of 7 PDF(s)" in lout and "8CFR-279.pdf  (page 2 of 2; page 2: a picture covers 100 %"
+       in lout.replace("\\", "/"), lout[-900:])
+    sbuf = []
+    SC.build([law], dry_run=True, printer=lambda *a, **k: sbuf.append(" ".join(str(x) for x in a)))
+    sout = "\n".join(sbuf)
+    ok("k096: `sidecar` says the picture pages' words are not in the sidecars either",
+       "PICTURE PAGES - their words are NOT in the sidecars" in sout and "8CFR-279.pdf  (page 2 of 2)" in sout,
+       sout[-500:])
+
+    # the clean path (E-1072): a matter with no picture page prints none of it
+    groot = os.path.join(tmp, "k096g")
+    glaw, gcase = os.path.join(groot, "law"), os.path.join(groot, "case")
+    os.makedirs(glaw)
+    os.makedirs(gcase)
+    io.open(os.path.join(groot, "casefile.json"), "w", encoding="utf-8").write(io.open(
+        os.path.join(root, "casefile.json"), encoding="utf-8").read())
+    make(glaw, "8CFR-272.pdf", [typeset, dict(typeset, picture=(0, 0, 595, 842))])
+    io.open(os.path.join(gcase, "brief.md"), "w", encoding="utf-8").write(
+        'The letter says: "%s" And the officer wrote: "%s"\n' % (LETTER[:74], MISSING))
+    _rc, gq = cli("quote", "--dir", groot, MISSING)
+    _rc, gc = cli("check", "--dir", groot, "--out", os.path.join(tmp, "k096go"))
+    gmd_p = os.path.join(tmp, "k096go", "REPORT.md")
+    gmd = io.open(gmd_p, encoding="utf-8").read() if os.path.exists(gmd_p) else ""
+    gj = os.path.join(tmp, "k096go", "result.json")
+    gpj = json.load(io.open(gj, encoding="utf-8")).get("picture_pages") if os.path.exists(gj) else None
+    ok("k096: with no picture page nothing is said - no build line, no REPORT.md section, no hint in "
+       "`quote`, result.json picture_pages == []",
+       "PICTURE PAGES" not in gq and "Cause 3 may be live" not in gq and "PICTURE PAGES" not in gc
+       and "## Indexed files with picture pages" not in gmd and "\n## not found" in gmd and gpj == [],
+       "quote=%s check=%s json=%s" % (gq[-300:], gc[-300:], gpj))
+
+    real_import = builtins.__import__
+
+    def imp(name, *a, **k):
+        if name.split(".")[0] in ("fitz", "pymupdf"):
+            raise ImportError("hidden by the k096 selftest: %s" % name)
+        return real_import(name, *a, **k)
+    R._PICTURES_MEMO.clear()
+    R._LAYER_MEMO.clear()
+    builtins.__import__ = imp
+    try:
+        nc = Corpus([law], quiet=True)
+        nbuf = io.StringIO()
+        with contextlib.redirect_stdout(nbuf):
+            nc.print_build()
+    finally:
+        builtins.__import__ = real_import
+        R._PICTURES_MEMO.clear()
+        R._LAYER_MEMO.clear()
+    ok("k096: without PyMuPDF the build output says the picture pages were NOT checked - never a silent "
+       "zero", "picture pages NOT checked in" in nbuf.getvalue() and "PICTURE PAGES -" not in nbuf.getvalue(),
+       nbuf.getvalue()[-500:])
+
+
 def suite_k093_short_pdf(tmp):
     """K093 (2026-11-26): a SHORT PDF (under MIN_TEXT_LAYER) that reads as a typeset document on
     every count - a typeset layer, no picture, a line in the page body - is INDEXED with the
@@ -7061,6 +7288,7 @@ def main():
         suite_k030_edge_ellipsis(tmp)
         suite_k018_pages(tmp)
         suite_k093_short_pdf(tmp)
+        suite_k096_picture_pages(tmp)
         suite_k094_condition_cuts(tmp)
         suite_word_diff()
         suite_citations()

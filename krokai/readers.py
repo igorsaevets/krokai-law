@@ -34,7 +34,8 @@ __all__ = ["MissingReader", "read_any", "read_pdf", "read_docx", "no_text_layer"
            "_choose_extraction", "_form_values", "EXTRACTOR_VERSION", "MIN_CHARS_PER_PAGE",
            "is_broken_type3", "text_layer", "ocr_label", "ocr_pages_cell", "OCR_PAGE_SHARE",
            "OCR_CHECK", "LAYER_VERSION", "page_table", "page_check", "PAGES_VERSION",
-           "pdf_text_verdict", "STAMP_BAND", "PICTURE_COVER"]
+           "pdf_text_verdict", "STAMP_BAND", "PICTURE_COVER", "picture_pages", "picture_pages_cell",
+           "PICTURE_ADVICE", "BODY_TEXT_MIN", "SHAPES_MIN"]
 
 _PAGE_MARK = re.compile(r"\[\[Page\s+[\w.-]+\]\]")
 _MD_FOOTNOTE = re.compile(r"\[\\?\[[^\]]*\\?\]\]\([^)]*\)")
@@ -78,6 +79,45 @@ PAGES_BEFORE_RATE_APPLIES = 3
 # caught after this, by `corpus.looks_like_placeholder` - with «re-fetch it», not «OCR it».
 STAMP_BAND = 0.10
 PICTURE_COVER = 0.10
+
+# 🔴 K096: THE SAME LABELLED PICTURE ABOVE THE FLOOR WAS INDEXED SILENTLY - AND ITS WORDS NEVER WERE.
+#
+# K093 kept a scan, a photo or a screenshot of a document under a typeset exhibit label out of the
+# corpus while its file stayed under MIN_TEXT_LAYER. The same page passed as soon as its file
+# carried 200 characters - a multi-page exhibit, a longer label, a typeset page in front - and a
+# quotation of the picture's words came back NOT FOUND, the fabrication signal, with nothing to say
+# that those words were never in the text. Census of a real matter's copy (2026-11-26; Tesseract on
+# each page rendered WITH its text, minus the words its text layer holds): 747 of the 2 071 pages
+# of its 314 indexed exhibit PDFs that are not an OCR layer show 30 or more words their layer lacks.
+# So every page of an indexed PDF is asked K093's question: fewer than BODY_TEXT_MIN characters
+# stand in the page body (inside STAMP_BAND) while pictures cover PICTURE_COVER of the page, or the
+# page draws SHAPES_MIN vector paths (words drawn as shapes). Measured there: 632 exhibit pages in
+# 122 files flagged - 564 hold 30+ words the layer lacks, 68 are pictures with almost no readable
+# words (photos: under 10 confident words on 61, read upright and turned); the flagged pages carry
+# at most 43 layer words, so no typeset page is among them; and 0 of the law library's 1 498 pages.
+# A floor of body characters rather than «no body line»: a one-line caption in the body over a
+# scan is still a label (+12 pages, +2 photos). A page an OCR engine already read (K024's OCR page)
+# is left to the OCR label: its engine looked at the picture (8 such pages, all wordless).
+# NOT seen - stated so it is not mistaken for coverage (183 of the 747): a picture under 50+
+# characters of body text (an embedded screenshot, a caption block over a scan - 143), a font that
+# maps its glyphs to the wrong letters, a picture under a tenth of the page holding words (a
+# letterhead, a seal). Docling's «picture not backed by text» test (base_ocr_model.py,
+# TEXT_BACKED_MIN_COVERAGE) would have flagged 70 typeset pages of that copy - a warning that fires
+# on a letterhead or a background picture teaches users to ignore it.
+# 🔴 ONE COORDINATE SPACE. PyMuPDF returns text and image boxes for the UNROTATED page, while
+# `page.rect` is the rotated one (docs, Page: «except Page.rect ... all coordinates returned by
+# methods and attributes pertain to the unrotated page»). K093 compared them directly: on a
+# /Rotate 90 or 270 page a body line could read as margin and a page-sized picture as 77 % (3
+# exhibit pages of that copy). Every box goes through `rotation_matrix` first (_page_geometry).
+BODY_TEXT_MIN = 50
+SHAPES_MIN = 50
+PICTURES_VERSION = "1"
+_PICTURES_MEMO = {}
+PICTURE_ADVICE = ("their words are in a picture (a scan, a photo or a screenshot of a document) or "
+                  "drawn as shapes, and the text layer holds little more than a label there - a "
+                  "quotation of those words comes back NOT FOUND. OCR those pages with an OCR engine "
+                  "that also reads pages carrying some text (OCRmyPDF --redo-ocr keeps the label; "
+                  "--skip-text passes such a page over because of it) - never a language model")
 
 # 🔴 Bumped whenever extraction changes what it puts on disk. It is part of the sidecar freshness
 # key, because a downloaded statute never changes and `mtime` alone therefore cannot notice that
@@ -960,23 +1000,12 @@ def _short_pdf_why(path, n, cache_dir):
         d = fitz.open(path)
         try:
             for pg in d:
-                r = pg.rect
-                area = abs(r) or 1.0
-                cover = sum(abs(fitz.Rect(im["bbox"]) & r) for im in pg.get_image_info()) / area
-                if cover >= PICTURE_COVER:
+                g = _page_geometry(fitz, pg, text=True)
+                if g["cover"] >= PICTURE_COVER:
                     return ("%d characters of typeset text over a picture that covers %d %% of page "
-                            "%d - the picture can hold the page's words" % (n, min(100, round(100 * cover)),
+                            "%d - the picture can hold the page's words" % (n, min(100, round(100 * g["cover"])),
                                                                          pg.number + 1))
-                w, h = r.width or 1.0, r.height or 1.0
-                for blk in pg.get_text("dict").get("blocks", []):
-                    for ln in blk.get("lines", []):
-                        if not "".join(s.get("text", "") for s in ln.get("spans", [])).strip():
-                            continue
-                        x0, y0, x1, y1 = ln["bbox"]
-                        cx, cy = (x0 + x1) / 2.0 - r.x0, (y0 + y1) / 2.0 - r.y0
-                        if (STAMP_BAND * w <= cx <= (1 - STAMP_BAND) * w
-                                and STAMP_BAND * h <= cy <= (1 - STAMP_BAND) * h):
-                            body = True
+                body = body or g["body"] > 0
         finally:
             d.close()
     except Exception as exc:                                # noqa: BLE001 - the answer stays «excluded»
@@ -985,6 +1014,115 @@ def _short_pdf_why(path, n, cache_dir):
         return ("its only text (%d characters) stands in the page margin - a stamp, an exhibit label "
                 "or a header; the page's own words are in a picture, drawn as shapes, or missing" % n)
     return ""
+
+
+def _page_geometry(fitz, pg, text=False):
+    """K093 / K096: what one PDF page draws that its text layer may not hold, in ONE coordinate space
+    (every box through `rotation_matrix` - see BODY_TEXT_MIN): `cover` - the page's share under
+    pictures (placements summed and clipped; overlapping ones can pass 1.0); `paths` - vector paths
+    drawn, counted only while `cover` is under PICTURE_COVER; `body` / `edge` - characters whose
+    centre stands inside / outside the page body (STAMP_BAND), read only when `text` is set or the
+    page is a candidate (a picture or SHAPES_MIN paths) - the per-character trace is the costly part."""
+    R, M = pg.rect, pg.rotation_matrix
+    area = abs(R) or 1.0
+    cover = sum(abs((fitz.Rect(im["bbox"]) * M) & R) for im in pg.get_image_info()) / area
+    paths = 0
+    if cover < PICTURE_COVER:
+        paths = sum(1 for b in pg.get_bboxlog() if b[0] in ("fill-path", "stroke-path"))
+    g = {"cover": cover, "paths": paths, "body": 0, "edge": 0}
+    if not (text or cover >= PICTURE_COVER or paths >= SHAPES_MIN):
+        return g
+    w, h = R.width or 1.0, R.height or 1.0
+    for sp in pg.get_texttrace():
+        for ch in sp.get("chars") or ():
+            if ch[0] in (9, 10, 13, 32):
+                continue
+            b = fitz.Rect(ch[3]) * M
+            cx, cy = (b.x0 + b.x1) / 2.0 - R.x0, (b.y0 + b.y1) / 2.0 - R.y0
+            if STAMP_BAND * w <= cx <= (1 - STAMP_BAND) * w and STAMP_BAND * h <= cy <= (1 - STAMP_BAND) * h:
+                g["body"] += 1
+            else:
+                g["edge"] += 1
+    return g
+
+
+def _page_set(ranges):
+    """`1-3, 5` -> {1, 2, 3, 5} (the inverse of `_ranges`)."""
+    out = set()
+    for part in (ranges or "").split(","):
+        a, _, b = part.strip().partition("-")
+        if a.isdigit():
+            out.update(range(int(a), int(b) + 1) if b.isdigit() else (int(a),))
+    return out
+
+
+def picture_pages(path, cache_dir=None):
+    """K096: the pages of the PDF `path` whose words are in a picture or drawn as shapes while its
+    text layer holds next to nothing there (see BODY_TEXT_MIN). A dict - `pages` (the count),
+    `flagged` ([[page, why], ...], page = the file's own page index from 1), `engine` - or None for a
+    non-PDF, an unreadable file, or a machine without PyMuPDF (the geometry is PyMuPDF's). Kept
+    beside the text cache under the same key, and in memory for the run."""
+    if not path.lower().endswith(".pdf"):
+        return None
+    try:
+        key = _layer_key(path)
+    except OSError:
+        return None
+    got = _PICTURES_MEMO.get(key)
+    if got is not None:
+        return got
+    lp = _cache_path(path, cache_dir)[:-4] + ".pictures.json" if cache_dir else None
+    if lp and os.path.exists(lp):
+        try:
+            with io.open(lp, encoding="utf-8") as fh:
+                got = json.load(fh)
+        except (OSError, ValueError):
+            got = None
+        if isinstance(got, dict) and got.get("v") == PICTURES_VERSION:
+            _PICTURES_MEMO[key] = got
+            return got
+    try:
+        fitz = _pdfengine.load()
+    except ImportError:
+        return None
+    ocr = _page_set((text_layer(path, cache_dir) or {}).get("ocr_pages"))
+    flagged = []
+    try:
+        d = fitz.open(path)
+        try:
+            n = d.page_count
+            for pg in d:
+                if pg.number + 1 in ocr:                    # an OCR engine read it (K024's label)
+                    continue
+                g = _page_geometry(fitz, pg)
+                if g["body"] >= BODY_TEXT_MIN:
+                    continue
+                held = ("no text" if not g["body"] + g["edge"] else
+                        "only %d characters, at the page's edges" % g["edge"] if not g["body"] else
+                        "only %d characters" % (g["body"] + g["edge"]))
+                if g["cover"] >= PICTURE_COVER:
+                    flagged.append([pg.number + 1, "a picture covers %d %% of the page; its text layer holds "
+                                    "%s" % (min(100, round(100 * g["cover"])), held)])
+                elif g["paths"] >= SHAPES_MIN:
+                    flagged.append([pg.number + 1, "the page draws %d vector shapes; its text layer holds "
+                                    "%s" % (g["paths"], held)])
+        finally:
+            d.close()
+    except Exception:                                       # noqa: BLE001 - advisory
+        return None
+    got = {"v": PICTURES_VERSION, "engine": "PyMuPDF", "pages": n, "flagged": flagged}
+    _PICTURES_MEMO[key] = got
+    if lp:
+        _write_layer(lp, got)
+    return got
+
+
+def picture_pages_cell(facts):
+    """`all 3 pages` / `pages 2-3 of 5` - the short form for lists (K096)."""
+    nums = [p for p, _ in facts.get("flagged") or ()]
+    if len(nums) > 1 and len(nums) == facts.get("pages"):
+        return "all %d pages" % len(nums)
+    return "page%s %s of %d" % ("s" if len(nums) > 1 else "", _ranges(nums), facts.get("pages") or 0)
 
 
 def _page_count(path):

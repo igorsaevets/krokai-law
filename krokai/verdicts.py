@@ -53,7 +53,9 @@ SIX_CAUSES = (
     "not have (when the address layer can prove this, the verdict is NO_SOURCE_ON_DISK)",
     "the source on disk is a different EDITION - revised, renumbered or superseded since the "
     "quotation was taken; see the revision report",
-    "the corpus COPY is damaged or incomplete - no text layer, an OCR TEXT LAYER that misread a "
+    "the corpus COPY is damaged or incomplete - no text layer, a PICTURE PAGE (a scan, a photo or a "
+    "screenshot of a document under a typeset label: its words were never in the text; `krokai "
+    "library` names those pages), an OCR TEXT LAYER that misread a "
     "digit, a date or a name (`krokai library` names those files; compare with the page image "
     "before rewriting the quotation), a Type 3 substitution cipher, soft hyphens, a scrape that silently dropped part of the page or saved the wrong "
     "PROJECTION of it (all of the body text, none of the footnotes), or a running header "
