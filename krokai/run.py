@@ -30,10 +30,10 @@ import time
 from . import address as addr_mod
 from .citations import load_packs
 from .corpus import Corpus, walk
-from .extract import extract_quotes, citation_window, not_examined
+from .extract import extract_quotes, citation_window, not_examined, _alnum_projection, _occurrences, _PARA_BREAK
 from .readers import read_any, OCR_CHECK, ocr_pages_cell, ocr_label, PICTURE_ADVICE, picture_pages_cell
 from .verdicts import ORDER, DANGEROUS, CLEAN, UNCHECKABLE, MEANING, MARK, label, meaning
-from .verify import check, copies_check, page_of
+from .verify import check, copies_check, page_of, split_join
 
 __all__ = ["scan_matter", "write_report", "print_not_examined", "print_markers", "draft_docs",
            "print_editions", "editions", "ocr_counts", "copy_counts", "copy_line",
@@ -207,6 +207,12 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
         if not quiet and i % 200 == 0:
             printer("   ...%d/%d (%.0f s)" % (i, len(uniq), time.time() - t1))
 
+    def fold_one(text, v, w, d, pieces):                         # K097: the address layer, joined
+        near = sorted({c for row in pieces for c in row["near"] if packs.is_primary(c)})
+        v, w, d, _a = addr_mod.fold(text, v, w, d, near, corpus, keymap, packs)
+        return v, w, d
+    splits = split_pass(rows, docs, corpus, fold_one, cfg.root)
+
     rank = {s: i for i, s in enumerate(ORDER)}
     rows.sort(key=lambda r: (rank.get(r["verdict"], 99), -len(r["sites"])))
 
@@ -223,7 +229,7 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
     for r in rows:
         grid[_tier_of(r)][r["verdict"]] += 1
 
-    return {"rows": rows, "grid": grid, "per_file": per_file, "corpus": corpus,
+    return {"rows": rows, "grid": grid, "per_file": per_file, "corpus": corpus, "splits": splits,
             "not_examined": unexamined, "min_len": cfg["min_quote_length"], "markers": marks,
             "editions": eds,
             "drop_cyrillic": bool(cfg["drop_cyrillic_quotes"]),
@@ -271,6 +277,137 @@ def mixed_provisions(rows, packs):
             out.append((packs.label(k), clean, flagged))
     out.sort(key=lambda t: -len(t[2]))
     return out
+
+
+# 🔴 K097 (2026-11-26): a quotation the drafter split in two is graded as the one quotation the reader
+# reads. The incident, the measurement and why the join is strict: `verify.split_join`. Two more
+# rules live here, each against a laundering:
+#   * NEXT TO EACH OTHER: the other piece stands within SPLIT_NEAR characters of the drafter's own
+#     text and no blank line separates them (the measured splits sat 4 and 45 characters apart; the
+#     third pairing of the same two pieces, 1 870 characters away across paragraphs, is not one);
+#   * AT EVERY PLACE: a quotation used twice - once beside its continuation, once alone - keeps its
+#     alarm, because at the second place the condition is hidden; the detail names both places.
+# The joined text goes through `check` and the address layer again, so a pair that still stops before
+# a limiter, or starts after a negation, stays loud - about its OUTER edge, the one the reader sees.
+SPLIT_NEAR = 300
+SPLIT_MAX = 4                    # pieces in one chain («A» «B» «C» of one sentence)
+_SPLIT_FROM = ("TRUNCATED_CONDITION", "TRUNCATED_OPENING")
+
+
+def _draft_places(rows, docs):
+    """{file: (body, [(start, end, row)])} - every occurrence of every quotation in every draft,
+    wrap-proof (`extract._occurrences`); an occurrence inside a longer quotation's belongs to it."""
+    places = {}
+    for _t, rel, body, _m in docs:
+        mine = [r for r in rows if any(s["file"] == rel for s in r["sites"])]
+        if not mine:
+            continue
+        proj = _alnum_projection(body)
+        occ = [(a, b, r) for r in mine for (a, b) in _occurrences(proj, r["quote"])]
+        occ = [o for o in occ if not any(p[0] <= o[0] and o[1] <= p[1] and p[1] - p[0] > o[1] - o[0]
+                                         for p in occ)]
+        places[rel] = (body, sorted(occ, key=lambda o: o[0]))
+    return places
+
+
+def _chain(row, at, body, occ, corpus, fold_one):
+    """Grow one place's chain of pieces while the joined quotation still points at its neighbour."""
+    chain, text = [at], row["quote"]
+    v, w, d = row["verdict"], row.get("where_abs") or None, row["detail"]
+    while v in _SPLIT_FROM and len(chain) < SPLIT_MAX:
+        tail_side = v == "TRUNCATED_CONDITION"
+        edge = chain[-1] if tail_side else chain[0]
+        best = None
+        for o in occ:
+            if any(o[2] is c[2] for c in chain):
+                continue
+            lo, hi = (edge[1], o[0]) if o[0] >= edge[1] else (o[1], edge[0])
+            if hi < lo or hi - lo > SPLIT_NEAR or _PARA_BREAK.search(body[lo:hi]):
+                continue
+            j = (split_join(text, o[2]["quote"], corpus) if tail_side
+                 else split_join(o[2]["quote"], text, corpus))
+            if j and (best is None or hi - lo < best[0]):
+                best = (hi - lo, o, j)
+        if not best:
+            break
+        chain = chain + [best[1]] if tail_side else [best[1]] + chain
+        text = best[2]
+        v, w, d = check(text, corpus)
+        v, w, d = fold_one(text, v, w, d, [c[2] for c in chain])
+    return chain, v, w, d
+
+
+def split_pass(rows, docs, corpus, fold_one, root):
+    """K097: re-grade every truncation whose missing words the draft quotes right beside it. Returns
+    the joins for REPORT.md and the console; changes the rows in place (verdict, where, detail, and
+    `split` with what the piece was alone)."""
+    if not any(r["verdict"] in _SPLIT_FROM for r in rows):
+        return []
+    rank = {s: i for i, s in enumerate(ORDER)}
+    places = _draft_places(rows, docs)
+    joins = []
+    for r in rows:
+        if r["verdict"] not in _SPLIT_FROM:
+            continue
+        done = [(rel, _chain(r, o, body, occ, corpus, fold_one))
+                for rel, (body, occ) in sorted(places.items()) for o in occ if o[2] is r]
+        joined = [(rel, c) for rel, c in done if len(c[0]) > 1]
+        if not joined:
+            continue
+        others = []
+        for _rel, c in joined:
+            others += [p[2]["quote"] for p in c[0] if p[2] is not r and p[2]["quote"] not in others]
+        with_ = "; ".join("«%s»" % (q if len(q) <= 90 else q[:87] + "…") for q in others[:3])
+        files = sorted({rel for rel, _c in joined})
+        alone = {"verdict": r["verdict"], "detail": r["detail"]}
+        if len(joined) < len(done):
+            r["detail"] = (r["detail"] + "; " if r["detail"] else "") + (
+                "split quotation at %d of %d place(s): there (%s) the draft quotes the missing words "
+                "right beside it - %s - but at the other place(s) this piece stands alone, so the "
+                "alarm stays" % (len(joined), len(done), ", ".join("`%s`" % f for f in files), with_))
+            r["split"] = {"places": len(joined), "of": len(done), "read_with": others, "files": files,
+                          "verdict": r["verdict"]}
+            joins.append({"pieces": [r["quote"]] + others, "files": files, "alone": alone["verdict"],
+                          "verdict": r["verdict"], "places": len(joined), "of": len(done)})
+            continue
+        rel, (chain, v, w, d) = min(joined, key=lambda x: rank.get(x[1][1], 99))
+        r["verdict"], r["where_abs"] = v, w or ""
+        r["where"] = os.path.relpath(w, root) if w else ""
+        r["detail"] = ("split quotation - read together with %s, quoted right beside it (%s): one "
+                       "passage of the source cut in two, graded as one%s. Alone, this piece is %s: %s"
+                       % (with_, ", ".join("`%s`" % f for f in files), " - " + d if d else "",
+                          label(alone["verdict"]), alone["detail"][:200]))
+        r["ocr_layer"] = corpus.ocr_layer(w) if w else False
+        r["split"] = {"places": len(joined), "of": len(done), "read_with": others, "files": files,
+                      "alone": alone, "verdict": v}
+        joins.append({"pieces": [r["quote"]] + others, "files": files, "alone": alone["verdict"],
+                      "verdict": v, "places": len(joined), "of": len(done)})
+    return joins
+
+
+def _splits_md(res, cap=40):
+    """K097: REPORT.md's list of quotations graded together with the piece quoted beside them."""
+    groups = {}
+    for j in res.get("splits") or []:
+        g = groups.setdefault(tuple(sorted(j["pieces"][:SPLIT_MAX])), {"alone": [], "j": j})
+        g["alone"].append("%s → %s%s" % (label(j["alone"]), label(j["verdict"]),
+                                         "" if j["places"] == j["of"] else
+                                         " (alone at %d of %d places)" % (j["of"] - j["places"], j["of"])))
+    if not groups:
+        return []
+    md = ["## Split quotations read together", "",
+          "A quotation cut in pieces that stand right beside each other in the draft, with nothing but "
+          "the source's own punctuation between them in the source. Alone, each piece stops before - "
+          "or starts after - words the other piece quotes; together they are graded as one quotation, "
+          "so a pair that still drops a condition at its outer edge stays flagged. A piece that also "
+          "stands alone somewhere keeps its alarm.", ""]
+    for pieces, g in list(groups.items())[:cap]:
+        md.append("* %s - %s; `%s`" % (" + ".join("«%s»" % (q if len(q) <= 80 else q[:77] + "…")
+                                                  for q in g["j"]["pieces"]), "; ".join(g["alone"]),
+                                       "`, `".join(g["j"]["files"][:3])))
+    if len(groups) > cap:
+        md.append("* … and %d more (`result.json`: rows with `split`)" % (len(groups) - cap))
+    return md + [""]
 
 
 def _tier_of(row):
@@ -728,6 +865,12 @@ def print_summary(res, lang="en", printer=print):
         printer("🟡 PICTURE PAGES: %d indexed file(s) have pages whose words are in a picture, not in "
                 "the text - %d NOT FOUND may quote one of them (REPORT.md lists the pages)."
                 % (len(pics), nf))
+    # K097: a quotation cut in two pieces that stand beside each other is graded as one.
+    sp = res.get("splits") or []
+    if sp:
+        printer("ℹ SPLIT QUOTATIONS: %d quotation(s) are pieces of one source passage quoted right beside "
+                "each other - graded together (%d at every place they are used); REPORT.md «Split "
+                "quotations read together» lists them." % (len(sp), sum(1 for j in sp if j["places"] == j["of"])))
     # K025: advisory too - a quotation that reads differently in another copy of its source.
     cc = copy_counts(res)
     if cc["disagree"]:
@@ -791,6 +934,7 @@ def write_report(res, cfg, out_dir, lang="en"):
     md += _editions_md(res)
     md += _ocr_md(res, cfg.root)                                  # K024
     md += _copies_md(res)                                         # K025
+    md += _splits_md(res)                                         # K097
 
     if c.excluded_derived:
         md += ["## Excluded from the corpus as our own derived text", "",

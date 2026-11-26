@@ -607,6 +607,59 @@ def wrong_speaker(quote_n, corpus):
 
 
 # ------------------------------------------------------------------------------------------------
+# 🔴 K097 (2026-11-26): A QUOTATION THE DRAFTER SPLIT IN TWO. `check` grades every quotation alone,
+# and a filed petition quotes «over whose actions the individual has no control» and, four
+# characters later, «if the inaction is acknowledged by that individual or organization …» - one
+# sentence of 8 CFR cut at its comma. Alone, the first piece stops before «, if …»
+# (TRUNCATED_CONDITION since K094) and the second starts after «no control,» (TRUNCATED_OPENING):
+# two loud alarms, each about words the draft quotes right beside it - and a reader who learns that
+# these alarms are noise skips the real ones. Measured on a copy of the matter before this was
+# built: 2 of the petition's 5 truncation alarms were that one split, at both places it is used,
+# and no two of its quotations hold a limiter between them; in the law library's own writing
+# (policy manual, precedents and memoranda quoting the statutes and regulations, 16 513 pairs of
+# quotations within 2 000 characters) 3 pairs were contiguous splits and 10 pairs left a NARROWING
+# word between two quotations of one passage - the omission a softer rule («the same passage,
+# nearby») would launder. So the join is STRICT: nothing alphanumeric may stand between the two
+# pieces in the source (its own comma, dash or bracket only), and the joined quotation is graded
+# again as a whole by the caller, so its outer edges keep every test. This helper decides only
+# whether the pieces meet; `run.split_pass` decides which pieces of a draft stand next to each other.
+_EDGE_TAIL = re.compile(r"(?:[\s.,;:\-—]|%s)+$" % ELLIPSIS_RE.pattern)
+_EDGE_HEAD = re.compile(r"^(?:[\s.,;:\-—]|%s)+" % ELLIPSIS_RE.pattern)
+SPLIT_JUNCTION = 12          # characters of the source's own punctuation allowed between two pieces
+
+
+def _split_pieces(quote):
+    """The prepared, normalised quotation and its fragments - or (None, None) when a fragment is too
+    short to place (the floor of `ellipsis_parts` would drop it and the join would be asked about
+    the wrong edge)."""
+    n = normalise(prepare_quote(quote))
+    frags = [p for p in (x.strip(" .,;:-—") for x in ELLIPSIS_RE.split(n)) if p]
+    if not frags or any(len(p) < 10 for p in frags):
+        return None, None
+    return n, frags
+
+
+def split_join(first, second, corpus):
+    """K097: does ``second`` continue ``first`` in one source file - its first words standing right
+    after ``first``'s last words, with nothing alphanumeric between them? Returns the joined quotation
+    (``first`` + the source's own punctuation + ``second``, the inner edges' ellipses and punctuation
+    dropped) or None. It grades nothing: the caller hands the joined text to `check`."""
+    na, fa = _split_pieces(first)
+    nb, fb = _split_pieces(second)
+    if not fa or not fb:
+        return None
+    last, head = fa[-1], fb[0]
+    for path, off in corpus.find_all_pos(last):
+        tail = corpus.after(path, off, len(last), len(head) + SPLIT_JUNCTION + 4)
+        k = 0
+        while k < len(tail) and not tail[k].isalnum():
+            k += 1
+        if k > SPLIT_JUNCTION or not tail[k:].startswith(head):
+            continue
+        return _EDGE_TAIL.sub("", na) + tail[:k] + _EDGE_HEAD.sub("", nb)
+    return None
+
+
 def elision_verdict(one, parts, offs, corpus, short=()):
     """The verdict once ONE file holds every fragment of an elided quotation, in order: ELLIPSIS_HIDES
     when a gap carries a narrowing word or is too wide to be shortening a phrase, else ASSEMBLED

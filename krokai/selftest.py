@@ -6897,6 +6897,169 @@ def suite_k096_picture_pages(tmp):
        nbuf.getvalue()[-500:])
 
 
+def suite_k097_split_quotation(tmp):
+    """K097 (2026-11-26): a quotation the drafter split in two pieces that stand right beside each
+    other is graded as ONE quotation - each piece alone stops before (or starts after) the other's
+    words. Strict: nothing alphanumeric between the pieces in the source, next to each other in the
+    draft (no blank line, SPLIT_NEAR characters), at EVERY place the piece is used; the joined text
+    keeps the outer-edge tests. A condition left out BETWEEN two quotations stays loud."""
+    import json
+    import subprocess as _sp
+    from krokai import config as _config
+    from krokai.corpus import Corpus
+    from krokai.run import scan_matter, SPLIT_NEAR
+    from krokai.verify import split_join
+    LAW = ("# 8 CFR 214.9 Late filings (fixture)\n\n"
+           "(a) The officer may excuse a late filing caused by a third party over whose actions the student "
+           "has no control, if the delay is acknowledged by that third party in writing. Any other late "
+           "filing is refused.\n\n"
+           "(b) The fee is waived for a student whose school closed for good during the term, if the closure "
+           "is confirmed in writing by the agency, unless the student enrolled after the closure was "
+           "announced.\n\n"
+           "(c) A late fee is charged to a student who files after the deadline, unless the student shows "
+           "good cause for the delay, and the fee is paid to the school within thirty days.\n\n"
+           "(d) A transfer request is granted to a student whose program of study ended before its last "
+           "term, if the new school accepts the student before the term starts. No other transfer is "
+           "granted.\n\n"
+           "(e) A refund is paid to a student whose visa was refused at the consulate abroad, if the refusal "
+           "is shown by the letter of the consulate. The refund is paid once.\n\n"
+           "(f) The school may report a student who stopped attending all of the classes, if the student was "
+           "absent for ten school days in a row, unless the absence was approved in advance by the school.\n")
+    A, B = ("a third party over whose actions the student has no control",
+            "if the delay is acknowledged by that third party in writing")
+    A2, B2 = ("a student whose school closed for good during the term",
+              "if the closure is confirmed in writing by the agency")
+    C, D = ("A late fee is charged to a student who files after the deadline",
+            "the fee is paid to the school within thirty days")
+    A4, B4 = ("a student whose program of study ended before its last term",
+              "if the new school accepts the student before the term starts")
+    A5, B5 = ("a student whose visa was refused at the consulate abroad",
+              "if the refusal is shown by the letter of the consulate")
+    A6, B6, C6 = ("a student who stopped attending all of the classes",
+                  "if the student was absent for ten school days in a row",
+                  "unless the absence was approved in advance by the school")
+    LONG = "caused by a third party over whose actions the student has no control"
+    filler = " ".join(["The client kept every receipt and every letter from the school."] * 6)
+
+    def matter(name, drafts):
+        root = os.path.join(tmp, name)
+        os.makedirs(os.path.join(root, "law"))
+        os.makedirs(os.path.join(root, "case"))
+        io.open(os.path.join(root, "law", "8CFR-214.md"), "w", encoding="utf-8").write(LAW)
+        for fn, text in drafts.items():
+            io.open(os.path.join(root, "case", fn), "w", encoding="utf-8").write(text)
+        io.open(os.path.join(root, "casefile.json"), "w", encoding="utf-8").write(json.dumps({
+            "bank": "QUOTE-BANK.md", "queue": "QUOTE-QUEUE.md", "library_index": "law/INDEX.md",
+            "sources": ["law"], "drafts": [{"tier": "A", "label": "filed", "path": "case"}],
+            "citation_packs": ["us-immigration", "us-federal"]}))
+        return root
+
+    # --- the helper alone ---------------------------------------------------------------------------
+    c = Corpus([os.path.join(matter("k097u", {}), "law")], quiet=True)
+    ok("k097: split_join joins two pieces with only the source's comma between them - in source order",
+       split_join(A, B, c) == A + ", " + B and split_join(B, A, c) is None, repr(split_join(A, B, c)))
+    ok("k097: split_join refuses a pair whose source gap holds words («, unless the student shows good "
+       "cause …, and») - the omission a softer join would launder", split_join(C, D, c) is None,
+       repr(split_join(C, D, c)))
+    ok("k097: SPLIT_NEAR is a drafter's sentence, not a page", 100 <= SPLIT_NEAR <= 600, str(SPLIT_NEAR))
+
+    # --- one matter, every shape: the CLI end to end ---------------------------------------------------
+    root = matter("k097m", {
+        "split.md": ('The rule reaches a delay caused by "%s" and "%s" the late filing is excused.\n\n'
+                     'The fee rule covers "%s" - "%s" - and the waiver follows.\n\n'
+                     'The school may not charge: "%s" and "%s".\n\n'
+                     'Reporting reaches "%s", "%s", "%s".\n' % (A, B, A2, B2, C, D, A6, B6, C6)),
+        "reversed.md": 'Where the delay is acknowledged - "%s" - the rule covers "%s".\n' % (B, A),
+        "far.md": 'Transfers reach "%s". %s The condition is "%s".\n' % (A4, filler, B4),
+        "para.md": 'Refunds reach "%s".\n\n"%s" is the condition.\n' % (A5, B5),
+        "nested.md": 'The officer looks at a delay "%s" first.\n\nThen it reaches "%s" and "%s" both.\n'
+                     % (LONG, A, B)})
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    out = os.path.join(tmp, "k097o")
+    p = _sp.run([sys.executable, "-m", "krokai", "check", "--dir", root, "--out", out], cwd=repo, env=env,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
+    cout = (p.stdout or "") + (p.stderr or "")
+    try:
+        rows = {" ".join(r["quote"].split()): r for r in
+                json.load(io.open(os.path.join(out, "result.json"), encoding="utf-8"))["rows"]}
+        md = io.open(os.path.join(out, "REPORT.md"), encoding="utf-8").read()
+    except (OSError, ValueError, KeyError):
+        rows, md = {}, ""
+
+    def row(q):
+        return rows.get(q) or {}
+
+    def alone(q):
+        return ((row(q).get("split") or {}).get("alone") or {}).get("verdict")
+
+    ok("k097: a split quotation - both pieces graded as one: VERIFIED, each piece's split names what it "
+       "was ALONE (a truncated condition, a truncated opening) and the other piece",
+       row(A).get("verdict") == "VERIFIED" and alone(A) == "TRUNCATED_CONDITION"
+       and row(B).get("verdict") == "VERIFIED" and alone(B) == "TRUNCATED_OPENING"
+       and B in (row(A).get("split") or {}).get("read_with", ())
+       and A in (row(B).get("split") or {}).get("read_with", ())
+       and "split quotation - read together with" in row(A).get("detail", ""),
+       "%s | %s | %s" % (row(A), row(B), cout[-600:]))
+    sa = row(A).get("split") or {}
+    ok("k097: the pieces in REVERSED order in another draft are joined there too - every place joined",
+       any("reversed" in f for f in sa.get("files", ())) and sa.get("places") == sa.get("of") == 3, str(sa))
+    ok("k097: a joined pair that still stops before «, unless …» stays TRUNCATED_CONDITION - about its "
+       "outer edge, and says it was graded as one",
+       row(A2).get("verdict") == "TRUNCATED_CONDITION" and alone(A2) == "TRUNCATED_CONDITION"
+       and "graded as one" in row(A2).get("detail", "") and "unless the student enrolled" in row(A2).get(
+           "detail", ""), str(row(A2)))
+    ok("k097: a condition left out BETWEEN two quotations of one passage stays loud - no split, the "
+       "alarm unchanged",
+       row(C).get("verdict") == "TRUNCATED_CONDITION" and "split" not in row(C)
+       and row(D).get("verdict") == "VERIFIED", "%s | %s" % (row(C), row(D)))
+    ok("k097: the continuation quoted a page away (> SPLIT_NEAR characters) does not answer the alarm",
+       row(A4).get("verdict") == "TRUNCATED_CONDITION" and "split" not in row(A4), str(row(A4)))
+    ok("k097: the continuation across a blank line (another paragraph) does not answer it either",
+       row(A5).get("verdict") == "TRUNCATED_CONDITION" and "split" not in row(A5), str(row(A5)))
+    ok("k097: three pieces of one sentence - the chain grows while the joined text still points at its "
+       "neighbour, and the whole sentence reads VERIFIED",
+       row(A6).get("verdict") == "VERIFIED" and len((row(A6).get("split") or {}).get("read_with", ())) == 2,
+       str(row(A6)))
+    ok("k097: a quotation's words inside ANOTHER, longer quotation are that quotation's place, not a lone "
+       "place of the short one (the longer one keeps its own alarm)",
+       row(LONG).get("verdict") == "TRUNCATED_CONDITION" and row(A).get("verdict") == "VERIFIED"
+       and any("nested" in f for f in sa.get("files", ())), "%s | %s" % (row(LONG), sa))
+    ok("k097: REPORT.md lists the split quotations with what each piece was alone",
+       "## Split quotations read together" in md and "«%s» + «%s»" % (A, B) in md
+       and "truncated condition" in md.split("## Split quotations read together", 1)[-1][:3000].lower(),
+       md.split("## Split quotations read together", 1)[-1][:900])
+    ok("k097: the check console says the split quotations were graded together",
+       "ℹ SPLIT QUOTATIONS: " in cout, cout[-900:])
+
+    # --- the same piece ALONE at another place keeps its alarm ---------------------------------------------
+    root2 = matter("k097b", {"split.md": 'It reaches "%s" and "%s" today.\n' % (A, B),
+                             "alone.md": 'It reaches "%s" - nothing more.\n' % A})
+    res = scan_matter(_config.load(root2), quiet=True, printer=lambda *a: None)
+    r2 = {" ".join(r["quote"].split()): r for r in res["rows"]}
+    ok("k097: a piece joined at one place and ALONE at another keeps its alarm, and the detail names "
+       "both - its partner is joined (its only place)",
+       r2.get(A, {}).get("verdict") == "TRUNCATED_CONDITION"
+       and "split quotation at 1 of 2 place(s)" in r2.get(A, {}).get("detail", "")
+       and r2.get(B, {}).get("verdict") == "VERIFIED", "%s | %s" % (r2.get(A), r2.get(B)))
+
+    # --- the green path: nothing split, nothing said ------------------------------------------------------
+    root3 = matter("k097g", {"whole.md": 'The rule: "The officer may excuse a late filing caused by %s, %s."\n'
+                                         % (A, B)})
+    res3 = scan_matter(_config.load(root3), quiet=True, printer=lambda *a: None)
+    from krokai.run import write_report as _wr, print_summary as _ps
+    _wr(res3, _config.load(root3), os.path.join(tmp, "k097go"))
+    gmd = io.open(os.path.join(tmp, "k097go", "REPORT.md"), encoding="utf-8").read()
+    glines = []
+    _ps(res3, printer=glines.append)
+    ok("k097: with no split nothing is said - the whole sentence VERIFIED, no `split`, no REPORT.md "
+       "section, no console line",
+       [r["verdict"] for r in res3["rows"]] == ["VERIFIED"] and not any("split" in r for r in res3["rows"])
+       and "## Split quotations read together" not in gmd and not any("SPLIT QUOTATIONS" in x for x in glines),
+       "%s | %s" % ([r["verdict"] for r in res3["rows"]], gmd[:300]))
+
+
 def suite_k093_short_pdf(tmp):
     """K093 (2026-11-26): a SHORT PDF (under MIN_TEXT_LAYER) that reads as a typeset document on
     every count - a typeset layer, no picture, a line in the page body - is INDEXED with the
@@ -7289,6 +7452,7 @@ def main():
         suite_k018_pages(tmp)
         suite_k093_short_pdf(tmp)
         suite_k096_picture_pages(tmp)
+        suite_k097_split_quotation(tmp)
         suite_k094_condition_cuts(tmp)
         suite_word_diff()
         suite_citations()
