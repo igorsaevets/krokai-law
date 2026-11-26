@@ -10,6 +10,51 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 
+## [0.26.0] - 2026-11-26
+
+Three changes, each found by measuring krokai on a copy of a real matter (a filed petition with 129
+quotations, and the exhibits filed with it) and each measured before it shipped. A match in a PDF
+did not say which page of the file it stands on. A short typeset PDF was set aside as a scan. And a
+quotation cut so that it drops the condition it hangs on («...is considered to be in status during
+that vacation» without «, if the student has completed ...») read VERIFIED.
+
+### Added
+
+- `quote` and `check` name the page of a PDF a quotation stands on: «PDF page 3 of 12», «PDF pages
+  3-4 of 12» across a page break, «(also on page 9)» when the file repeats the words. `result.json`
+  rows carry `page`, and REPORT.md prints it beside «Found in». The number is the page index in the
+  PDF file, not the printed page a citation names. When the page cannot be told safely the line says
+  «page unknown» and why - the per-page counts are checked against the indexed text first.
+- The text cache keeps per-page counts beside each PDF's text (`*.pages.json`); a cache written by an
+  earlier version gets them on first need.
+
+### Changed
+
+- A PDF under the 200-character text floor is indexed - with the «SHORT text source» warning a short
+  text file already gets - when it reads as a typeset document: a typeset text layer, no picture
+  covering a tenth of a page or more, and a line of text in the page body. Before, every PDF under
+  the floor was set aside as a scan to OCR. A label or a stamp over a picture, a label alone in the
+  page margin, an OCR layer that thin and an empty page stay out, and the build output and REPORT.md
+  now say why, file by file. The page geometry needs PyMuPDF (`krokai[all]`); without it a short PDF
+  stays out and its reason says so.
+- A short typeset page that is a bot wall («Just a moment...») is a FAILED DOWNLOAD - re-fetch it -
+  not a scan to OCR. `sidecar` asks the same questions; it used the length alone.
+- `krokai mutate` also cuts a blessed quotation where a drafter cuts it: at the comma before
+  «, if ...» / «, unless ...», and after an opening negation or condition. Its older condition cut
+  mostly stopped mid-clause, which no drafter does.
+
+### Fixed
+
+- A quotation that stops right before «if ...» («...during that vacation» + «, if the student has
+  completed ...») is TRUNCATED_CONDITION, as one that stops before «unless ...» already was.
+- A quotation that starts right after an opening «Subject to ...,» or «In the absence of ...,» is
+  TRUNCATED_OPENING, as one that starts after a negation already was. The condition counts when the
+  comma right before the quotation closes it and it is at most 12 words long. Openers such as «If
+  ...,», «Where ...,» and «When ...,» are not read: measured on the law corpus, about half of their
+  places are not conditions.
+- An empty extraction no longer wins over a short one from the other PDF engine: with pypdf absent, a
+  short PyMuPDF text used to come back empty.
+
 ## [0.25.0] - 2026-11-25
 
 A quotation cut at ONE edge is no longer graded ALTERED. Put next to the sister project's own
