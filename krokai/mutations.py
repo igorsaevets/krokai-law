@@ -22,6 +22,8 @@ THE CATALOGUE MIRRORS THE INCIDENT LOG - ONE MUTATION PER PAID-FOR INCIDENT
     digit               a date or threshold altered     an OCR-shaped corruption
     tail                the last words rewritten        a model that fetched the right page
     cut-condition       cut right before ", but ..."    10 found among already-VERIFIED quotations
+    cut-clause          cut where a clause ends ", if"  a drafter's cut: K037 seeds, one passed
+    drop-opening        "Subject to ...," dropped       K037 seeds: two of three passed
     synonym             one word paraphrased            "produces text, not a quotation"
     splice              two quotations welded with ...  an ellipsis joining two authorities
 
@@ -45,7 +47,7 @@ from __future__ import annotations
 import re
 
 from .normalize import normalise
-from .verify import check, LIMITER_RE
+from .verify import check, LIMITER_RE, NEGATION, CONDITION_OPENERS, CONDITION_WINDOW
 from .verdicts import DANGEROUS
 
 __all__ = ["MUTATIONS", "run"]
@@ -93,6 +95,35 @@ def m_cut_condition(q):
     return None if (not m or m.start() < 45) else q[:m.start()].rstrip(" ,;")
 
 
+# 🔴 K094 (2026-11-26): the cuts a DRAFTER makes. `m_cut_condition` cuts before the first limiter
+# with the punctuation optional, so on a real filed petition 14 of its 17 cuts ended mid-clause
+# («…that the alien» before «is not») - a shape nobody writes and the easiest one for the checker:
+# the bank tested the detectors on easier input than real use. These two cut where a clause ENDS,
+# the way K037's seeds were cut by hand (three of five read VERIFIED then). Both are derived from
+# the checker's own definitions, so the generator cannot drift narrower than the checker (R78).
+_CLAUSE_LIMITER = re.compile(r"[,;]\s+(?:%s)" % LIMITER_RE.pattern.lstrip("^"), re.I)
+_OPENING = re.compile(r"^\W*(?P<w>%s)\b[^,;:.]*,\s+" % "|".join(
+    re.escape(w) for w in sorted(set(NEGATION) | set(CONDITION_OPENERS), key=len, reverse=True)), re.I)
+
+
+def m_cut_clause(q):
+    """Stop at the comma or semicolon that opens a limiting clause («…, if the student …»)."""
+    m = _CLAUSE_LIMITER.search(q, 45)
+    return None if not m else q[:m.start()].rstrip(" ,;")
+
+
+def m_drop_opening(q):
+    """Drop an opening negation or condition clause, cut at the comma that closes it («Subject to
+    clause (ii), the Attorney General may …» -> «the Attorney General may …»). The clause stays
+    inside the checker's own window - six words for a negation, CONDITION_WINDOW for a condition."""
+    m = _OPENING.match(q)
+    if not m:
+        return None
+    limit = CONDITION_WINDOW if m.group("w").lower() in CONDITION_OPENERS else 6
+    rest = q[m.end():]
+    return rest if len(m.group(0).split()) <= limit and len(rest) >= 45 else None
+
+
 def m_synonym(q):
     for a, b in _SYNONYMS:
         if a in q:
@@ -107,6 +138,8 @@ MUTATIONS = [
     ("tail", m_tail, None),
     # The reason must be right, not just the alarm.
     ("cut-condition", m_cut_condition, ("TRUNCATED_CONDITION", "TRUNCATED_OPENING")),
+    ("cut-clause", m_cut_clause, ("TRUNCATED_CONDITION",)),
+    ("drop-opening", m_drop_opening, ("TRUNCATED_OPENING",)),
     ("synonym", m_synonym, None),
 ]
 

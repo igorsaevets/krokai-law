@@ -46,16 +46,29 @@ SCOPING = ["for purposes of", "within the meaning of", "as defined in", "subject
 
 # A clause that NARROWS what precedes it. A quotation stopping immediately before one of these has
 # kept the words and dropped the rule.
+# 🔴 K094 (2026-11-26): «if» was missing - the one condition word a statute uses most. Measured on a
+# real filed petition: a quotation cut before «, if the student has completed the equivalent of an
+# academic year …» read VERIFIED, while the same cut before «, except that …» was caught. Measured
+# before it shipped, on a copy of a law library (four folders, 302 files): 1 613 distinct places
+# where a quotation could stop right before «, if» / «; if»; in a seeded sample of 12, all 7 that a
+# drafter could end a quotation at drop a real condition («if such legitimation … takes place before
+# the child reaches the age of 16», «if otherwise approvable», «if- (1) the alien …»), the other 5
+# stop after a dangling «and» or a form label. Bare «if», not NARROWER_RE's «if the / an / a»: 4 of
+# those 7 continue «if such», «if each», «if otherwise», «if-». Cost on the filed petition's 67
+# clean quotations: 1 new alarm, a quotation whose condition the draft quotes separately right after.
 LIMITER_RE = re.compile(
     r"^(but|however|unless|except|provided|notwithstanding|although|though|nor|only|"
     r"other than|subject to|does not|do not|shall not|may not|cannot|is not|are not|"
-    r"absent|save|to the extent)\b", re.I)
+    r"absent|save|to the extent|if)\b", re.I)
 
 # Same idea for what an ellipsis swallows. Not every elision matters; these do.
 # 🔴 R76: this list drifted BELOW `LIMITER_RE` — «although/though/nor/absent/save/to the
 # extent/does not/do not/is not/are not» narrowed a tail but not a gap (grokbuild), and the
 # article variants were half-covered: «if the» matched while «if an applicant» did not
 # (lunapro). The condition words now take any of the three articles.
+# K094: LIMITER_RE now takes a bare «if» and this list keeps «if the / an / a» ON PURPOSE - a tail is
+# asked about the word that OPENS the continuation, a gap is searched ANYWHERE («as if», «even if»,
+# «determine if» inside an elided span). The bare word was measured for tails only.
 NARROWER_RE = re.compile(
     r"\b(but|however|unless|except|provided|notwithstanding|only|other than|subject to|"
     r"certain|specific|solely|for purposes of|does not include|do not include|shall not|"
@@ -437,10 +450,57 @@ def tail_short_enough_to_decline(quote_n, quote_raw):
     return bool(parts) and len(parts[-1]) < 25
 
 
+# 🔴 K094 (2026-11-26): an opening CONDITION governs what follows it as surely as a negation does,
+# and the negation list cannot see one. Measured on a real filed petition: «Subject to clause (ii),
+# the Attorney General may … waive» and «In the absence of adverse factors, adjustment will
+# ordinarily be granted» both read VERIFIED with the opening clause cut off, while «absent any
+# negative factors,» was caught - «absent» is a NEGATION token, «absence» and «subject» are not.
+# Only these two openers, because only they were measured: on a copy of a law library (302 files),
+# every comma a quotation could start after, seeded samples of 12 read by eye - «In the absence of»
+# 12 of 12 real conditions, «Subject to» 7 of 9 where a quotation could start (the rest are rows
+# of a visa-category table), while «if» opening a sentence was 5 of 12 (most false ones were a
+# comma INSIDE a long condition: «If you are applying as a first preference, ‖ second preference,
+# or …»), and «where» / «when» are as often a place or a time as a condition.
+# Three limits, each from a measured false alarm (first pass: 6 of 12 for «in the absence of»):
+#   * the comma right before the quotation must be the one that CLOSES the condition - no comma
+#     between the opener and it (a later comma of the same sentence, a list comma);
+#   * the opener starts a clause: after a stop, a comma, a bracket or a quote mark, or capitalised
+#     after a run-in heading («(i) National interest waiver Subject to …») - «is subject to review,»
+#     is a predicate, not an opening condition;
+#   * at most 12 words from the opener to the quotation: every right alarm read sat within 12, the
+#     two wrong or unclear ones at 16 and 17.
+CONDITION_OPENERS = ("subject to", "in the absence of")
+_CONDITION_OPENER_RE = re.compile(r"(?<![A-Za-z0-9])(%s)\b" % "|".join(CONDITION_OPENERS), re.I)
+_CLAUSE_START = ",;:([\"'“‘—-"
+CONDITION_WINDOW = 12
+
+
+def _opening_condition(cut):
+    """The K094 test on one sentence piece ``cut`` that ends where the quotation begins. Returns
+    the governing words («subject to», «in the absence of») or None."""
+    tail = cut.rstrip()
+    if not tail.endswith(","):
+        return None                            # the quotation does not start at a clause boundary
+    found = None
+    for m in _CONDITION_OPENER_RE.finditer(cut):
+        before = cut[:m.start()].rstrip()
+        if before and before[-1] not in _CLAUSE_START and not m.group(0)[:1].isupper():
+            continue                           # mid-clause: «is subject to review by the Board,»
+        clause = cut[m.start():].rstrip()
+        if "," in clause[:-1] or len(clause.split()) > CONDITION_WINDOW:
+            continue
+        found = m.group(0).lower()
+    return found
+
+
 def _negation_in_head(quote_n, head):
     """The core of ``leading_cut``, on an already-located head. Returns ``(bad, cut)`` or
     ``(None, None)``. Split out in R76 so the alphanumeric branch can ask the same question
-    about the span it located - the detector logic exists once."""
+    about the span it located - the detector logic exists once.
+
+    K094: it also answers for an opening CONDITION (``_opening_condition``) - the name stays,
+    because every caller asks this one function «does what stands before the quotation govern
+    it», and a second function would be a second place to forget."""
     if not head:
         return None, None
     if quote_n[:1].isupper() and head.rstrip().endswith((".", "!", "?", ":")):
@@ -450,6 +510,9 @@ def _negation_in_head(quote_n, head):
     bad = sorted({w for w in toks if w in NEGATION})
     if bad:
         return ", ".join(bad), " ".join(cut.split())[-140:]
+    cond = _opening_condition(cut)
+    if cond:
+        return cond, " ".join(cut.split())[-140:]
     return None, None
 
 

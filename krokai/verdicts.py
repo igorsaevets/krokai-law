@@ -196,7 +196,7 @@ MEANING = {
         "VERIFIED": "word for word in a file in your sources folder - which is not the same as "
                     "'in force today'",
         "TRUNCATED_CONDITION": "!! exact - but the source CONTINUES with the clause that limits it",
-        "TRUNCATED_OPENING": "!! exact - but the quotation starts AFTER a negation that governs it",
+        "TRUNCATED_OPENING": "!! exact - but the quotation starts AFTER a negation or a condition that governs it",
         "OPERATOR": "!! the difference touches not/unless/only/may/shall - the rule may be inverted",
         "SPLICED": "!! the fragments exist, but no single document holds them in order",
         "FOUND_ELSEWHERE": "!! verbatim in the corpus - but NOT in the document cited beside it",
@@ -230,7 +230,7 @@ MEANING = {
     "ru": {
         "VERIFIED": "дословно есть в первоисточнике",
         "TRUNCATED_CONDITION": "!! дословно — но источник продолжается оговоркой, которую цитата обрывает",
-        "TRUNCATED_OPENING": "!! дословно — но цитата начата ПОСЛЕ отрицания, которое ею управляет",
+        "TRUNCATED_OPENING": "!! дословно — но цитата начата ПОСЛЕ отрицания или условия, которое ею управляет",
         "OPERATOR": "!! расхождение задело not/unless/only/may/shall — смысл может быть перевёрнут",
         "SPLICED": "!! куски есть, но ни в одном документе не идут подряд",
         "FOUND_ELSEWHERE": "!! дословно есть в корпусе — но НЕ в том документе, чей адрес указан рядом",

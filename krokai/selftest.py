@@ -297,8 +297,17 @@ def suite_verify(corpus):
     from krokai.extract import extract_quotes
 
     v, _w, _d = check("certified by a designated school official to consist of at least eighteen "
-                      "clock hours of attendance a week", corpus)
+                      "clock hours of attendance a week if the dominant part of the course of study "
+                      "consists of classroom instruction", corpus)
     ok("verdict VERIFIED on an exact, complete quotation", v == "VERIFIED", v)
+    # 🔴 K094: the quotation this pin used until 2026-11-26 stops before «if the dominant part of the
+    # course of study consists of classroom instruction» - the eighteen hours hold only for a course
+    # that is mostly classroom teaching. It was «complete» only in the eyes of a limiter list with no
+    # «if»; it is the condition-dropping cut K094 exists for.
+    v, _w, d = check("certified by a designated school official to consist of at least eighteen "
+                     "clock hours of attendance a week", corpus)
+    ok("k094 the old «complete» quotation, cut before «if the dominant part …», is TRUNCATED_CONDITION",
+       v == "TRUNCATED_CONDITION" and "if the dominant part" in (d or ""), "%s :: %s" % (v, d))
 
     # --- the two entry points must agree, whatever the drafter pasted ---------------------------
     # 🔴 The regression lock for the composition drift. `krokai check` reaches this function
@@ -450,8 +459,13 @@ def suite_r50_no_green_without_guard(corpus):
 
     truncated = ("The district director may consider reinstating a student who makes a request "
                  "for reinstatement")
+    # K094: «… attendance a week» was this complete quotation until 2026-11-26 - the source goes on
+    # «if the dominant part of the course of study consists of classroom instruction», so it was a
+    # condition-dropping cut that read green only because LIMITER_RE had no «if». Complete = to the
+    # end of the sentence.
     complete = ("certified by a designated school official to consist of at least eighteen "
-                "clock hours of attendance a week")
+                "clock hours of attendance a week if the dominant part of the course of study "
+                "consists of classroom instruction")
 
     v, _w, _d = check(truncated, corpus)
     ok("r50 POS-1 exact truncation is loud", v == "TRUNCATED_CONDITION", v)
@@ -517,8 +531,13 @@ def suite_r51_tail_elision(corpus):
 
     truncated = ("The district director may consider reinstating a student who makes a request "
                  "for reinstatement")
+    # K094: «… attendance a week» was this complete quotation until 2026-11-26 - the source goes on
+    # «if the dominant part of the course of study consists of classroom instruction», so it was a
+    # condition-dropping cut that read green only because LIMITER_RE had no «if». Complete = to the
+    # end of the sentence.
     complete = ("certified by a designated school official to consist of at least eighteen "
-                "clock hours of attendance a week")
+                "clock hours of attendance a week if the dominant part of the course of study "
+                "consists of classroom instruction")
 
     for tail in ("...", "…"):
         v, _w, _d = check(truncated + tail, corpus)
@@ -6131,6 +6150,136 @@ def suite_k030_edge_ellipsis(tmp):
        v not in CLEAN, "%s :: %s" % (v, dd))
 
 
+def suite_k094_condition_cuts(tmp):
+    """🔴 K094 (2026-11-26): a verbatim quotation cut so that it drops the CONDITION it hangs on.
+
+    Measured on a copy of a real filed petition: of five cuts made at a clause boundary (the words
+    kept verbatim), `check` caught «, except that …» and «absent any negative factors,» and read three
+    VERIFIED - a tail cut before «, if the student has completed …» (LIMITER_RE had no «if») and two
+    head cuts dropping «Subject to clause (ii),» and «In the absence of adverse factors,» (the head
+    test knew negations only). Each widening was measured on the petition's 67 clean quotations and
+    on a law library before it shipped (private record K094). The pins hold each caught shape on both
+    the exact and the punctuation-drift path, the clean near-miss of each (E-1072), and the two
+    mutations that cut where a clause ends, as a drafter does.
+    """
+    import subprocess as _sp
+    from krokai import mutations as MU
+    from krokai.corpus import Corpus
+    from krokai.verify import check
+    d = os.path.join(tmp, "k094")
+    os.makedirs(d, exist_ok=True)
+    vac = ("A student attending a school on a quarter calendar who takes only one vacation a year during "
+           "any one of the quarters instead of during the summer is considered to be in status during "
+           "that vacation")
+    s_if = vac + (", if the student has completed the equivalent of an academic year prior to taking "
+                  "the vacation.")
+    waiver = ("the Secretary may, when the Secretary deems it to be in the national interest, waive the "
+              "requirements of subparagraph (A) that the services of a foreign national be sought by an "
+              "employer in the United States.")
+    s_subj = "(B) Waiver of job offer (i) National interest waiver Subject to clause (ii), " + waiver
+    adj = ("adjustment will ordinarily be granted, still as a matter of discretion and only after the full "
+           "record has been reviewed by the officer.")
+    s_abs = "The Board has said that favorable factors will be weighed. In the absence of adverse factors, " + adj
+    with io.open(os.path.join(d, "k094-law.md"), "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("(iii) Annual vacation. " + s_if + "\n\n" + s_subj + "\n\n" + s_abs + "\n\n"
+                 "The school shall report the change to the Service, which shall record it in the file of the "
+                 "student concerned.\n\n"
+                 "Every decision of the officer is subject to review by the Board, which may affirm or reverse "
+                 "the decision in whole or in part.\n\n"
+                 "Subject to the conditions and limitations that the Secretary prescribes by regulation for "
+                 "this program, the employer may file a single petition for several workers.\n\n"
+                 "In general, the agency may accept one petition that covers several workers in the same "
+                 "occupation.\n\n"
+                 "The term child includes a child adopted while under the age of sixteen years, if such adoption is "
+                 "final before the child reaches that age.\n")
+    c = Corpus([d], quiet=True)
+
+    def is_(label, q, want, word=None):
+        v, _w, dd = check(q, c)
+        good = v == want and (word is None or word in (dd or ""))
+        ok("k094 " + label, good, "%s :: %s" % (v, (dd or "")[:160]))
+
+    # the three measured misses, each on the exact path and on the punctuation-drift path
+    is_("a tail cut before «, if the student has completed …» is TRUNCATED_CONDITION", vac,
+        "TRUNCATED_CONDITION", "if the student has completed")
+    is_("...and with a drift inside it (the alphanumeric branch) as well",
+        vac.replace("during the summer is", "during the summer, is"), "TRUNCATED_CONDITION", "if the student")
+    is_("a bare «if» with no article («, if such adoption is final …») is TRUNCATED_CONDITION too",
+        "The term child includes a child adopted while under the age of sixteen years", "TRUNCATED_CONDITION",
+        "if such adoption")
+    is_("a head cut dropping «Subject to clause (ii),» is TRUNCATED_OPENING", waiver, "TRUNCATED_OPENING",
+        "subject to")
+    is_("...and with a bracketed capital «[T]he Secretary may …» as well", "[T]" + waiver[1:],
+        "TRUNCATED_OPENING", "subject to")
+    is_("a head cut dropping «In the absence of adverse factors,» is TRUNCATED_OPENING", adj,
+        "TRUNCATED_OPENING", "in the absence of")
+    # the clean near-misses (E-1072)
+    is_("the whole sentence with its «, if …» is VERIFIED", s_if, "VERIFIED")
+    is_("a quotation stopping before «, which …» is VERIFIED (not a limiter)",
+        "The school shall report the change to the Service", "VERIFIED")
+    is_("the sentence that STARTS with «Subject to clause (ii),» is VERIFIED",
+        "Subject to clause (ii), " + waiver, "VERIFIED")
+    is_("a start after a later comma of the same sentence is VERIFIED (the condition closed earlier)",
+        "still as a matter of discretion and only after the full record has been reviewed by the officer.",
+        "VERIFIED")
+    is_("«is subject to review by the Board,» is a predicate, not an opening condition - VERIFIED",
+        "which may affirm or reverse the decision in whole or in part.", "VERIFIED")
+    is_("an opener 15 words back is outside the measured 12-word window - VERIFIED (a documented limit)",
+        "the employer may file a single petition for several workers.", "VERIFIED")
+    is_("a start after «In general,» (no condition) is VERIFIED",
+        "the agency may accept one petition that covers several workers in the same occupation.", "VERIFIED")
+
+    # the generator: clause-boundary cuts beside the mid-clause one
+    mid = "The officer who reviews the application shall find that the alien is not eligible for the benefit."
+    ok("k094 m_cut_clause stops at «, if …», where the clause ends", MU.m_cut_clause(s_if) == vac,
+       repr(MU.m_cut_clause(s_if))[-60:])
+    ok("k094 m_cut_clause never cuts mid-clause (a limiter with no comma before it)",
+       MU.m_cut_clause(mid) is None
+       and MU.m_cut_condition(mid) == "The officer who reviews the application shall find that the alien",
+       "%r / %r" % (MU.m_cut_clause(mid), MU.m_cut_condition(mid)))
+    ok("k094 m_drop_opening drops «Subject to clause (ii),» at the comma that closes it",
+       MU.m_drop_opening("Subject to clause (ii), " + waiver) == waiver,
+       repr(MU.m_drop_opening("Subject to clause (ii), " + waiver))[:60])
+    ok("k094 m_drop_opening leaves a non-condition opener and an over-long one alone",
+       MU.m_drop_opening("In general, the employer may file a single petition for several workers in the "
+                         "same occupation.") is None
+       and MU.m_drop_opening("Subject to the conditions and limitations that the Secretary prescribes by "
+                             "regulation for this program, the employer may file a single petition.") is None)
+    stats, rows = MU.run([(s_if, "k094-law.md"), ("Subject to clause (ii), " + waiver, "k094-law.md")], c,
+                         limit=5, printer=lambda *_a: None)
+    for name, want in (("cut-clause", "TRUNCATED_CONDITION"), ("drop-opening", "TRUNCATED_OPENING")):
+        mine = [r for r in rows if r["mutation"] == name]
+        ok("k094 mutation %s is made and caught for the right reason" % name,
+           mine and all(r["caught"] and r["verdict"] == want for r in mine), str(mine)[:200])
+
+    # through the real CLI (E-215): the label and the widened meaning a user reads
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    matter = os.path.join(tmp, "k094m")
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+
+    def run(*args):
+        p = _sp.run([sys.executable, "-m", "krokai"] + list(args), cwd=root, env=env,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+    rc, out = run("init", matter)
+    if rc != 0:
+        ok("k094: init failed - the CLI pins were skipped", False, out[-200:])
+        return
+    shutil.copy(os.path.join(d, "k094-law.md"), os.path.join(matter, "law", "k094-law.md"))
+    _rc, out = run("quote", "--dir", matter, waiver)
+    ok("k094 CLI quote: the «Subject to» cut prints TRUNCATED OPENING with «a negation or a condition»",
+       ("TRUNCATED OPENING" in out or "ОБРЕЗАНО НАЧАЛО" in out)
+       and ("a negation or a condition" in out or "отрицания или условия" in out), out[-300:])
+    _rc, out = run("quote", "--dir", matter, vac)
+    ok("k094 CLI quote: the «, if …» cut prints TRUNCATED CONDITION",
+       "TRUNCATED CONDITION" in out or "ОБРЕЗАНО УСЛОВИЕ" in out, out[-300:])
+    _rc, out = run("quote", "--dir", matter, s_if)
+    ok("k094 CLI quote: the whole sentence prints VERIFIED (the clean path through the same door)",
+       ("VERIFIED" in out or "ДОСЛОВНО" in out) and "ОБРЕЗАНО" not in out and "TRUNCATED" not in out, out[-300:])
+
+
 def suite_k026_front_door(tmp):
     """K026 + K016 (2026-11-25): what enters the library must be the document it claims to be. ONE
     --address takes ONE inbox file; a «new edition» that keeps too little of the current one's text
@@ -6912,6 +7061,7 @@ def main():
         suite_k030_edge_ellipsis(tmp)
         suite_k018_pages(tmp)
         suite_k093_short_pdf(tmp)
+        suite_k094_condition_cuts(tmp)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)
