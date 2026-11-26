@@ -33,6 +33,8 @@ DEFAULTS = {
     "bank": "case/QUOTE-BANK.md",
     "queue": "case/QUOTE-QUEUE.md",
     "fabrication_register": "case/FABRICATION-REGISTER.md",
+    "exhibits": ["exhibits"],
+    "fact_bank": "facts/FACT-BANK.md",
     "library_index": "law/INDEX.md",
     "citation_packs": ["us-federal"],
     "surnames": [],
@@ -72,6 +74,13 @@ TEMPLATE = {
     "_fabrication_register": "Confirmed fabrications, with which model produced each. Include your "
                              "own errors or the file is advertising, not statistics.",
     "fabrication_register": "case/FABRICATION-REGISTER.md",
+    "_exhibits": "Folders holding the EVIDENCE (exhibit files named by their id, e.g. «K-4 Offer letter.pdf»). "
+                 "`krokai facts add --exhibit K-4` slices a fact from the file that carries the id.",
+    "exhibits": ["exhibits"],
+    "_fact_bank": "Facts sliced from the exhibits by `krokai facts add` - never typed. A draft sentence cites one as "
+                  "[F-012]; `check` holds the sentence's dates, amounts and numbers to the slice. Outside the draft "
+                  "folders on purpose: the slices are evidence text, not law.",
+    "fact_bank": "facts/FACT-BANK.md",
     "_library_index": "One line per downloaded source. Checked BEFORE any web search.",
     "library_index": "law/INDEX.md",
 

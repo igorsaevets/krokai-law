@@ -209,7 +209,9 @@ class Corpus(object):
 
     def __init__(self, roots, exts=DEFAULT_EXT, derived_re=DERIVED_DEFAULT,
                  skip_dirs=(), cache_dir=None, quiet=False, sentinel=None,
-                 superseded=()):
+                 superseded=(), files=None):
+        # K046: `files` - index exactly these files instead of walking `roots` (`facts add` reads ONE exhibit with the
+        # corpus's own reader, OCR-layer facts, picture pages and page index; a walk would read the whole folder).
         self.paths, self.starts, self.astarts, self.hstarts = [], [], [], []
         self.excluded_derived, self.excluded_stub, self.unreadable = [], [], []
         self.excluded_empty, self.short_sources = [], []
@@ -234,7 +236,7 @@ class Corpus(object):
 
         buf, abuf, hbuf = [], [], []
         pos = apos = hpos = 0
-        for p in walk(roots, exts, skip_dirs):
+        for p in (list(files) if files is not None else walk(roots, exts, skip_dirs)):
             if drx and drx.search(os.path.basename(p)):
                 self.excluded_derived.append(p)
                 continue

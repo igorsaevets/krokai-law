@@ -7060,6 +7060,191 @@ def suite_k097_split_quotation(tmp):
        "%s | %s" % ([r["verdict"] for r in res3["rows"]], gmd[:300]))
 
 
+def suite_k046_fact_bank(tmp):
+    """K046 (2026-11-26): a fact is SLICED from an exhibit (`facts add`, `bank add`'s slicer) and a draft sentence
+    cites it as [F-nnn]; `check` holds the sentence's dates, amounts and numbers to the slice - not to the whole
+    exhibit, where a value swapped in from another entity of the same document always «stands» - and says when the
+    sentence cites another exhibit. Names are listed, never counted (measured: a red on names is wrong about half the
+    time). Fictional people and companies only (E-1009)."""
+    import json
+    import subprocess as _sp
+    from krokai import facts as F
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    OFFER = ('Northfield Labs is pleased to offer Ada Testperson the position of Research Engineer starting on March 2, '
+             '2021 at an annual salary of $85,000. Our director wrote: "We expect careful and patient work from the '
+             'whole research team this year." Her previous employer, Brightwater Analytics, paid $61,500 from June '
+             '2017.\n')
+    AWARD = "The Quill Society awarded the Silver Quill to Ada Testperson on 05/14/2019 for 12 published papers.\n"
+    WAGES = "Payroll record: total wages 47,250.00 for the calendar year 2020, paid in twelve parts.\n"
+
+    def matter(name, fact_bank=None):
+        root = os.path.join(tmp, name)
+        for d in ("law", "case", "exhibits"):
+            os.makedirs(os.path.join(root, d))
+        io.open(os.path.join(root, "law", "8CFR-204.md"), "w", encoding="utf-8").write(
+            "# 8 CFR 204.5 (fixture)\n\n(k) An alien who is a member of the professions holding an advanced "
+            "degree must show the degree.\n")
+        for fn, text in (("K-4 Offer letter.md", OFFER), ("B-1 Award notice.md", AWARD), ("C-7 Payroll.md", WAGES),
+                         ("D-2 Letter.md", "A letter dated 01/02/2020.\n"),
+                         ("D-2 Letter repaired.md", "A letter dated 01/02/2020, repaired copy.\n")):
+            io.open(os.path.join(root, "exhibits", fn), "w", encoding="utf-8").write(text)
+        cf = {"bank": "QUOTE-BANK.md", "queue": "QUOTE-QUEUE.md", "library_index": "law/INDEX.md",
+              "sources": ["law"], "drafts": [{"tier": "A", "label": "filed", "path": "case"}],
+              "citation_packs": ["us-federal"], "exhibits": ["exhibits"]}
+        if fact_bank:
+            cf["fact_bank"] = fact_bank
+        io.open(os.path.join(root, "casefile.json"), "w", encoding="utf-8").write(json.dumps(cf))
+        return root
+
+    def kro(root, *args):
+        p = _sp.run([sys.executable, "-m", "krokai"] + list(args) + ["--dir", root], cwd=repo, env=env,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+    def add(root, ex, a, b, *extra):
+        return kro(root, "facts", "add", "--exhibit", ex, "--from", a, "--to", b, *extra)
+
+    # --- the token layer alone -----------------------------------------------------------------------
+    toks = F.sentence_tokens('Dr. Ada Testperson earned $85,000 from January 5, 2020 (Exhibit K-4) under 8 CFR '
+                             '204.5(k)(2), Form I-140 and H-1B rules, section 214.2(h)(4) [F-012].')
+    kinds = sorted((t["kind"], t["raw"]) for t in toks)
+    ok("k046: a sentence's facts are its dates, amounts, numbers and names - the exhibit id, the citation, the form, "
+       "the visa class, the subsection chain and the [F-nnn] marker are not facts",
+       kinds == sorted([("name", "Ada"), ("name", "Testperson"), ("amount", "$85,000"),
+                        ("date", "January 5, 2020")]), repr(kinds))
+    ix = F.SliceIndex(["Start date 01/05/2020; salary 85,000.00 USD; revenue $45 million; Certiﬁed by the board."])
+    held = [t["raw"] for t in F.sentence_tokens("She started on January 5, 2020 at $85,000, revenue $45 Million, a "
+                                                "Certified Board member.") if ix.holds(t)]
+    ok("k046: a slice holds a value in another shape - 01/05/2020 = January 5, 2020, 85,000.00 USD = $85,000, "
+       "«Million» = «million», a ligature «ﬁ» = «fi»",
+       {"January 5, 2020", "$85,000", "$45 Million", "Certified"} <= set(held), repr(held))
+    if os.name == "nt":
+        ok("k046: an exhibit on another drive than the matter is named by its absolute path, not a crash",
+           F._rel("D:\\cases\\exhibits\\K-4.pdf", "C:\\matter").startswith("D:\\"), F._rel("D:\\x", "C:\\y"))
+    ok("k046: a value the slice does not hold is missing - one digit off, another day of the same month",
+       [t["raw"] for t in F.missing("She earned $85,001 from January 6, 2020.", ["salary $85,000 from 01/05/2020"])]
+       == ["$85,001", "January 6, 2020"],
+       repr([t["raw"] for t in F.missing("She earned $85,001 from January 6, 2020.", ["salary $85,000 from 01/05/2020"])]))
+
+    # --- facts add: dry run, write, refusals -----------------------------------------------------------
+    root = matter("k046m")
+    bank = os.path.join(root, "facts", "FACT-BANK.md")
+    rc, out = add(root, "K-4", "Northfield Labs is pleased", "salary of $85,000.")
+    ok("k046: facts add is a dry run without --apply - nothing written", rc == 0 and "DRY RUN" in out
+       and not os.path.exists(bank), out[-400:])
+    rc, out = add(root, "K-4", "Northfield Labs is pleased", "this year.\"", "--apply")
+    b = F.read_bank(bank) or {}
+    e = b.get("F-001") or {}
+    ok("k046: facts add --apply writes F-001 - exhibit, file, sha256, the slice cut from the exhibit, a ledger line",
+       rc == 0 and e.get("exhibit") == "K-4" and e.get("file", "").endswith("K-4 Offer letter.md")
+       and len(e.get("sha256", "")) == 64 and e.get("slice", "").startswith("Northfield Labs is pleased")
+       and e["slice"].endswith('this year."') and "entries: 1" in io.open(bank, encoding="utf-8").read(),
+       out[-500:])
+    rc, out = add(root, "D-2", "A letter dated", "01/02/2020")
+    ok("k046: two DIFFERENT files carry one exhibit id - refused, both offered as --file, none picked",
+       rc == 3 and out.count("--file") >= 2 and "refusing to pick" in out, out[-500:])
+    rc, out = add(root, "D-2", "A letter dated", "repaired copy.", "--file", os.path.join("exhibits",
+                                                                                         "D-2 Letter repaired.md"))
+    ok("k046: --file picks one of them (dry run)", rc == 0 and "DRY RUN" in out, out[-400:])
+    rc, out = add(root, "P-9", "anything", "else")
+    ok("k046: an exhibit id no file carries - refused with the folders searched", rc == 3 and "no file carries" in out,
+       out[-300:])
+    rc, out = add(root, "K-4", "Ada Testperson", "Research Engineer", "--id", "F-001")
+    ok("k046: an id already in the bank is refused - ids are never reused", rc == 3 and "already in the fact bank" in out,
+       out[-300:])
+    rc, out = add(root, "K-4", "a", "$85,000.")
+    ok("k046: a start anchor that is not unique is refused (bank add's own slicer)", rc == 3 and "UNIQUE" in out,
+       out[-300:])
+    rc, out = add(root, "B-1", "The Quill Society", "published papers.", "--apply")
+    ok("k046: a second entry gets the next id", rc == 0 and "F-002" in (F.read_bank(bank) or {}), out[-300:])
+    io.open(bank, "a", encoding="utf-8").write(
+        "### F-003\n- Exhibit: C-7\n- File: exhibits/C-7 Payroll.md\n- Text layer: OCR layer - its digits are what "
+        "an OCR engine read\n\n> %s\n" % WAGES.strip())
+    # the award notice changes after banking: F-002's slice is gone
+    io.open(os.path.join(root, "exhibits", "B-1 Award notice.md"), "w", encoding="utf-8").write(
+        AWARD.replace("Silver", "Bronze"))
+    S = {"ok": "Northfield Labs hired Ms. Testperson on March 2, 2021 at $85,000 a year (Exhibit K-4) [F-001].",
+         "swap": "Northfield Labs hired her on March 2, 2021 at $61,500 a year (Exhibit K-4) [F-001].",
+         "wrong": "She joined Northfield Labs on March 2, 2021 (Exhibit D-2) [F-001].",
+         "unknown": "Her salary was $90,000 [F-009].",
+         "gone": "The Quill Society honoured her in 2019 (Exhibit B-1) [F-002].",
+         "nothing": "The offer came from Northfield Labs. [F-001]",
+         "ocr": "Wages reached $47,250 in 2020 (Exhibit C-7) [F-003].",
+         "names": "She was hired by Orion Dynamics on March 2, 2021 (Exhibit K-4) [F-001].",
+         "day": "She started on March 15, 2021 (Exhibit K-4) [F-001]."}
+    io.open(os.path.join(root, "case", "brief.md"), "w", encoding="utf-8").write(
+        "# Brief\n\n" + "\n\n".join(S.values()) + "\n")
+    out_dir = os.path.join(tmp, "k046o")
+    p = _sp.run([sys.executable, "-m", "krokai", "check", "--dir", root, "--out", out_dir, "--strict"], cwd=repo,
+                env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
+    cout = (p.stdout or "") + (p.stderr or "")
+    try:
+        frows = json.load(io.open(os.path.join(out_dir, "result.json"), encoding="utf-8"))["facts"]
+        md = io.open(os.path.join(out_dir, "REPORT.md"), encoding="utf-8").read()
+    except (OSError, ValueError, KeyError):
+        frows, md = [], ""
+
+    def fr(key):
+        head = S[key].split("[F-")[0].strip()[:40]
+        for r in frows:
+            if r.get("sentence", "").startswith(head):
+                return r
+        return {}
+
+    for key, want in (("ok", F.SUPPORTED), ("swap", F.NOT_IN_SLICE), ("wrong", F.WRONG_EXHIBIT),
+                      ("unknown", F.UNKNOWN_ENTRY), ("gone", F.SLICE_GONE), ("nothing", F.NOTHING),
+                      ("ocr", F.SUPPORTED), ("names", F.SUPPORTED), ("day", F.NOT_IN_SLICE)):
+        ok("k046: check - the «%s» sentence is %s" % (key, want), fr(key).get("verdict") == want, repr(fr(key)))
+    ok("k046: the swapped salary is named - a value of ANOTHER entity of the same exhibit, which «anywhere in the "
+       "exhibit» would have passed", fr("swap").get("missing") == ["$61,500"], repr(fr("swap")))
+    ok("k046: a day the slice does not hold, in a month it does, says so",
+       any("month, not the day" in m for m in fr("day").get("missing") or []), repr(fr("day")))
+    ok("k046: names the slice does not hold are listed, not counted", fr("names").get("names") == ["Orion", "Dynamics"]
+       and fr("ok").get("names") == [], repr((fr("names"), fr("ok").get("names"))))
+    ok("k046: a marker after the full stop belongs to the sentence before it",
+       fr("nothing").get("sentence", "").startswith("The offer came from"), repr(fr("nothing")))
+    ok("k046: a slice read from an OCR layer is marked in the console and REPORT.md",
+       fr("ocr").get("ocr") == ["F-003"] and "OCR layer - confirm its digits" in cout
+       and "F-003 rest(s) on an OCR layer" in md, cout[-600:])
+    ok("k046: check --strict exits 1 on a red fact in tier A; the console line counts every verdict",
+       p.returncode == 1 and "🔴 FACTS: 9 sentence(s) cite the fact bank" in cout
+       and "UNKNOWN_ENTRY 1" in cout and "SLICE_GONE 1" in cout, cout[-700:])
+    ok("k046: REPORT.md «Facts held to their slices» lists each reference with its verdict",
+       "## Facts held to their slices" in md and "**WRONG_EXHIBIT**" in md and "not in the slice: $61,500" in md,
+       md[-800:])
+
+    # --- the green path: every fact held, the bank inside a draft folder is not graded as our writing ----------
+    g = matter("k046g", fact_bank="case/FACT-BANK.md")
+    rc, out = add(g, "K-4", "Northfield Labs is pleased", "this year.\"", "--apply")
+    io.open(os.path.join(g, "case", "brief.md"), "w", encoding="utf-8").write("# Brief\n\n" + S["ok"] + "\n")
+    og = os.path.join(tmp, "k046go")
+    p = _sp.run([sys.executable, "-m", "krokai", "check", "--dir", g, "--out", og, "--strict"], cwd=repo, env=env,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
+    gout = (p.stdout or "") + (p.stderr or "")
+    try:
+        grows = json.load(io.open(os.path.join(og, "result.json"), encoding="utf-8"))["rows"]
+    except (OSError, ValueError, KeyError):
+        grows = None
+    ok("k046: green path - every fact held: check --strict exits 0 and says so", rc == 0 and p.returncode == 0
+       and "✅ FACTS: 1 sentence(s) cite the fact bank" in gout, gout[-500:])
+    ok("k046: the fact bank is never read as our writing - its quoted evidence is not a quotation row",
+       grows is not None and not any("careful and patient work" in (r.get("quote") or "") for r in grows),
+       repr([r.get("quote") for r in grows or []][:5]))
+    nf = matter("k046n")
+    io.open(os.path.join(nf, "case", "brief.md"), "w", encoding="utf-8").write("# Brief\n\nNo facts cited here.\n")
+    on = os.path.join(tmp, "k046no")
+    p = _sp.run([sys.executable, "-m", "krokai", "check", "--dir", nf, "--out", on], cwd=repo, env=env,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
+    try:
+        nmd = io.open(os.path.join(on, "REPORT.md"), encoding="utf-8").read()
+    except OSError:
+        nmd = None
+    ok("k046: no [F-nnn] in the drafts - no facts line, no facts section", nmd is not None
+       and "## Facts held to their slices" not in nmd and "FACTS:" not in (p.stdout or ""), (p.stdout or "")[:300])
+
+
 def suite_k093_short_pdf(tmp):
     """K093 (2026-11-26): a SHORT PDF (under MIN_TEXT_LAYER) that reads as a typeset document on
     every count - a typeset layer, no picture, a line in the page body - is INDEXED with the
@@ -7453,6 +7638,7 @@ def main():
         suite_k093_short_pdf(tmp)
         suite_k096_picture_pages(tmp)
         suite_k097_split_quotation(tmp)
+        suite_k046_fact_bank(tmp)
         suite_k094_condition_cuts(tmp)
         suite_word_diff()
         suite_citations()

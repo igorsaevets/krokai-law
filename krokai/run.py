@@ -28,6 +28,7 @@ import os
 import time
 
 from . import address as addr_mod
+from . import facts as facts_mod
 from .citations import load_packs
 from .corpus import Corpus, walk
 from .extract import extract_quotes, citation_window, not_examined, _alnum_projection, _occurrences, _PARA_BREAK
@@ -115,10 +116,13 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
     per_file = []
     unexamined = []
     docs = []                                   # K027: every draft as read, for the marker pass
+    fbank = os.path.normcase(os.path.abspath(cfg.abs(cfg["fact_bank"])))
     for tier, tlabel, root in cfg.draft_tiers:
         for p in walk([root], TARGET_EXT, set(cfg["skip_dirs"])):
             if only and only.lower() not in p.lower():
                 continue
+            if os.path.normcase(os.path.abspath(p)) == fbank:
+                continue                        # K046: the fact bank holds evidence slices, not our writing
             t = TIER_D[0] if _is_tool_output(p) else tier
             if t not in tiers:
                 continue
@@ -212,6 +216,7 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
         v, w, d, _a = addr_mod.fold(text, v, w, d, near, corpus, keymap, packs)
         return v, w, d
     splits = split_pass(rows, docs, corpus, fold_one, cfg.root)
+    fres = facts_mod.check_docs(cfg, docs, packs)                 # K046: [F-nnn] sentences vs the fact bank
 
     rank = {s: i for i, s in enumerate(ORDER)}
     rows.sort(key=lambda r: (rank.get(r["verdict"], 99), -len(r["sites"])))
@@ -229,7 +234,7 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
     for r in rows:
         grid[_tier_of(r)][r["verdict"]] += 1
 
-    return {"rows": rows, "grid": grid, "per_file": per_file, "corpus": corpus, "splits": splits,
+    return {"rows": rows, "grid": grid, "per_file": per_file, "corpus": corpus, "splits": splits, "facts": fres,
             "not_examined": unexamined, "min_len": cfg["min_quote_length"], "markers": marks,
             "editions": eds,
             "drop_cyrillic": bool(cfg["drop_cyrillic_quotes"]),
@@ -871,6 +876,10 @@ def print_summary(res, lang="en", printer=print):
         printer("ℹ SPLIT QUOTATIONS: %d quotation(s) are pieces of one source passage quoted right beside "
                 "each other - graded together (%d at every place they are used); REPORT.md «Split "
                 "quotations read together» lists them." % (len(sp), sum(1 for j in sp if j["places"] == j["of"])))
+    # K046: sentences that cite the fact bank - a red one in tiers A+B counts in the exit code below.
+    for ln in facts_mod.console_lines(res.get("facts")):
+        printer(ln)
+    ab_bad += facts_mod.red_count(res.get("facts"))
     # K025: advisory too - a quotation that reads differently in another copy of its source.
     cc = copy_counts(res)
     if cc["disagree"]:
@@ -935,6 +944,7 @@ def write_report(res, cfg, out_dir, lang="en"):
     md += _ocr_md(res, cfg.root)                                  # K024
     md += _copies_md(res)                                         # K025
     md += _splits_md(res)                                         # K097
+    md += facts_mod.report_md(res.get("facts"))                   # K046
 
     if c.excluded_derived:
         md += ["## Excluded from the corpus as our own derived text", "",
@@ -1035,6 +1045,8 @@ def write_report(res, cfg, out_dir, lang="en"):
                                   "of": f["pages"], "why": {str(n): w for n, w in f["flagged"]}}
                                  for p, f in pics],
                "copies": {k: v for k, v in copy_counts(res).items() if k != "rows"},
+               # K046: every [F-nnn] reference of the drafts, graded against the fact bank
+               "facts": (res.get("facts") or {}).get("refs") or [],
                "seconds": res["seconds"]}
     json.dump(payload, io.open(os.path.join(out_dir, "result.json"), "w", encoding="utf-8"),
               ensure_ascii=False, indent=1)

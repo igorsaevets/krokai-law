@@ -439,6 +439,29 @@ def cmd_bank_add(a):
     return run_add(a)
 
 
+def cmd_facts_add(a):
+    from .facts import run_add
+    return run_add(a)
+
+
+def cmd_facts(a):
+    """`krokai facts` with no subcommand: the bank's entries, one line each (id, exhibit, page, layer)."""
+    from .config import load
+    from .facts import read_bank
+    cfg = load(a.dir)
+    path = cfg.abs(cfg["fact_bank"])
+    bank = read_bank(path)
+    if bank is None:
+        print("no fact bank yet (%s) - `krokai facts add --exhibit <id> --from \"…\" --to \"…\"` writes the first "
+              "entry." % os.path.relpath(path, cfg.root))
+        return 0
+    print("fact bank: %s - %d entries" % (os.path.relpath(path, cfg.root), len(bank)))
+    for i, e in sorted(bank.items()):
+        print("  %s  %-8s %-24s %s" % (i, e.get("exhibit", "?"), e.get("page", "-")[:24],
+                                      "OCR layer" if (e.get("text layer") or "").lower().startswith("ocr") else ""))
+    return 0
+
+
 def cmd_bank_dismiss(a):
     from .bank_add import run_dismiss
     return run_dismiss(a)
@@ -1624,6 +1647,27 @@ def build_parser():
     q.add_argument("--why", required=True, help="why the matter does not need this quotation")
     q.add_argument("--apply", action="store_true", help="write; without it: a dry-run")
     q.set_defaults(fn=cmd_bank_dismiss)
+
+    p = common(sub.add_parser(
+        "facts", help="fact bank: facts SLICED from the exhibits; a draft sentence cites one as [F-012] and `check` "
+                      "holds its dates, amounts and numbers to the slice"))
+    p.set_defaults(fn=cmd_facts)
+    fsub = p.add_subparsers(dest="facts_cmd")
+    q = bank_common(fsub.add_parser(
+        "add", help="write ONE fact entry - the passage is SLICED from the exhibit between two anchors, never typed. "
+                    "Dry-run unless --apply"))
+    q.add_argument("--exhibit", required=True, help="the exhibit id, e.g. K-4 - picks the file whose name carries it")
+    q.add_argument("--from", dest="from_", required=True, metavar="WORDS",
+                   help="the passage's OPENING words, verbatim; must be unique in the exhibit")
+    q.add_argument("--to", dest="to", required=True, metavar="WORDS",
+                   help="the passage's CLOSING words, searched after the opening anchor")
+    q.add_argument("--to-nth", dest="to_nth", type=int, default=None, metavar="N",
+                   help="when the closing words repeat: which occurrence (1-based)")
+    q.add_argument("--file", help="the exhibit file, when the id alone does not pick one (refused rather than "
+                                  "guessed when 2+ different files carry it)")
+    q.add_argument("--id", dest="entry_id", metavar="ID", help="explicit entry id (default: the next free F-nnn)")
+    q.add_argument("--apply", action="store_true", help="write; without it: a full dry-run")
+    q.set_defaults(fn=cmd_facts_add)
 
     p = common(sub.add_parser(
         "appendix",
