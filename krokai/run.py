@@ -1055,6 +1055,8 @@ def write_report(res, cfg, out_dir, lang="en"):
     # facts noted (reading.py says why there is no verdict label beside a clean one). Written on EVERY run,
     # a clean one included: the clean quotations are the ones nobody opens again.
     from . import reading as reading_mod
-    rpath, rcounts = reading_mod.write(reading_mod.build(res), out_dir, lang, SENTINEL)
+    entries = reading_mod.build(res)
+    rpath, rcounts = reading_mod.write(entries, out_dir, lang, SENTINEL)
     res["reading"] = dict(rcounts, file=rpath)
+    res["reading_entries"] = entries            # K061b: `check --judge` reorders these; in memory only, never saved
     return report_md

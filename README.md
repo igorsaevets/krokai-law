@@ -269,6 +269,25 @@ Each finding names the file, the quotation, the source it was found in, and **wh
 differs** — not "there is a discrepancy" but `not`, or ``the source also has `*` ``, or *the source
 continues: "…, but do not include instances where…"*.
 
+Beside `REPORT.md`, every `check` writes `READING-LIST.md`: each quotation of the filed documents with
+the sentence that uses it and the passage of the source around it, flagged ones first. Whether a
+verbatim quotation actually *supports* its sentence is a question of reading, so the clean ones carry
+no "passed" label - only the plain facts that put a quotation early (a limiter next to the words,
+words left out, no citation beside it).
+
+**Optional: a model reads them first (`check --judge <channel>`).** Off unless you ask for it on the
+command line. With an HTTP channel from `channels.json` that has its key and `model` set, `check`
+sends one request per draft place of each clean filed quotation - the draft sentence (and the
+sentence before it when the quotation stands alone), the quotation, the citation beside it and the
+source passage shown in the list; no file name, nothing else of the draft - and puts the quotations
+the model doubts (overstated, a condition left out, an exception that covers the sentence's own
+facts) first in part 2 of `READING-LIST.md`. That order is all it changes: no verdict, no
+`REPORT.md` line, no exit code, and the model's label or reason is never written beside a
+quotation, because a label beside a row is advice that people follow. Every request goes through
+`gate` with the matter's `surnames` first; a request the gate stops is not sent. A missing key, an
+unset model or a failing model leaves the list in its plain order. The console prints what was
+sent, what was held, the cost and the time.
+
 ### The verdicts, in plain words
 
 | | |

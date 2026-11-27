@@ -31,6 +31,11 @@ refuse to restate its own counts here.
 ```
 quote "<the quotation>"    check ONE quotation, right now, against the corpus
 check                      check everything you wrote, before anything is filed
+check --judge <channel>    opt-in: an HTTP channel's model reads each clean filed
+                           quotation against its passage; its doubts go FIRST in part 2
+                           of READING-LIST.md. Order only - never a verdict, a REPORT.md
+                           line or the exit code, never a label beside a quotation; the
+                           draft's sentences leave the machine, each through `gate`
 bank add                   write a bank entry: the quotation is SLICED from the source
                            between your --from/--to anchors, never typed, and verified
                            BEFORE the write. Dry-run by default; --apply writes

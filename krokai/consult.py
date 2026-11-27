@@ -457,8 +457,12 @@ def resolve_base(ch):
     return (ch.get("base_url") or os.environ.get(ch.get("base_url_env") or "") or "").rstrip("/")
 
 
-def call_http(name, ch, system, brief, marker, floor, timeout, printer=print):
+def call_http(name, ch, system, brief, marker, floor, timeout, printer=print, extra=None):
     """One API reviewer. Two request shapes, because the market uses two.
+
+    `extra` - more fields for the request body (K061b: the judge's `judge_body`, e.g. a reasoning effort). Which
+    fields a vendor accepts is that vendor's business, so they are declared per channel in the registry; they can
+    never replace the model, the messages or the system prompt.
 
     `chat`     - OpenAI-style `/chat/completions`; the system prompt is a message.
     `messages` - Anthropic-style `/messages`; the system prompt is its OWN top-level field and the
@@ -501,6 +505,9 @@ def call_http(name, ch, system, brief, marker, floor, timeout, printer=print):
                    "messages": [{"role": "system", "content": system},
                                 {"role": "user", "content": brief}]}
         headers["Authorization"] = "Bearer " + key
+    for k, v in (extra or {}).items():
+        if k not in ("model", "messages", "system"):
+            payload[k] = v
 
     req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers)
     t0 = time.time()

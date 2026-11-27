@@ -6319,6 +6319,170 @@ def suite_k047_reading_list(tmp):
        "No quotation was found in a document of the filed tier (A)" in md3 and "**Quoted:**" not in md3, md3[:600])
 
 
+def suite_k061b_judge(tmp):
+    """K061b (2026-11-27): `check --judge <channel>` - an outside model reads each clean filed quotation against its
+    passage and the doubted ones go first in part 2 of READING-LIST.md. Pinned end to end through the CLI against a
+    fake OpenAI-protocol server on 127.0.0.1 (the selftest contacts nothing): without the flag nothing is sent; a
+    missing key, a failing server and a command-line channel leave the list byte-identical; a brief naming a
+    configured surname never reaches the server; the list never carries the model's label or reason; the exit code
+    and REPORT.md do not move."""
+    import json
+    import re as _re
+    import subprocess as _sp
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from krokai import judge as J
+    from krokai import reading as R
+    LAW = ("# 8 CFR 214.7 Transfers (fixture)\n\n"
+           "(a) A student may transfer to another school at any time during the program. However, a transfer "
+           "during the first term needs the approval of the school official.\n\n"
+           "(b) The school shall notify the agency within 30 days of the transfer. The notice is filed "
+           "electronically through the system. The agency answers each notice in writing.\n\n"
+           "(c) The officer may extend the stay of a student for a period of one year if the program requires "
+           "it. No other extension is granted.\n\n"
+           "(e) The school keeps the file of each student in its office. The records are kept by the school for "
+           "three years after the student leaves. The school shows them to the agency on request.\n")
+    DRAFT = ('He can move: "A student may transfer to another school at any time during the program", as '
+             'Mr. Kowalczyk did.\n\n'
+             'Notice is due: "The school shall notify the agency within 30 days of the transfer".\n\n'
+             'The stay can grow: "The officer may extend the stay of a student for a period of one year if the '
+             'program requires it".\n\n'
+             'The file lives forever: "The records are kept by the school for three years after the student '
+             'leaves".\n\n'
+             'The school promised that "The school must refund every fee paid by the student at once".\n')
+    seen = {"bodies": [], "fail": False}
+
+    class Fake(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)).decode("utf-8"))
+            seen["bodies"].append(body)
+            if seen["fail"]:
+                self.send_response(500)
+                self.end_headers()
+                return
+            user = body["messages"][-1]["content"]
+            lab = "OVERSTATED" if "forever" in user.split("QUOTATION:")[0] else "SUPPORTED"
+            out = json.dumps({"choices": [{"message": {"content": "LABEL: %s\nREASON: K061B-FAKE-REASON\n%s"
+                                                                  % (lab, J.MARKER)}}],
+                              "usage": {"prompt_tokens": 100, "completion_tokens": 20, "cost": 0.0001}})
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(out.encode("utf-8"))
+
+        def log_message(self, *a):
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Fake)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        root = os.path.join(tmp, "k061bm")
+        os.makedirs(os.path.join(root, "law"))
+        os.makedirs(os.path.join(root, "case"))
+        io.open(os.path.join(root, "law", "8CFR-214.md"), "w", encoding="utf-8").write(LAW)
+        io.open(os.path.join(root, "case", "petition.md"), "w", encoding="utf-8").write(DRAFT)
+        io.open(os.path.join(root, "casefile.json"), "w", encoding="utf-8").write(json.dumps({
+            "bank": "QUOTE-BANK.md", "queue": "QUOTE-QUEUE.md", "library_index": "law/INDEX.md",
+            "sources": ["law"], "drafts": [{"tier": "A", "label": "filed", "path": "case"}],
+            "citation_packs": ["us-immigration", "us-federal"], "surnames": ["Kowalczyk"]}))
+        io.open(os.path.join(root, "channels.json"), "w", encoding="utf-8").write(json.dumps({"channels": {
+            "fakejudge": {"kind": "http", "api": "chat", "base_url": "http://127.0.0.1:%d/v1" % srv.server_port,
+                          "key_env": "KROKAI_K061B_TEST_KEY", "model": "judge-test-model",
+                          "judge_body": {"reasoning": {"effort": "low"}}},
+            "nokey": {"kind": "http", "api": "chat", "base_url": "http://127.0.0.1:%d/v1" % srv.server_port,
+                      "key_env": "KROKAI_K061B_ABSENT_KEY", "model": "judge-test-model"},
+            "acli": {"kind": "cli", "bin": "nothing-here"}}, "limits": {}}))
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        def run(tag, *extra):
+            env = dict(os.environ, PYTHONIOENCODING="utf-8", NO_PROXY="127.0.0.1,localhost",
+                       no_proxy="127.0.0.1,localhost", KROKAI_K061B_TEST_KEY="dummy-test-value")
+            env.pop("KROKAI_K061B_ABSENT_KEY", None)
+            out = os.path.join(tmp, "k061bo-" + tag)
+            p = _sp.run([sys.executable, "-m", "krokai", "check", "--dir", root, "--out", out, "--strict"] +
+                        list(extra), cwd=repo, env=env, capture_output=True, text=True, encoding="utf-8",
+                        errors="replace", timeout=240)
+
+            def rd(name):
+                try:
+                    return io.open(os.path.join(out, name), encoding="utf-8").read()
+                except OSError:
+                    return ""
+            return p.returncode, (p.stdout or "") + (p.stderr or ""), rd(R.FILE), rd("REPORT.md")
+
+        def masked(s):
+            return _re.sub(r"\d+", "#", s)
+
+        def part2_first(md):
+            m = _re.search(r"## Part 2 [^\n]*\n\n### \d+\.[^\n]*\n(.*?)\n### ", md, _re.S)
+            return m.group(1) if m else ""
+
+        rc0, out0, md0, rep0 = run("base")
+        n0 = len(seen["bodies"])
+        ok("k061b: without --judge nothing is sent - the fake server saw no request", n0 == 0, str(n0))
+        ok("k061b: the baseline is what the fixture needs - a flagged row (exit 1 under --strict), a part 2, and the "
+           "quotation the fake model doubts is not first there", rc0 == 1 and "## Part 2" in md0
+           and "forever" not in part2_first(md0), "rc %s; %s" % (rc0, part2_first(md0)[:200]))
+
+        rc1, out1, md1, rep1 = run("nokey", "--judge", "nokey")
+        ok("k061b: a channel without its key - «judge: not run», nothing sent, the list byte-identical, exit unchanged",
+           "judge: not run - no key: set KROKAI_K061B_ABSENT_KEY" in out1 and len(seen["bodies"]) == n0
+           and md1 == md0 and rc1 == rc0, out1.strip()[-300:])
+        rc2, out2, md2, _r = run("cli", "--judge", "acli")
+        ok("k061b: a command-line channel is refused before anything is built - the list byte-identical",
+           "«acli» is a cli channel" in out2 and len(seen["bodies"]) == n0 and md2 == md0 and rc2 == rc0,
+           out2.strip()[-300:])
+        rc3, out3, md3, _r = run("absent", "--judge", "nosuchchannel")
+        ok("k061b: an unknown channel name - «judge: not run», the list byte-identical",
+           "no channel named «nosuchchannel»" in out3 and md3 == md0 and rc3 == rc0, out3.strip()[-300:])
+
+        rc4, out4, md4, rep4 = run("judged", "--judge", "fakejudge")
+        bodies = seen["bodies"][n0:]
+        users = [b["messages"][-1]["content"] for b in bodies]
+        ok("k061b: the judged run - the quotation the model doubts is first in part 2, the heading says a model's "
+           "doubts come first", "forever" in part2_first(md4) and "a model's doubts first" in md4,
+           part2_first(md4)[:300])
+        ok("k061b: part 1 (the flagged rows) is untouched by the judge",
+           md4.split("## Part 2")[0].split("## Part 1")[1] == md0.split("## Part 2")[0].split("## Part 1")[1])
+        ok("k061b: the list never carries what the model said - no label, no reason",
+           not any(w in md4 for w in J.LABELS + ("K061B-FAKE-REASON", "REASON:")), md4[:400])
+        ok("k061b: the exit code and REPORT.md do not move (digits masked: REPORT.md carries timings)",
+           rc4 == rc0 and masked(rep4) == masked(rep0), "rc %s vs %s" % (rc4, rc0))
+        ok("k061b: the brief naming a configured surname was held - it never reached the server, and the console "
+           "says one was held", users and not any("Kowalczyk" in u for u in users)
+           and "1 held by the gate" in out4, out4.strip()[-400:])
+        ok("k061b: one request per clean quotation the gate let through, each with the judge's system prompt, the "
+           "channel's model and its judge_body - and no source file name",
+           len(bodies) == 3 and all(b["messages"][0]["content"] == J.SYSTEM and b["model"] == "judge-test-model"
+                                    and b.get("reasoning") == {"effort": "low"} for b in bodies)
+           and not any("8CFR-214" in u for u in users), str(len(bodies)))
+        ok("k061b: the console prints the counts, the cost and the time",
+           _re.search(r"judge: «fakejudge» \(judge-test-model\) read 3 brief\(s\) .*1 quotation\(s\) put first .*"
+                      r"\$0\.0003, 300\+60 tokens, \d+ s", out4) is not None, out4.strip()[-400:])
+
+        reg_path = os.path.join(root, "channels.json")
+        good_reg = io.open(reg_path, encoding="utf-8").read()
+        io.open(reg_path, "w", encoding="utf-8").write(good_reg[:-5])
+        try:
+            rc6, out6, md6, _r = run("badreg", "--judge", "fakejudge")
+        finally:
+            io.open(reg_path, "w", encoding="utf-8").write(good_reg)
+        ok("k061b: a broken channels.json - «judge: not run» with the error's class, the list byte-identical, exit "
+           "unchanged (E-1011: the handler takes SystemExit too)", "judge: not run - JSONDecodeError" in out6
+           and md6 == md0 and rc6 == rc0, out6.strip()[-300:])
+
+        seen["fail"] = True
+        rc5, out5, md5, _r = run("failing", "--judge", "fakejudge")
+        ok("k061b: a server that fails every request - the failures are counted, the list byte-identical, exit "
+           "unchanged", "3 failed" in out5 and md5 == md0 and rc5 == rc0, out5.strip()[-400:])
+    finally:
+        srv.shutdown()
+        srv.server_close()
+    ok("k061b: an off-format answer or an unknown label reads as no answer",
+       J.label_of("LABEL: MAYBE\nJUDGE-DONE") is None and J.label_of("I think it is fine") is None
+       and J.label_of("LABEL: CONDITION_OMITTED\nREASON: x\nJUDGE-DONE") == "CONDITION_OMITTED")
+
+
 def suite_k094_condition_cuts(tmp):
     """🔴 K094 (2026-11-26): a verbatim quotation cut so that it drops the CONDITION it hangs on.
 
@@ -8046,6 +8210,7 @@ def main():
         suite_k092_exhibit_ids(tmp)
         suite_k045_exhibit_list(tmp)
         suite_k047_reading_list(tmp)
+        suite_k061b_judge(tmp)
         suite_k094_condition_cuts(tmp)
         suite_word_diff()
         suite_citations()

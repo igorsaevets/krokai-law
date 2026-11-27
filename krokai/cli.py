@@ -246,6 +246,7 @@ def cmd_check(a):
     if res.get("reading"):                      # K047: the reading list, beside REPORT.md
         from .reading import summary
         print("reading list -> %s\n   %s" % (res["reading"]["file"], summary(res["reading"])))
+    _judge_pass(a, cfg, res, out)               # K061b: opt-in, order only - never reaches the exit code below
     _keep_markers(cfg, res)
     print("took %.0f s" % res["seconds"])
     # 🔴 `--strict` fails on EITHER, and with distinct codes so a hook can tell them apart:
@@ -271,6 +272,44 @@ def cmd_check(a):
             print("--strict-address: %d filed-tier quotation(s) have no checkable address" % na)
             return 5
     return 0
+
+
+def _judge_pass(a, cfg, res, out):
+    """K061b: `check --judge <channel>` - one outside model reads each clean filed quotation against its passage and
+    the doubted ones go first in part 2 of READING-LIST.md (krokai/judge.py says why it is the order and nothing
+    else). The plain list is already on disk when this runs, so whatever fails here - no key, no model, a dead
+    endpoint, an off-format answer, an exception - leaves it as `check` wrote it; this function returns nothing the
+    exit code could read."""
+    if not getattr(a, "judge", None):
+        return
+    try:
+        from . import judge as J
+        from . import reading as R
+        from .consult import load_registry
+        from .run import SENTINEL
+        entries = res.get("reading_entries")
+        if entries is None:
+            print("judge: not run - no reading list was built in this run")
+            return
+        ch, why = J.preflight(load_registry(None, start=cfg.root), a.judge)
+        if not ch:
+            print("judge: not run - %s. The reading list keeps its plain order." % why)
+            return
+        if not J.candidates(entries):
+            print("judge: nothing to read - no clean quotation of the filed documents with a source passage")
+            return
+        surnames = tuple(cfg.surnames or ())
+        if not surnames:
+            print("judge: note - no surnames configured, so the gate looked for none; add them to `surnames` "
+                  "in casefile.json")
+        info = J.ask(entries, a.judge, ch, surnames=surnames, lang=cfg["language"], printer=print)
+        print(J.summary(info))
+        if info["doubted"]:
+            R.write(J.reorder(entries, info["doubted"]), out, cfg["language"], SENTINEL, judge=info)
+    except (SystemExit, Exception) as exc:                          # noqa: BLE001 - E-1011: SystemExit too
+        from .redact import scrub
+        print("judge: not run - %s: %s. The reading list keeps its plain order."
+              % (type(exc).__name__, scrub(str(exc))[:200]))
 
 
 # --------------------------------------------------------------------------------- quote
@@ -1590,6 +1629,11 @@ def build_parser():
     p.add_argument("--strict-address", action="store_true",
                    help="also exit non-zero (5) when a filed-tier quotation has no checkable "
                         "address beside it - 'found somewhere' is not 'found where you said'")
+    p.add_argument("--judge", metavar="CHANNEL",
+                   help="opt-in: send each clean quotation of the filed documents - its draft sentence, the "
+                        "citation and the source passage, through `gate` - to the HTTP channel CHANNEL of "
+                        "channels.json, and put the ones the model doubts first in part 2 of READING-LIST.md. "
+                        "Changes only that order: never a verdict, REPORT.md or the exit code")
     p.set_defaults(fn=cmd_check)
 
     p = common(sub.add_parser("quote", help="check ONE quotation, right now"))
