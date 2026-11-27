@@ -49,6 +49,33 @@ _TYPOGRAPHY = (
     ("​", ""), ("‌", ""), ("‍", ""),   # zero-width space, ZWNJ, ZWJ
 )
 
+# 🔴 K099 (2026-11-27): A TYPESET PDF STORES «fi» AS ONE CHARACTER, AND THE QUOTATION HAS TWO.
+#
+# A font draws fi, fl, ff, ffi, ffl as one ligature glyph, and a PDF whose text layer maps that glyph to its
+# Unicode ligature character extracts «certi\ufb01ed» - with BOTH engines: PyMuPDF keeps ligatures in `get_text()`
+# by default (TEXT_PRESERVE_LIGATURES; only its own search expands them), pypdf leaves it to post-processing.
+# `alnum` keeps the ligature as ONE letter, so no index could match the drafter's «certified». Measured on a copy
+# of a real matter's law shelf: 103 ligature characters in 3 of 302 indexed files (a U.S. Reports opinion and two
+# 2026 USCIS policy alerts; «specified» x25, «filed» x12), the same 103 from either engine. Of 82 correct
+# quotations of those passages typed with plain letters, 4 verified (another file prints the same words plain) and
+# 1 read NOT_FOUND; the other 77 read PARTIAL 39, FRAGMENTS 18, ALTERED 11, OPERATOR 7 («the rule may be
+# inverted»), SCATTERED 2 - loud accusations against quotations that were right. None of 105 quotations pasted
+# WITH a ligature (a PDF viewer's copy) came back clean against a plain source. K046 had folded these seven for
+# facts alone; this is now their one home.
+#
+# The fold is the Unicode compatibility decomposition of exactly these seven characters (U+FB05, long s + t, is
+# «st», not «ft» as pypdf's post-processing recipe has it): the same letters, so the contract above holds. 🔴 NOT
+# NFKC. The K forms «must not be blindly applied to arbitrary text» (UAX #15): they turn a footnote's «³» into a «3»
+# glued to the word, «½» into digits, «™» into letters. The same census found 7 such characters on the shelf (a
+# footnote «³», «½», inch marks, a non-breaking hyphen, an OCR's «µ») and folds none of them. Folded HERE, so the
+# three indexes, the page / page-marker / zone tables (K018 / K018b / K018c add up letters and digits of
+# `normalise`d pieces) and the quotation see the same letters; a pages file written before this fold no longer adds
+# up for a PDF with ligatures and is re-measured once (`readers.page_table_facts`).
+_LIGATURES = (
+    ("\ufb00", "ff"), ("\ufb01", "fi"), ("\ufb02", "fl"), ("\ufb03", "ffi"), ("\ufb04", "ffl"),
+    ("\ufb05", "st"), ("\ufb06", "st"),
+)
+
 # 🔴 THE SOFT HYPHEN, U+00AD, IS INVISIBLE - AND THAT IS WHAT MAKES IT EXPENSIVE.
 #
 # A discretionary hyphen renders as a hyphen only where the renderer chooses to break the
@@ -171,10 +198,15 @@ def normalise(s: str) -> str:
        byte comparison fails while both sides look identical on screen. See the note above
        ``_SOFT_BREAK_RE`` for why the line-end case has to be handled before the character
        is removed, and not after.
+
+    5. **Ligatures** (K099). A PDF's «fi» drawn as one glyph is one character in its text; the
+       letters are the same, so they are spelled out. See the note above ``_LIGATURES``.
     """
     if not s:
         return ""
     for a, b in _TYPOGRAPHY:
+        s = s.replace(a, b)
+    for a, b in _LIGATURES:
         s = s.replace(a, b)
     s = _PAGE_MARK_RE.sub(" ", s)
     # Trap 4 - the soft hyphen, both together and then alone. Before the whitespace collapse,

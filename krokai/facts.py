@@ -163,12 +163,10 @@ _EXH_WORD_RE = re.compile(r"\b(?:Exhibits?|Exh\.|Ex\.|Tabs?)\s*", re.I)
 
 
 # Typeset PDFs extract «ﬁ» / «ﬂ» as one ligature character, so «Certiﬁed» never equalled «Certified» (K046 probe:
-# an exhibit's text). Folded on both sides here; the quotation pipeline's own normalise is not changed by this item.
-_LIGATURES = {0xFB00: "ff", 0xFB01: "fi", 0xFB02: "fl", 0xFB03: "ffi", 0xFB04: "ffl", 0xFB05: "st", 0xFB06: "st"}
-
-
+# an exhibit's text). K046 folded them here for facts alone; since K099 `normalise` folds them for every caller,
+# both sides of a fact included - one table, `normalize._LIGATURES`.
 def _cleaned(sentence):
-    return normalise(strip_markdown(sentence or "")).translate(_LIGATURES)
+    return normalise(strip_markdown(sentence or ""))
 
 
 def _masked(text, packs=None):

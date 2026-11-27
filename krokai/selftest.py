@@ -8707,6 +8707,192 @@ def suite_k091_derived(tmp):
        and v2.get("our") == "NOT_FOUND", "derived %s | %s" % (der2, v2))
 
 
+def _k099_lig_pdf(path, pages):
+    """K099: a minimal PDF whose text layer carries the ligature characters U+FB00-FB04 - Helvetica with a
+    /Differences encoding and a /ToUnicode CMap, no font file, so both engines read «\ufb01» on every platform (PyMuPDF's
+    own `insert_text` writes «·» for a ligature). `pages`: lists of lines, ASCII plus ligatures."""
+    codes = {"\ufb00": 0x80, "\ufb01": 0x81, "\ufb02": 0x82, "\ufb03": 0x83, "\ufb04": 0x84}
+
+    def enc(line):
+        out = []
+        for ch in line:
+            c = codes.get(ch, ord(ch))
+            out.append("\\" + chr(c) if c in (0x28, 0x29, 0x5C) else ("\\%03o" % c if c < 0x20 or c > 0x7E else chr(c)))
+        return "".join(out)
+
+    cmap = ("/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapName /K099 def 1 begincodespacerange "
+            "<00> <FF> endcodespacerange 1 beginbfrange <20> <7E> <0020> endbfrange 5 beginbfchar <80> <FB00> <81> "
+            "<FB01> <82> <FB02> <83> <FB03> <84> <FB04> endbfchar endcmap CMapName currentdict /CMap defineresource "
+            "pop end end")
+    objs = ["<< /Type /Catalog /Pages 2 0 R >>", None,
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding << /Type /Encoding /BaseEncoding "
+            "/WinAnsiEncoding /Differences [128 /ff /fi /fl /ffi /ffl] >> /ToUnicode 4 0 R >>",
+            "<< /Length %d >>\nstream\n%s\nendstream" % (len(cmap), cmap)]
+    kids = []
+    for lines in pages:
+        body = "BT /F1 10 Tf 14 TL 50 760 Td " + " ".join("(%s) Tj T*" % enc(ln) for ln in lines) + " ET"
+        objs.append("<< /Length %d >>\nstream\n%s\nendstream" % (len(body.encode("latin-1")), body))
+        objs.append("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents %d 0 R "
+                    "/Resources << /Font << /F1 3 0 R >> >> >>" % len(objs))
+        kids.append(len(objs))
+    objs[1] = "<< /Type /Pages /Kids [%s] /Count %d >>" % (" ".join("%d 0 R" % k for k in kids), len(kids))
+    out, offs = bytearray(b"%PDF-1.4\n"), []
+    for i, o in enumerate(objs, 1):
+        offs.append(len(out))
+        out += ("%d 0 obj\n%s\nendobj\n" % (i, o)).encode("latin-1")
+    xref = len(out)
+    out += ("xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)).encode("latin-1")
+    out += "".join("%010d 00000 n \n" % o for o in offs).encode("latin-1")
+    out += ("trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)).encode("latin-1")
+    io.open(path, "wb").write(bytes(out))
+
+
+def suite_k099_ligatures(tmp):
+    """K099 (2026-11-27): a typeset PDF's fi / fl / ff / ffi / ffl drawn as ONE character (U+FB00-FB06). `normalise`
+    spells the seven ligatures out, so a quotation typed with plain letters verifies against a text layer that carries
+    them and one pasted WITH a ligature verifies against a plain source - while the page, page-marker and zone tables
+    still add up, and a pages file written before the fold is measured again. Before, on a real shelf: of 82 correct
+    plain quotations of ligature passages 77 read PARTIAL / FRAGMENTS / ALTERED / OPERATOR / SCATTERED / NOT_FOUND,
+    and none of 105 pasted with a ligature came back clean. Nothing else is folded: NFKC would glue a footnote's «³»
+    to its word as a «3»."""
+    import json
+    import subprocess as _sp
+    from krokai import normalize as N
+    from krokai import readers as R
+    from krokai.config import load as _load
+    from krokai.normalize import alnum as _al, normalise as _nm
+    from krokai.run import corpus_for
+    from krokai.verify import check, page_of, zone_of
+
+    def lig(s):
+        for a, b in (("ffi", "\ufb03"), ("ffl", "\ufb04"), ("ff", "\ufb00"), ("fi", "\ufb01"), ("fl", "\ufb02")):
+            s = s.replace(a, b)
+        return s
+
+    ok("k099: the seven Latin ligatures are spelled out on both sides of every comparison - «\ufb05» (long s + t) is «st»",
+       _nm("certi\ufb01ed a\ufb03davit \ufb02oor e\ufb00ect su\ufb04e \ufb05 \ufb06") ==
+       "certified affidavit floor effect suffle st st" and _al(_nm("Certi\ufb01ed")) == "certified",
+       repr(_nm("certi\ufb01ed a\ufb03davit \ufb02oor e\ufb00ect su\ufb04e \ufb05 \ufb06")))
+    keep = "USCIS\u00b3 may \u00bd \u2122 \u00b5 \u0133 \u017f \u2011 \u2033 \u00aa"
+    ok("k099: nothing else a compatibility fold would change is folded - a footnote «³», «½», «™», «µ», «\u0133», «\u017f», a "
+       "non-breaking hyphen, an inch mark, «ª» stay as the source prints them (NFKC would glue «3» to the word)",
+       _nm(keep) == keep, repr(_nm(keep)))
+    ok("k099: `alnum` stays one character in, one character out (the draft's projections map offsets through it); "
+       "the fold is `normalise`'s", _al("certi\ufb01ed") == "certi\ufb01ed" and len(_al("a\ufb03x")) == 3,
+       repr(_al("certi\ufb01ed")))
+
+    root = os.path.join(tmp, "k099m")
+    law, case = os.path.join(root, "law"), os.path.join(root, "case")
+    os.makedirs(law)
+    os.makedirs(case)
+    io.open(os.path.join(root, "casefile.json"), "w", encoding="utf-8").write(json.dumps({
+        "bank": "QUOTE-BANK.md", "queue": "QUOTE-QUEUE.md", "library_index": "law/INDEX.md",
+        "sources": ["law"], "drafts": [{"tier": "A", "label": "filed", "path": "case"}],
+        "citation_packs": ["us-immigration", "us-federal"], "cache_dir": "cache"}))
+
+    def fill(tag, n=6):
+        return ["Filler line %d of the %s page keeps this fixture above every reader threshold." % (k, tag)
+                for k in range(n)]
+
+    P2 = "The officer shall certify that the affidavit was filed on the specified date without conflict."
+    CROSS_A = "A deficiency notice specifies the missing evidence and"
+    CROSS_B = "gives the applicant a final period of effectively thirty days."
+    CROSS = CROSS_A + " " + CROSS_B
+    PLAIN = "An officer may refuse a visa when the affidavit of support is not filed in the specified form."
+    FRA = "The Secretary shall publish the specified fee and the filing period"
+    FRB = "in the Federal Register before the fiscal year begins."
+    OPN = "The respondent filed the motion within the specified period and the record confirms it."
+
+    try:
+        from krokai import _pdfengine
+        _pdfengine.load()
+        engine = True
+    except ImportError:
+        try:
+            import pypdf  # noqa: F401
+            engine = True
+        except ImportError:
+            engine = False
+    pdf = os.path.join(law, "8CFR-299-lig-fixture.pdf")
+    PAGES = [["Sec. 299.1 Fixture rule with ligatures."] + fill("first") + [lig(CROSS_A)],
+             [lig(CROSS_B), lig(P2)] + fill("second")]
+    _k099_lig_pdf(pdf, PAGES)
+    io.open(os.path.join(law, "9-FAM-302-lig-fixture.md"), "w", encoding="utf-8").write(
+        "# 9 FAM 302 fixture\n\n%s\n\n%s\n\n%s\n" % (" ".join(fill("a")), PLAIN, " ".join(fill("b"))))
+    io.open(os.path.join(law, "91FR77700-lig-fixture.txt"), "w", encoding="utf-8").write(
+        "[Federal Register Volume 91, Number 200 (Monday, October 19, 2026)]\n[Rules and Regulations]\n"
+        "[Pages 77700-77701]\n\n%s\n%s\n[[Page 77701]]\n%s\n%s\n"
+        % ("\n".join(fill("lead")), lig(FRA), lig(FRB), "\n".join(fill("77701"))))
+    dec = os.path.join(law, "99-IN-Dec-700-lig-fixture.txt")
+    io.open(dec, "w", encoding="utf-8").write(
+        "Cite as 99 I&N Dec. 700 (BIA 2026)          Interim Decision #9970\n\nMatter of FIXTURE-LIG, Respondent\n\n"
+        "Decided November 2, 2026\n\nU.S. Department of Justice\nBoard of Immigration Appeals\n\n(1) A motion filed "
+        "late is denied unless the fixture deadline was never served.\n\nFOR RESPONDENT: Pro se\nFOR THE DEPARTMENT OF "
+        "HOMELAND SECURITY: Assistant Chief Counsel\n\nBEFORE: Board Panel: ALPHA, BETA, and GAMMA, Board Members.\n\n"
+        "ALPHA, Board Member:\n\n%s\n%s\n%s\n" % (" ".join(fill("c")), lig(OPN), " ".join(fill("d"))))
+
+    cfg = _load(root)
+    corp = corpus_for(cfg)
+
+    def ask(q):
+        v, w, _d = check(q, corp)
+        return v, os.path.basename(w or ""), (page_of(q, w, corp) or {}).get("label", ""), \
+            (zone_of(q, w, corp) or {}).get("label", "")
+
+    got_plain = ask(PLAIN)
+    got_pasted = ask(lig(PLAIN))
+    ok("k099: a quotation pasted WITH ligatures (a PDF viewer's copy) verifies against a source printed with plain "
+       "letters, as the plain one does (green path)",
+       got_pasted[0] == "VERIFIED" and got_plain[0] == "VERIFIED" and got_pasted[1] == "9-FAM-302-lig-fixture.md",
+       "%s | %s" % (got_plain, got_pasted))
+    fr = ask(FRA + " " + FRB)
+    ok("k099: a plain quotation of a GPO text carrying ligatures verifies and its page markers still add up - the "
+       "printed pages both sides of the marker",
+       fr[0] == "VERIFIED" and fr[2] == "printed pages 77700-77701 (by the source's own page markers)", str(fr))
+    zn = ask(OPN)
+    ok("k099: a plain quotation of a decision's opinion carrying ligatures verifies and its zone is still named",
+       zn[0] == "VERIFIED" and zn[1] == os.path.basename(dec) and zn[3] == "zone: the opinion", str(zn))
+    if not engine:
+        print("note: k099 PDF pins skipped - no PDF engine (pypdf or PyMuPDF) in this environment")
+        return
+    p2, cross, pasted = ask(P2), ask(CROSS), ask(lig(P2))
+    ok("k099: a quotation typed with plain letters verifies against a PDF whose text layer carries the ligature "
+       "characters fi, ff, ffi, fl, "
+       "and names its page - one page, across the page break - as the quotation copied with the ligatures does",
+       p2[0] == cross[0] == pasted[0] == "VERIFIED" and p2[1] == os.path.basename(pdf)
+       and p2[2].startswith("PDF page 2 of 2") and cross[2].startswith("PDF pages 1-2 of 2")
+       and pasted[2] == p2[2], "%s | %s | %s" % (p2, cross, pasted))
+
+    # the upgrade path: a pages file written by the normaliser BEFORE the fold (counts without the extra letters)
+    pf = R._pages_file(pdf, cfg.cache)
+    saved = N._LIGATURES
+    try:
+        N._LIGATURES = ()
+        old = R._page_facts(["\n".join(p) for p in PAGES], "pypdf", False)
+    finally:
+        N._LIGATURES = saved
+    new_sum = len(_al(_nm("\n".join("\n".join(p) for p in PAGES))))
+    io.open(pf, "w", encoding="utf-8").write(json.dumps(old))
+    R._PAGES_MEMO.clear()
+    corp = corpus_for(cfg)
+    p2b = ask(P2)
+    disk = json.load(io.open(pf, encoding="utf-8")) if os.path.exists(pf) else {}
+    ok("k099: a pages file written before the fold (it no longer adds up for a PDF with ligatures) is measured "
+       "again - the page is still named, never «page unknown», and the file on disk now adds up",
+       sum(old["alnum"]) < new_sum and p2b[0] == "VERIFIED" and p2b[2] == p2[2]
+       and sum(disk.get("alnum") or []) == new_sum, "old %d new %d | %s | disk %s" % (
+           sum(old["alnum"]), new_sum, p2b, sum(disk.get("alnum") or [])))
+
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    r = _sp.run([sys.executable, "-m", "krokai", "quote", P2, "--dir", root, "--quiet"], cwd=repo, env=env,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
+    out = (r.stdout or "") + (r.stderr or "")
+    ok("k099: `krokai quote` with plain letters says VERIFIED and names the PDF page of a ligature source",
+       "\nVERIFIED" in out and "PDF page 2 of 2" in out and "NOT FOUND" not in out, out[:600])
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if root not in sys.path:
@@ -8750,6 +8936,7 @@ def main():
         suite_k045_exhibit_list(tmp)
         suite_k047_reading_list(tmp)
         suite_k091_derived(tmp)
+        suite_k099_ligatures(tmp)
         suite_k061b_judge(tmp)
         suite_k094_condition_cuts(tmp)
         suite_word_diff()

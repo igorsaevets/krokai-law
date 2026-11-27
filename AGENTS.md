@@ -104,8 +104,9 @@ every missing bank source (URL when the publisher has a stable one, browser-only
 it does not); `krokai doctor --probe-sites` tests the four known-good URLs on demand.
 
 **A script's verdict is evidence; your hand search is not.** The pipeline strips soft hyphens,
-non-breaking spaces, line-wrap hyphenation and markdown before comparing — a hand `grep` sees
-none of that and returns a confident false zero on text the checker matches. Report verdicts
+non-breaking spaces, line-wrap hyphenation and markdown, and spells out a PDF's ligatures (the
+«fi» of «certified» stored as ONE character), before comparing — a hand `grep` sees none of that
+and returns a confident false zero on text the checker matches. Report verdicts
 with their method ("krokai quote said X", not "I searched and found nothing"). And a zero from
 *any* search tool needs a second instrument before you believe it.
 
