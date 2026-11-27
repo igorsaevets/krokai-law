@@ -269,6 +269,15 @@ Each finding names the file, the quotation, the source it was found in, and **wh
 differs** — not "there is a discrepancy" but `not`, or ``the source also has `*` ``, or *the source
 continues: "…, but do not include instances where…"*.
 
+**The page, two ways.** A match in a PDF names the page of the file and the page the source prints:
+`PDF page 4 of 12, printed page 299` - the number the page shows on a line of its own, accepted only
+when the file's numbered pages agree on one sequence (a page that shows none is counted only between
+two that do). A Federal Register or Statutes at Large text from GPO is paged by its own page markers
+(`printed pages 41300-41301`, `110 STAT. 3009-546`). Where the source proves nothing - no numbers,
+two sequences, a page outside the numbered ones - the line says `printed page unknown` and why. It
+is the page the file prints: a reprint of the reporter prints the reporter's page, a slip opinion
+its own, so compare a pincite with it only when the file is the reporter's print.
+
 Beside `REPORT.md`, every `check` writes `READING-LIST.md`: each quotation of the filed documents with
 the sentence that uses it and the passage of the source around it, flagged ones first. Whether a
 verbatim quotation actually *supports* its sentence is a question of reading, so the clean ones carry

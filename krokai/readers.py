@@ -13,7 +13,7 @@ import json
 import os
 import re
 
-from .normalize import alnum, normalise, strip_scrape_artifacts
+from .normalize import alnum, normalise, strip_scrape_artifacts, _PAGE_MARK_RE
 from . import _pdfengine
 from .repair import is_broken_type3
 
@@ -34,10 +34,11 @@ __all__ = ["MissingReader", "read_any", "read_pdf", "read_docx", "no_text_layer"
            "_choose_extraction", "_form_values", "EXTRACTOR_VERSION", "MIN_CHARS_PER_PAGE",
            "is_broken_type3", "text_layer", "ocr_label", "ocr_pages_cell", "OCR_PAGE_SHARE",
            "OCR_CHECK", "LAYER_VERSION", "page_table", "page_check", "PAGES_VERSION",
+           "page_table_facts", "printed_span", "marker_table", "MARK_LEAD", "MARK_BROKEN",
            "pdf_text_verdict", "STAMP_BAND", "PICTURE_COVER", "picture_pages", "picture_pages_cell",
            "PICTURE_ADVICE", "BODY_TEXT_MIN", "SHAPES_MIN"]
 
-_PAGE_MARK = re.compile(r"\[\[Page\s+[\w.-]+\]\]")
+_PAGE_MARK = _PAGE_MARK_RE          # one home: normalize (K018b widened it to the Statutes at Large)
 _MD_FOOTNOTE = re.compile(r"\[\\?\[[^\]]*\\?\]\]\([^)]*\)")
 _MD_LINK = re.compile(r"\[([^\]\n]*)\]\([^)\n]*\)")
 
@@ -164,8 +165,82 @@ _LAYER_MEMO = {}
 # two disagree it says «page unknown», because a wrong page is worse than none. The number is the
 # page INDEX in the PDF file (1 = its first page), not the printed page a citation names - the two
 # differ wherever a decision starts in the middle of a volume.
-PAGES_VERSION = "1"
+#
+# 🔴 K018b: THE PRINTED PAGE IS WHAT A PAGE PRINTS - PROVEN BY THE FILE'S OWN SEQUENCE.
+#
+# A pincite names the page the reporter printed («21 I&N Dec. 296, 299»), and a reprint prints it on
+# a line of its own: on a copy of a real matter's law library 238 of 264 pages of 30 I&N Dec. PDFs
+# print P+i-1 that way. The other 26 print a number the OCR misread (996 for 496 - six pages) or no
+# number in their text at all (first and last pages; every second page of one file). So a page's
+# printed number is a number standing alone on one of its lines, accepted only when it fits the ONE
+# offset (printed - file page) that most numbered pages of the file share; a page that prints no
+# number of that run is counted only when pages that do stand on BOTH sides of it (a page cannot be
+# missing between two pages whose numbers differ by their distance), and one outside the run's ends -
+# a cover sheet, a last page - stays «printed page unknown», because a wrong page is worse than none.
+# Two runs of similar strength (two parts numbered apart) name no printed page; a table of numbers on
+# a few pages makes a plateau of weak offsets, not a peak, so it cannot outvote a real run. Never
+# parsed from the file name: names are the user's.
+PAGES_VERSION = "2"
 _PAGES_MEMO = {}
+PRINTED_LINE_RE = re.compile(r"(?m)^[ \t]*\[?(\d{1,5})\]?[ \t]*$")
+PRINTED_MIN_RUN = 2
+PRINTED_NONE = "its pages print no number on a line of their own"
+PRINTED_FEW = "fewer than two of its pages print a number in one sequence"
+PRINTED_TWO = "its pages print numbers in more than one sequence"
+PRINTED_OUTSIDE = ("that page prints no number of the file's sequence and stands outside the "
+                   "numbered pages")
+PRINTED_BETWEEN = "counted - that page prints no number of its own, the pages around it do"
+
+
+def _printed_pages(pages, also=None):
+    """K018b: the number each page prints, by the pages' own text (see the note above).
+
+    `{"offset": d, "kinds": "ppbn…", "why": ""}` - page i (1-based) printed i+d when kinds[i-1] is
+    "p" (it prints that number on a line of its own) or "b" (it prints none of the run, and pages of
+    the run stand before and after it); "n" - unknown. `{"offset": None, "kinds": "", "why": …}` when
+    the file shows no single run.
+
+    `also`: the OTHER engine's texts of the same pages. A number either engine reads alone on a line
+    counts: pypdf - the engine the corpus indexes in 67 of 68 law PDFs of a real matter - glues the
+    page number to a neighbouring line in 20 of the 101 that PyMuPDF reads cleanly (K018b census), and
+    a page is the same page whichever engine read it. The vote below still has to agree."""
+    cands = [{int(x) for x in PRINTED_LINE_RE.findall(t or "")} for t in pages]
+    if also is not None and len(also) == len(pages):
+        for c, t in zip(cands, also):
+            c.update(int(x) for x in PRINTED_LINE_RE.findall(t or ""))
+    votes = {}
+    for i, c in enumerate(cands, 1):
+        for d in {x - i for x in c}:
+            votes[d] = votes.get(d, 0) + 1
+    if not votes:
+        return {"offset": None, "kinds": "", "why": PRINTED_NONE}
+    ranked = sorted(votes.items(), key=lambda kv: (-kv[1], kv[0]))
+    d, k1 = ranked[0]
+    k2 = ranked[1][1] if len(ranked) > 1 else 0
+    if k1 < PRINTED_MIN_RUN:
+        return {"offset": None, "kinds": "", "why": PRINTED_FEW}
+    if k2 >= PRINTED_MIN_RUN and 2 * k2 >= k1:
+        return {"offset": None, "kinds": "", "why": PRINTED_TWO}
+    proven = [(i + d) in c for i, c in enumerate(cands, 1)]
+    first = proven.index(True)
+    last = len(proven) - 1 - proven[::-1].index(True)
+    kinds = "".join("p" if p else ("b" if first < k < last else "n") for k, p in enumerate(proven))
+    return {"offset": d, "kinds": kinds, "why": ""}
+
+
+def printed_span(printed, a, b):
+    """K018b: `([first, last], how)` - the printed pages of PDF pages a..b (1-based), `how` "page"
+    when each page prints its own number, "between" when one of them is counted from its neighbours;
+    `(None, why)` when they cannot be named."""
+    if not printed or printed.get("offset") is None:
+        return None, (printed or {}).get("why") or "its printed pages were not measured"
+    ks = (printed.get("kinds") or "")[a - 1:b]
+    if a < 1 or len(ks) != b - a + 1:
+        return None, "its printed pages were not measured"
+    if "n" in ks:
+        return None, PRINTED_OUTSIDE
+    d = printed["offset"]
+    return [a + d, b + d], ("between" if "b" in ks else "page")
 
 
 class _TrCounter(object):
@@ -277,12 +352,14 @@ def _write_layer(lp, facts):
         pass
 
 
-def _page_facts(pages, engine, fields):
+def _page_facts(pages, engine, fields, also=None):
     """K018: letters and digits per page of the extraction the text came from, plus a hash of
-    them all. `fields`: form-field values were appended after the last page (they have no page)."""
+    them all. `fields`: form-field values were appended after the last page (they have no page).
+    K018b: `printed` - the printed-page run of those pages, `also` the other engine's texts."""
     al = [alnum(normalise(strip_scrape_artifacts(t or ""))) for t in pages]
     return {"v": PAGES_VERSION, "engine": engine, "alnum": [len(a) for a in al],
-            "sha1": hashlib.sha1("".join(al).encode("utf-8")).hexdigest(), "fields": bool(fields)}
+            "sha1": hashlib.sha1("".join(al).encode("utf-8")).hexdigest(), "fields": bool(fields),
+            "printed": _printed_pages(pages, also)}
 
 
 def _pages_file(path, cache_dir):
@@ -311,7 +388,7 @@ def _measure_pages(path, at):
     """K018: the pages of a PDF whose text cache was written before the pages file existed:
     re-read it page by page and keep the first engine whose pages add up to `at`. PyMuPDF first -
     the faster one; the cached text may have come from either."""
-    fields, tried = bool(_form_values(path)), []
+    fields, tried, fp = bool(_form_values(path)), [], None
     try:
         fitz = _pdfengine.load()
     except ImportError:
@@ -320,9 +397,10 @@ def _measure_pages(path, at):
         try:
             d = fitz.open(path)
             try:
-                got = _page_facts([pg.get_text() for pg in d], "PyMuPDF", fields)
+                fp = [pg.get_text() for pg in d]
             finally:
                 d.close()
+            got = _page_facts(fp, "PyMuPDF", fields)
             if page_check(got, at)[0] is not None:
                 return got
             tried.append("PyMuPDF")
@@ -331,7 +409,7 @@ def _measure_pages(path, at):
     try:
         import pypdf
         got = _page_facts([(pg.extract_text() or "") for pg in pypdf.PdfReader(path).pages],
-                          "pypdf", fields)
+                          "pypdf", fields, also=fp)
         if page_check(got, at)[0] is not None:
             return got
         tried.append("pypdf")
@@ -345,7 +423,13 @@ def _measure_pages(path, at):
 
 def page_table(path, at, cache_dir=None):
     """K018: `(ends, why)` for the PDF `path` whose indexed letters-and-digits text is `at`
-    (see `page_check`); `(None, why)` when the page of a match there cannot be told.
+    (see `page_check`); `(None, why)` when the page of a match there cannot be told."""
+    ends, why, _facts = page_table_facts(path, at, cache_dir)
+    return ends, why
+
+
+def page_table_facts(path, at, cache_dir=None):
+    """`page_table` plus the accepted page facts (K018b: their "printed" run), `{}` with no ends.
 
     The counts come from this run's extraction, else from the pages file beside the text cache,
     else from a re-read - and whichever it is, they are CHECKED against `at` before they are used:
@@ -353,7 +437,7 @@ def page_table(path, at, cache_dir=None):
     try:
         key = _layer_key(path)
     except OSError:
-        return None, "the file is gone"
+        return None, "the file is gone", {}
     lp = _pages_file(path, cache_dir) if cache_dir else None
     facts = _PAGES_MEMO.get(key)
     if facts is None and lp and os.path.exists(lp):
@@ -367,15 +451,15 @@ def page_table(path, at, cache_dir=None):
     if facts is not None:
         ends, _why = page_check(facts, at)
         if ends is not None:
-            return ends, ""
+            return ends, "", facts
     got = _measure_pages(path, at)
     ends, why = page_check(got, at)
     if ends is None:
-        return None, got.get("why") or why
+        return None, got.get("why") or why, {}
     _PAGES_MEMO[key] = got
     if lp:
         _write_layer(lp, got)
-    return ends, ""
+    return ends, "", got
 
 
 def _measure_layer(path):
@@ -832,7 +916,9 @@ def read_pdf(path, cache_dir=None):
         except OSError:
             pass
     # K018: the pages of the extraction just chosen - counted here, checked where they are used
-    pfacts = None if repair_failed else _page_facts(pages, pengine, fields)
+    pfacts = None if repair_failed else _page_facts(
+        pages, pengine, fields,
+        also=(None if repaired_pages is not None else fpages if pages is pparts else pparts))
     if pfacts is not None:
         try:
             _PAGES_MEMO[_layer_key(path)] = pfacts
@@ -913,9 +999,15 @@ def read_any(path, cache_dir=None):
             "quotations' - nothing was examined.\nConvert it once:  open in Word/LibreOffice "
             "and save as .docx (or export to PDF)." % os.path.basename(path))
     try:
-        raw = io.open(path, encoding="utf-8", errors="replace").read()
+        raw = _text_body(path, low)
     except OSError:
         return ""
+    return _text_finish(raw, low)
+
+
+def _text_body(path, low):
+    """A text source as `read_any` reads it, with its GPO page markers still in it (K018b)."""
+    raw = io.open(path, encoding="utf-8", errors="replace").read()
     if low.endswith((".xml", ".html", ".htm")):
         raw = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", raw, flags=re.S | re.I)
         raw = re.sub(r"<[^>]+>", " ", raw)
@@ -924,12 +1016,62 @@ def read_any(path, cache_dir=None):
         # says `§ 103.2`, and a provably correct quotation cannot be found. That single defect
         # depressed a whole verification run's numbers and inflated its "extraction artefact" bin.
         raw = html.unescape(raw)
+    return raw
+
+
+def _text_finish(raw, low):
     raw = _PAGE_MARK.sub(" ", raw)
     if low.endswith(".md"):
         raw = _MD_FOOTNOTE.sub(" ", raw)
         raw = _MD_LINK.sub(r"\1", raw)
         raw = raw.replace("\\[", "[").replace("\\]", "]")
     return raw
+
+
+# 🔴 K018b: A GPO TEXT CARRIES ITS PRINTED PAGES AS MARKERS - AND `read_any` THROWS THEM AWAY.
+#
+# `[[Page 41300]]` (Federal Register) and `[[Page 110 STAT. 3009-547]]` (Statutes at Large) mark
+# where a printed page begins; on a real matter's law shelf there are 1 999 of them in 23 files,
+# 1 017 mid-sentence, so the clean-up must remove them. They are read here BEFORE that: the raw text
+# is split at the markers, each piece is cleaned exactly as the corpus cleans a whole file, and the
+# pieces' letters and digits must add up to the text the corpus indexed (K018's invariant,
+# `page_check`) - or no page is named. The text before the first marker is GPO's header and, in an
+# excerpt, the end of the page before it: it takes the page the source's own «[Pages N-M]» line
+# names when N is the page just before the first marker's, and stays unknown otherwise.
+_GPO_PAGES_RE = re.compile(r"\[Pages?\s+(\d+)(?:\s*-\s*\d+)?\]")
+MARK_LEAD = "the words stand before the source's first page marker"
+MARK_BROKEN = "its page markers do not add up to the indexed text"
+
+
+def marker_table(path, at):
+    """K018b: `(ends, labels, why)` for the text source `path` whose indexed letters-and-digits
+    text is `at`: `ends[k]` - where its piece k ends (piece 0 is the text before the first marker),
+    `labels[k]` - the printed page piece k stands on, as its marker writes it (None: unknown).
+    `(None, None, "")` for a source with no page markers; `(None, None, why)` when they do not add
+    up to `at`."""
+    low = path.lower()
+    if low.endswith((".pdf", ".docx", ".doc")):
+        return None, None, ""
+    try:
+        raw = _text_body(path, low)
+    except OSError:
+        return None, None, "the file is gone"
+    marks = list(_PAGE_MARK.finditer(raw))
+    if not marks:
+        return None, None, ""
+    cuts = [0] + [m.end() for m in marks]
+    stops = [m.start() for m in marks] + [len(raw)]
+    al = [alnum(normalise(strip_scrape_artifacts(_text_finish(raw[s:e], low))))
+          for s, e in zip(cuts, stops)]
+    ends, _why = page_check({"alnum": [len(a) for a in al], "fields": False,
+                             "sha1": hashlib.sha1("".join(al).encode("utf-8")).hexdigest()}, at)
+    if ends is None:
+        return None, None, MARK_BROKEN
+    labels = [None] + [" ".join(m.group(1).split()) for m in marks]
+    lead = _GPO_PAGES_RE.search(raw, 0, marks[0].start())
+    if lead and labels[1].isdigit() and int(lead.group(1)) == int(labels[1]) - 1:
+        labels[0] = lead.group(1)
+    return ends, labels, ""
 
 
 def no_text_layer(path, cache_dir=None):

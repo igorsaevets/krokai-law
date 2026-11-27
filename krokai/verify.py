@@ -17,6 +17,7 @@ import re
 from .normalize import (normalise, alnum, dehyph, editorial_marks, ellipsis_parts,
                         prepare_quote, source_marks, strip_all_marks, ELLIPSIS_RE)
 from .verdicts import CLEAN
+from .readers import printed_span, PRINTED_BETWEEN, MARK_LEAD
 
 __all__ = ["check", "word_diff", "neighbours", "OPERATORS", "copies_check"]
 
@@ -1071,9 +1072,23 @@ def page_of(quote, where, corpus, cap=6):
     a citation names differs from it wherever a decision starts in the middle of a volume.
 
     The words are found by their letters and digits (the alnum index), so the page is the same for
-    a punctuation drift, a hyphen healed across a line, a ``[sic]`` kept and an exact match."""
-    if not where or not where.lower().endswith(".pdf") or not hasattr(corpus, "page_ends"):
+    a punctuation drift, a hyphen healed across a line, a ``[sic]`` kept and an exact match.
+
+    🔴 K018b - the PRINTED page beside it: `printed` - `[first, last]` per occurrence (None where it
+    cannot be named), `printed_unknown` - why the first occurrence's cannot ("" when it can). A PDF's
+    comes from the numbers its pages print (`readers._printed_pages`); a text source's - .txt / .md /
+    .htm from GPO - from its own `[[Page 41300]]` / `[[Page 110 STAT. 3009-547]]` markers
+    (`readers.marker_table`), and such a source gets a page line at all only when it has markers.
+    PDF values are numbers, marker values the marker's own label (strings)."""
+    if not where or not hasattr(corpus, "page_ends"):
         return None
+    pdf = where.lower().endswith(".pdf")
+    if not pdf:
+        if not hasattr(corpus, "marker_ends"):
+            return None
+        mends, mlabels, mwhy = corpus.marker_ends(where)
+        if mends is None and not mwhy:
+            return None                       # a text source without page markers names no page
     span = corpus.aspan(where)
     if span is None:
         return None
@@ -1102,10 +1117,13 @@ def page_of(quote, where, corpus, cap=6):
             break
     if not found:
         return None
+    if not pdf:
+        return _marker_page(found, mends, mlabels, mwhy)
     ends, why = corpus.page_ends(where)
     if not ends:
         why = why or "its pages could not be measured"
-        return {"pdf_pages": [], "of": None, "unknown": why, "label": "page unknown - %s" % why}
+        return {"pdf_pages": [], "of": None, "unknown": why, "label": "page unknown - %s" % why,
+                "printed": [], "printed_unknown": why}
     pairs = []
     for s, e in found:
         if s >= ends[-1]:
@@ -1116,14 +1134,61 @@ def page_of(quote, where, corpus, cap=6):
             pairs.append([a, b])
     if not pairs:
         why = "the words are in the form-field values, which stand after the last page"
-        return {"pdf_pages": [], "of": len(ends), "unknown": why, "label": "page unknown - %s" % why}
+        return {"pdf_pages": [], "of": len(ends), "unknown": why, "label": "page unknown - %s" % why,
+                "printed": [], "printed_unknown": why}
+    run = corpus.printed_run(where) if hasattr(corpus, "printed_run") else None
+    spans = [printed_span(run, a_, b_) for a_, b_ in pairs]
     a, b = pairs[0]
     label = ("PDF page %d of %d" % (a, len(ends)) if a == b
              else "PDF pages %d-%d of %d" % (a, b, len(ends)))
-    if len(pairs) > 1:
-        label += " (also on page%s %s)" % ("s" if len(pairs) > 2 or pairs[1][0] != pairs[1][1]
-                                           else "", _page_ranges(pairs[1:]))
-    return {"pdf_pages": pairs, "of": len(ends), "unknown": "", "label": label}
+    p0, how0 = spans[0]
+    also = ["PDF %s%s" % (_pages_word(p_), ", printed %s" % _pages_word(q_) if q_ else "")
+            for p_, (q_, _h) in zip(pairs[1:], spans[1:])]
+    if p0:
+        label += ", printed %s%s" % (_pages_word(p0), " (%s)" % PRINTED_BETWEEN if how0 == "between"
+                                     else "")
+        if also:
+            label += " (also on %s)" % "; ".join(also)
+    else:
+        label += " (printed page unknown - %s%s)" % (how0, "; also on %s" % "; ".join(also)
+                                                      if also else "")
+    return {"pdf_pages": pairs, "of": len(ends), "unknown": "", "label": label,
+            "printed": [q_ for q_, _h in spans], "printed_unknown": "" if p0 else how0}
+
+
+def _pages_word(pair):
+    """`[3, 3]` -> «page 3», `[3, 4]` -> «pages 3-4»; marker labels that hold a hyphen of their own
+    («110 STAT. 3009-547») are joined with «to»."""
+    a, b = pair
+    if a == b:
+        return "page %s" % a
+    sep = "-" if all(str(x).isdigit() for x in (a, b)) else " to "
+    return "pages %s%s%s" % (a, sep, b)
+
+
+def _marker_page(found, ends, labels, why):
+    """K018b: the page line of a match in a text source with GPO page markers."""
+    if not ends:
+        return {"pdf_pages": [], "of": None, "unknown": "", "printed": [], "printed_unknown": why,
+                "label": "printed page unknown - %s" % why}
+    spans = []
+    for s, e in found:
+        a = min(bisect.bisect_right(ends, s), len(ends) - 1)
+        b = min(bisect.bisect_right(ends, e - 1), len(ends) - 1)
+        span = [labels[a], labels[b]] if None not in labels[a:b + 1] else None
+        if span not in spans:
+            spans.append(span)
+    head = spans[0]
+    also = ["printed %s" % _pages_word(p_) for p_ in spans[1:] if p_]
+    if head:
+        label = "printed %s (by the source's own page markers)" % _pages_word(head)
+        if also:
+            label = label[:-1] + "; also on %s)" % "; ".join(also)
+    else:
+        label = "printed page unknown - %s%s" % (MARK_LEAD, " (also on %s)" % "; ".join(also)
+                                                  if also else "")
+    return {"pdf_pages": [], "of": None, "unknown": "", "printed": spans,
+            "printed_unknown": "" if head else MARK_LEAD, "label": label}
 
 
 def copies_check(quote, verdict, where, corpus):

@@ -6924,13 +6924,18 @@ def suite_k018_pages(tmp):
         v, w, _d = check(q, c)
         return v, page_of(q, w, c)
 
+    def head(g):                      # K018b: the PDF page part of a label, before its printed page
+        return ((g or {}).get("label") or "").split(" (printed page unknown")[0]
+
     corp = Corpus([law], quiet=True, cache_dir=cache)
     got = [pg(q, corp) for q in (P2_S, CROSS, REP_S, ELL)]
-    labels = [(g or {}).get("label") for _v, g in got]
+    labels = [head(g) for _v, g in got]
     ok("k018: the page of a match - one page, across a page break, a sentence the file repeats (on "
        "the page that STARTS with it too), an ellipsis quotation",
-       labels == ["PDF page 2 of 4", "PDF pages 2-3 of 4", "PDF page 1 of 4 (also on page 4)",
-                  "PDF page 3 of 4"] and all(v in CLEAN for v, _g in got[:3]), str(got))
+       labels == ["PDF page 2 of 4", "PDF pages 2-3 of 4", "PDF page 1 of 4", "PDF page 3 of 4"]
+       and (got[2][1] or {}).get("pdf_pages") == [[1, 1], [4, 4]]
+       and "; also on PDF page 4)" in (got[2][1] or {}).get("label", "")
+       and all(v in CLEAN for v, _g in got[:3]), str(got))
     v5, g5 = pg(UNK_S, corp)
     ok("k018: «page unknown» with its reason when the page counts do not add up to the indexed text "
        "(a link removed across a page break) - and the verdict is untouched",
@@ -6946,7 +6951,7 @@ def suite_k018_pages(tmp):
     R._PAGES_MEMO.clear()
     g8 = pg(P2_S, Corpus([law], quiet=True, cache_dir=cache))[1]
     ok("k018: a text cache written before the pages file existed gets its pages re-read, checked "
-       "and kept", (g8 or {}).get("label") == "PDF page 2 of 4" and os.path.exists(pf), str(g8))
+       "and kept", head(g8) == "PDF page 2 of 4" and os.path.exists(pf), str(g8))
 
     if have_pypdf:
         real_import = builtins.__import__
@@ -6962,8 +6967,8 @@ def suite_k018_pages(tmp):
             g9 = pg(CROSS, Corpus([law], quiet=True))[1]
         finally:
             builtins.__import__ = real_import
-        ok("k018: with pypdf alone the same pages come back", (g9 or {}).get("label")
-           == "PDF pages 2-3 of 4", str(g9))
+        ok("k018: with pypdf alone the same pages come back", head(g9) == "PDF pages 2-3 of 4",
+           str(g9))
     else:
         print("note: k018 pypdf-alone pin skipped - pypdf is not installed here")
 
@@ -6978,7 +6983,7 @@ def suite_k018_pages(tmp):
 
     q1, q2, q3 = (cli("quote", "--dir", root, q)[1] for q in (CROSS, UNK_S, MD_S))
     ok("k018: `quote` prints the PDF page, «page unknown» with its reason, and no page line for a "
-       "text source", "PDF pages 2-3 of 4 (the page in the PDF file" in q1 and "page unknown - " in q2
+       "text source", "PDF pages 2-3 of 4 (printed page unknown - " in q1 and "page unknown - " in q2
        and "PDF page" not in q3 and "page unknown" not in q3, (q1[:300] + " || " + q2[:300]))
     DRIFT = CROSS.replace("in writing and", "in writing, and")
     io.open(os.path.join(case, "petition.md"), "w", encoding="utf-8").write(
@@ -7001,6 +7006,236 @@ def suite_k018_pages(tmp):
        and (r3.get("page") or {}).get("unknown") and r4.get("verdict") in CLEAN
        and r4.get("page") is None and "8CFR-296.pdf` - PDF pages 2-3 of 4" in md,
        str([(r.get("verdict"), r.get("page")) for r in (r1, r2, r3, r4)]) + " || " + out[-300:])
+
+
+def suite_k018b_printed_pages(tmp):
+    """K018b (2026-11-27): beside the PDF page, the page the source PRINTS - a reprint's own number
+    on a line of its own, proven by the file's one run of numbers (a page without one is counted
+    only between numbered pages), or a GPO text's `[[Page N]]` / `[[Page 110 STAT. N]]` markers,
+    whose pieces must add up to the indexed text. «printed page unknown» and why everywhere else.
+    And the Statutes-at-Large marker, which the clean-up never matched, no longer breaks a quotation
+    that crosses it. Before: only the FILE page, so a pincite to «21 I&N Dec. 296, 299» could not be
+    compared with anything."""
+    import json
+    import subprocess as _sp
+    from krokai import readers as R
+    from krokai.normalize import alnum as _al, normalise as _nm
+    from krokai.corpus import Corpus
+    from krokai.verify import check, page_of
+    from krokai.verdicts import CLEAN
+
+    # -- the run, with no PDF engine ----------------------------------------------------------
+    pp = R._printed_pages
+    run = pp(["296\nAlpha.", "Beta.\n297", "Gamma.", "[299]\nDelta.", "Epsilon."])
+    ok("k018b: a run of printed numbers - each page's own (p), one counted between two numbered pages "
+       "(b), one outside them unknown (n)", run == {"offset": 295, "kinds": "ppbpn", "why": ""}, str(run))
+    ocr = pp(["296\nA.", "997\nB.", "298\nC.", "299\nD."])
+    ok("k018b: a number the OCR misread on one page does not break the file's run - the page is "
+       "counted between its neighbours", ocr == {"offset": 295, "kinds": "pbpp", "why": ""}, str(ocr))
+    tab = ["x\n%d\ny" % (40 + i) for i in range(1, 7)]
+    tab[1] += "\n" + "\n".join(str(n) for n in range(1, 25))
+    tab[4] += "\n" + "\n".join(str(n) for n in range(1, 25))
+    tab_run = pp(tab)
+    ok("k018b: two pages of a table of numbers make a plateau of weak offsets and do not outvote the "
+       "run", tab_run.get("offset") == 40 and tab_run.get("kinds") == "pppppp", str(tab_run))
+    nones = [pp(["Alpha.", "Beta 3 of 4."]), pp(["Alpha.\n12", "Beta."]),
+             pp(["10\nA.", "11\nB.", "12\nC.", "1\nD.", "2\nE.", "3\nF."])]
+    ok("k018b: no run - no page prints a number alone on a line, only one does, two sequences of "
+       "equal strength", [n.get("why") for n in nones] == [R.PRINTED_NONE, R.PRINTED_FEW, R.PRINTED_TWO]
+       and all(n.get("offset") is None for n in nones), str(nones))
+    glued = ["Alpha text 296", "Beta text 297", "Gamma text 298"]
+    alone = ["296\nAlpha text", "Beta text\n297", "298\nGamma text"]
+    ok("k018b: a number one engine glues to a line and the other reads alone still counts - the "
+       "page is the same page", pp(glued).get("offset") is None
+       and pp(glued, also=alone).get("kinds") == "ppp", str(pp(glued, also=alone)))
+    spans = [R.printed_span(run, 2, 2), R.printed_span(run, 2, 3), R.printed_span(run, 5, 5),
+             R.printed_span(nones[0], 1, 1), R.printed_span(None, 1, 1)]
+    ok("k018b: the printed pages of a PDF span - own number, counted between, outside, no run, not "
+       "measured", spans[:3] == [([297, 297], "page"), ([297, 298], "between"),
+                                 (None, R.PRINTED_OUTSIDE)]
+       and spans[3] == (None, R.PRINTED_NONE) and spans[4][0] is None and spans[4][1], str(spans))
+
+    root = os.path.join(tmp, "k018bm")
+    law, case = os.path.join(root, "law"), os.path.join(root, "case")
+    os.makedirs(law)
+    os.makedirs(case)
+    io.open(os.path.join(root, "casefile.json"), "w", encoding="utf-8").write(json.dumps({
+        "bank": "QUOTE-BANK.md", "queue": "QUOTE-QUEUE.md", "library_index": "law/INDEX.md",
+        "sources": ["law"], "drafts": [{"tier": "A", "label": "filed", "path": "case"}],
+        "citation_packs": ["us-immigration", "us-federal"]}))
+
+    def fill(tag):
+        return ["Filler line %d of the %s page keeps this fixture above every reader floor." % (i, tag)
+                for i in range(6)]
+
+    # -- GPO markers: a Federal Register text and a Public Law --------------------------------
+    FR_LEAD = "The lead paragraph of this rule stands on the page before the first page marker."
+    FR_A = "The Secretary may extend the period of admission for good cause shown and shall"
+    FR_B = "publish each extension in the Federal Register within thirty days."
+    FR_X = FR_A + " " + FR_B
+    io.open(os.path.join(law, "91FR41299-fixture-rule.txt"), "w", encoding="utf-8").write(
+        "[Federal Register Volume 91, Number 99 (Monday, May 4, 2026)]\n[Rules and Regulations]\n"
+        "[Pages 41299-41302]\n\n%s\n%s\n\n[[Page 41300]]\n\n%s\n%s\n[[Page 41301]]\n%s\n%s\n\n"
+        "[[Page 41302]]\n\nThe final page of the fixture rule carries only its signature block.\n"
+        % (FR_LEAD, "\n".join(fill("lead")), "\n".join(fill("41300")), FR_A, FR_B,
+           "\n".join(fill("41301"))))
+    FR2_LEAD = "A notice whose header names pages that do not touch its first marker stays unknown."
+    io.open(os.path.join(law, "91FR50001-fixture-notice.txt"), "w", encoding="utf-8").write(
+        "[Federal Register Volume 91, Number 120 (Friday, June 5, 2026)]\n[Notices]\n"
+        "[Pages 50001-50004]\n\n%s\n%s\n\n[[Page 50003]]\n\n%s\n"
+        % (FR2_LEAD, "\n".join(fill("notice")), "\n".join(fill("50003"))))
+    PL_A = "The Attorney General may not admit an alien under this fixture section unless the alien"
+    PL_B = "establishes eligibility for the benefit by clear and convincing evidence."
+    PL_X = PL_A + " " + PL_B
+    io.open(os.path.join(law, "PL-199-999-fixture.htm"), "w", encoding="utf-8").write(
+        "<html><body><pre>\n[DOCID: f:publ999.199]\n\n[[Page 110 STAT. 3009-546]]\n\n"
+        "SEC. 999. FIXTURE PROVISION.\n%s\n    (a) In General.--%s\n[[Page 110 STAT. 3009-547]]\n%s\n%s\n"
+        "</pre></body></html>\n" % ("\n".join(fill("statute")), PL_A, PL_B, "\n".join(fill("547"))))
+    pl_raw = "shall be\n[[Page 110 STAT. 3009-547]]\nadmitted"
+    ok("k018b: the clean-up removes a Statutes-at-Large page marker, as it always removed a Federal "
+       "Register one", _nm(pl_raw) == "shall be admitted" and _nm("a [[Page 41300]] b") == "a b",
+       repr(_nm(pl_raw)))
+
+    corp = Corpus([law], quiet=True)
+    gx = [(lambda v, w, _d: (v, page_of(q, w, corp)))(*check(q, corp)) for q in (FR_X, FR_LEAD, FR2_LEAD, PL_X)]
+    ok("k018b: a match in a GPO text names the printed page its markers put it on - across a marker "
+       "both pages, the lead piece by the source's own «[Pages N-M]» line",
+       gx[0][0] in CLEAN and (gx[0][1] or {}).get("printed") == [["41300", "41301"]]
+       and (gx[0][1] or {}).get("label") == "printed pages 41300-41301 (by the source's own page markers)"
+       and gx[1][0] in CLEAN and (gx[1][1] or {}).get("printed") == [["41299", "41299"]], str(gx[:2]))
+    ok("k018b: a lead piece the header does not place is «printed page unknown» with the reason",
+       gx[2][0] in CLEAN and (gx[2][1] or {}).get("printed") == [None]
+       and (gx[2][1] or {}).get("label") == "printed page unknown - %s" % R.MARK_LEAD, str(gx[2]))
+    ok("k018b: a quotation across a Statutes-at-Large page break verifies, and names both pages by "
+       "their own labels", gx[3][0] in CLEAN and (gx[3][1] or {}).get("printed")
+       == [["110 STAT. 3009-546", "110 STAT. 3009-547"]]
+       and "pages 110 STAT. 3009-546 to 110 STAT. 3009-547" in (gx[3][1] or {}).get("label", ""),
+       str(gx[3]))
+    frp = os.path.join(law, "91FR41299-fixture-rule.txt")
+    good = _al(corp.text_of(frp))
+    ok("k018b: markers whose pieces do not add up to the indexed text name no page",
+       R.marker_table(frp, good)[0] is not None
+       and R.marker_table(frp, good[:-5] + "zzzzz") == (None, None, R.MARK_BROKEN),
+       str(R.marker_table(frp, good[:-5] + "zzzzz")))
+
+    try:
+        from krokai import _pdfengine
+        fz = _pdfengine.load()
+    except ImportError:
+        fz = None
+    if fz is None:
+        print("note: k018b printed-page PDF pins skipped - PyMuPDF builds the fixtures and is not "
+              "installed here")
+        return
+
+    def make(path, pgs):
+        d = fz.open()
+        for lines in pgs:
+            p_ = d.new_page()
+            y = 46
+            for ln in lines:
+                if isinstance(ln, tuple):     # (x, text): on the baseline of the line before it
+                    p_.insert_text((ln[0], y), ln[1], fontsize=9)
+                    continue
+                y += 14
+                p_.insert_text((50, y), ln, fontsize=9)
+        d.save(path)
+        d.close()
+
+    S1 ="The respondent bears the burden of establishing eligibility for the relief he seeks here."
+    S2 = "An immigration judge may grant a continuance for good cause shown on the record before him."
+    S3 = "The Board reviews findings of fact for clear error and all other questions de novo."
+    S4 = "A motion to reopen must state the new facts that will be proven at a hearing if granted."
+    S5 = "The record is remanded to the immigration judge for further proceedings consistent here."
+    # the name says 500 and the pages print 296-300: the printed page comes from the pages. Pages 2
+    # and 4 print their number on the running header's baseline, as reprints do: pypdf (the engine
+    # the corpus indexes) reads «… (BIA 2026) 297», PyMuPDF «297» alone - `read_pdf` asks both
+    HDR = "Cite as 27 I&N Dec. 296 (BIA 2026)"
+    dec = os.path.join(law, "Matter-of-Fixture-27-IN-Dec-500.pdf")
+    make(dec, [["296", "Matter of FIXTURE", S1] + fill("first"),
+               [HDR, (500, "297"), S2] + fill("second"),
+               [S3] + fill("third"),
+               [HDR, (500, "299"), S4] + fill("fourth"),
+               [S5] + fill("fifth")])
+    two = os.path.join(law, "Fixture-two-parts.pdf")
+    T2 = "Each part of this fixture is numbered on its own and the two runs never meet at all."
+    make(two, [["%d" % (10 + i), T2 if i == 1 else "Part one page."] + fill("one-%d" % i) for i in range(3)]
+         + [["%d" % (i + 1), "Part two page."] + fill("two-%d" % i) for i in range(3)])
+    cache = os.path.join(tmp, "k018bcache")
+    R._PAGES_MEMO.clear()
+    pc = Corpus([law], quiet=True, cache_dir=cache)
+
+    def lab(q):
+        v, w, _d = check(q, pc)
+        return v, page_of(q, w, pc)
+
+    got = [lab(q) for q in (S2, S3, S5, T2)]
+    ok("k018b: a PDF match names the page the decision prints - its own number (not the file name's), "
+       "one counted between numbered pages",
+       got[0][0] in CLEAN and (got[0][1] or {}).get("label") == "PDF page 2 of 5, printed page 297"
+       and (got[0][1] or {}).get("printed") == [[297, 297]]
+       and (got[1][1] or {}).get("label") == "PDF page 3 of 5, printed page 298 (%s)" % R.PRINTED_BETWEEN,
+       str(got[:2]))
+    ok("k018b: «printed page unknown» and why - a page outside the numbered ones, a file numbered in two "
+       "runs; the PDF page is still named",
+       (got[2][1] or {}).get("label") == "PDF page 5 of 5 (printed page unknown - %s)" % R.PRINTED_OUTSIDE
+       and (got[2][1] or {}).get("printed_unknown") == R.PRINTED_OUTSIDE
+       and (got[3][1] or {}).get("label") == "PDF page 2 of 6 (printed page unknown - %s)" % R.PRINTED_TWO,
+       str(got[2:]))
+
+    # a pages file from 0.26.0 (no printed run) is re-measured, never read as «not measured»
+    pf = R._pages_file(dec, cache)
+    if os.path.exists(pf):
+        old = json.load(io.open(pf, encoding="utf-8"))
+        old.pop("printed", None)
+        old["v"] = "1"
+        io.open(pf, "w", encoding="utf-8").write(json.dumps(old))
+    R._PAGES_MEMO.clear()
+    pc = Corpus([law], quiet=True, cache_dir=cache)       # a new run: no page memo of its own yet
+    g_old = lab(S2)[1]
+    ok("k018b: a pages file written before the printed pages existed is measured again",
+       (g_old or {}).get("printed") == [[297, 297]] and os.path.exists(pf)
+       and json.load(io.open(pf, encoding="utf-8")).get("printed", {}).get("offset") == 295, str(g_old))
+
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def cli(*args):
+        p_ = _sp.run([sys.executable, "-m", "krokai"] + list(args), cwd=repo, env=env,
+                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
+        return p_.returncode, (p_.stdout or "") + (p_.stderr or "")
+
+    q = cli("quote", "--dir", root, FR_X)[1]
+    ok("k018b: `quote` prints the printed page of a GPO text and no PDF page for it",
+       "printed pages 41300-41301 (by the source's own page markers)" in q and "PDF page" not in q,
+       q[:400])
+    S4D = S4.replace("proven at a hearing", "proven, at a hearing")
+    io.open(os.path.join(case, "petition.md"), "w", encoding="utf-8").write(
+        'Under Matter of Fixture, "%s"\n\nUnder Matter of Fixture, "%s"\n\n'
+        'Under 91 Fed. Reg. 41300, "%s"\n' % (S2, S4D, FR_X))
+    out_dir = os.path.join(tmp, "k018bo")
+    _rc, out = cli("check", "--dir", root, "--out", out_dir)
+
+    def read(name):
+        p_ = os.path.join(out_dir, name)
+        return io.open(p_, encoding="utf-8").read() if os.path.exists(p_) else ""
+
+    rows = (json.loads(read("result.json") or "{}")).get("rows", [])
+
+    def row(marker):
+        return next((r for r in rows if marker in r["quote"]), {})
+
+    md, rl = read("REPORT.md"), read("READING-LIST.md")
+    r2, r4, rx = row("continuance"), row("proven, at"), row("extend the period")
+    ok("k018b: result.json, REPORT.md («Found in» of a flagged row) and READING-LIST.md carry the "
+       "printed page",
+       (r2.get("page") or {}).get("printed") == [[297, 297]] and r4.get("verdict") == "PUNCTUATION"
+       and "Matter-of-Fixture-27-IN-Dec-500.pdf` - PDF page 4 of 5, printed page 299" in md
+       and "PDF page 2 of 5, printed page 297" in rl
+       and (rx.get("page") or {}).get("printed") == [["41300", "41301"]]
+       and "printed pages 41300-41301" in rl,
+       str([(r.get("verdict"), r.get("page")) for r in (r2, r4, rx)]) + " || " + out[-300:])
 
 
 def suite_k096_picture_pages(tmp):
@@ -8203,6 +8438,7 @@ def main():
         suite_k026_front_door(tmp)
         suite_k030_edge_ellipsis(tmp)
         suite_k018_pages(tmp)
+        suite_k018b_printed_pages(tmp)
         suite_k093_short_pdf(tmp)
         suite_k096_picture_pages(tmp)
         suite_k097_split_quotation(tmp)

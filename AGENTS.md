@@ -125,6 +125,12 @@ just reproduces the typo with confidence. One class of suspect copy is named for
 (`library` lists them; `quote` and `check` mark every match read from one). A digit or a name
 verified there was verified against what the OCR engine read - check it against the page image.
 
+**A pincite is checked against the page the source prints, never the PDF page.** `quote` and `check`
+name both: `PDF page 4 of 12, printed page 299`. The printed page is what the page itself shows - a
+reprint's own number, a GPO text's `[[Page 41300]]` marker - and it is named only where the file
+proves it; `printed page unknown` is an answer, not a gap to fill from the file name or by counting
+pages. A slip opinion prints its own pages, not the reporter's.
+
 **When you hunt what the string test cannot see, do not filter to the flagged list.** The
 classes a byte comparison structurally misses — a headnote quoted under the opinion's pincite, a
 quotation that is verbatim yet does not support the proposition, right words under the wrong

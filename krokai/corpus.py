@@ -28,7 +28,7 @@ import re
 
 from .normalize import alnum, dehyph
 from .readers import (corpus_text, no_text_layer, MIN_TEXT_LAYER, text_layer, page_table,  # noqa: F401
-                      pdf_text_verdict, picture_pages)
+                      pdf_text_verdict, picture_pages, page_table_facts, marker_table)
 
 __all__ = ["Corpus", "walk", "copy_print", "COPY_SHARE", "COPY_LEN"]
 
@@ -571,10 +571,31 @@ class Corpus(object):
         memo = self.__dict__.setdefault("_pages", {})
         if path not in memo:
             try:
-                memo[path] = page_table(path, self.ajoined[span[0]:span[1]],
-                                        self.__dict__.get("cache_dir"))
+                memo[path] = page_table_facts(path, self.ajoined[span[0]:span[1]],
+                                              self.__dict__.get("cache_dir"))
             except Exception as exc:                              # noqa: BLE001 - advisory
-                memo[path] = (None, "%s while its pages were measured" % type(exc).__name__)
+                memo[path] = (None, "%s while its pages were measured" % type(exc).__name__, {})
+        return memo[path][:2]
+
+    def printed_run(self, path):
+        """K018b: the printed-page run of an indexed PDF whose pages add up (`readers._printed_pages`
+        - offset, per-page kinds, why), None when its pages cannot be told."""
+        if self.page_ends(path)[0] is None:
+            return None
+        return (self.__dict__["_pages"][path][2] or {}).get("printed")
+
+    def marker_ends(self, path):
+        """K018b: `(ends, labels, why)` for an indexed text source with GPO page markers
+        (`readers.marker_table`); `(None, None, "")` for one without, or for a PDF."""
+        span = self.aspan(path)
+        if span is None or path.lower().endswith(".pdf"):
+            return None, None, ""
+        memo = self.__dict__.setdefault("_marks", {})
+        if path not in memo:
+            try:
+                memo[path] = marker_table(path, self.ajoined[span[0]:span[1]])
+            except Exception as exc:                              # noqa: BLE001 - advisory
+                memo[path] = (None, None, "%s while its page markers were read" % type(exc).__name__)
         return memo[path]
 
     # -- lookup ---------------------------------------------------------------------------------

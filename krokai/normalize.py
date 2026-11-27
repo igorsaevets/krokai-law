@@ -114,8 +114,13 @@ _FOOT_ANCHOR_RE = re.compile(r"\s*\[.{0,24}?\]\([^)]*#footnote[^)]*\)", re.I)
 _FOOT_NUM_RE = re.compile(r"\s*\[(?:\*\*|\\)*\[?\d{1,3}\]?(?:\*\*|\\)*\]\([^)]*\)")
 _SCRAPE_LINK_RE = re.compile(r"\s*\[link\]\([^)]*\)", re.I)
 
-# Printing artefacts that sit INSIDE a sentence in official text dumps.
-_PAGE_MARK_RE = re.compile(r"\[\[Page\s+[\w.-]+\]\]")
+# Printing artefacts that sit INSIDE a sentence in official text dumps: GPO's page markers - the
+# Federal Register's `[[Page 41300]]` and the Statutes at Large's `[[Page 110 STAT. 3009-547]]`.
+# 🔴 K018b: the second shape has spaces in it, and the first pattern (`[\w.-]+`) never matched it. On
+# a real matter's law shelf 937 markers in two Public Laws (IIRIRA, the Homeland Security Act) stayed
+# in the indexed text, 495 of them mid-sentence, so a quotation that crosses one of those page breaks
+# could not verify as written. The group is the page's own label (`readers.marker_table`).
+_PAGE_MARK_RE = re.compile(r"\[\[Page\s+((?:\d+\s+STAT\.\s+)?[\w.-]+)\]\]")
 
 # The omitted-text marker of CFR and the Federal Register: asterisks SEPARATED BY WHITESPACE, and
 # not glued to a word or to another asterisk. Both conditions are load-bearing - see the comment in
