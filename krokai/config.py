@@ -44,6 +44,7 @@ DEFAULTS = {
     "cache_dir": None,
     "skip_dirs": [".git", "node_modules", "__pycache__", ".venv", "venv",
                   ".playwright-mcp", "archive", "_archive"],
+    "keep_sources": [],
     "guard_watch": ["case", "guides"],
     "guard_ignore": ["research", "archive", "_archive", ".claude", "answers"],
 }
@@ -107,6 +108,13 @@ TEMPLATE = {
 
     "cache_dir": None,
     "skip_dirs": DEFAULTS["skip_dirs"],
+    "_keep_sources": "Primary sources the corpus would leave out as our own writing - a file whose NAME carries "
+                     "a word like analysis / review / summary / notes (an official «Chapter 8 - Discretionary "
+                     "Analysis» does), or one named as an I&N decision whose text does not read as one. A file "
+                     "name or a glob («*Discretionary-Analysis*», «law/pm/*.md»); the corpus build lists every "
+                     "file kept this way. Never list your own notes here: a quotation copied out of them would "
+                     "then verify against them.",
+    "keep_sources": [],
     "_guard_watch": "Folders the PostToolUse hook watches. Keep it to what actually gets filed: a "
                     "guard that fires on scratch notes gets ignored, and then it guards nothing.",
     "guard_watch": ["case", "guides"],

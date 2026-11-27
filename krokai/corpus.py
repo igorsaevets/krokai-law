@@ -23,12 +23,14 @@ excluded statute must be visible immediately, not discovered three rounds later.
 from __future__ import annotations
 
 import bisect
+import fnmatch
 import os
 import re
 
 from .normalize import alnum, dehyph
 from .readers import (corpus_text, no_text_layer, MIN_TEXT_LAYER, text_layer, page_table,  # noqa: F401
-                      pdf_text_verdict, picture_pages, page_table_facts, marker_table, zone_table)
+                      pdf_text_verdict, picture_pages, page_table_facts, marker_table, zone_table,
+                      decision_claim_unmet)
 
 __all__ = ["Corpus", "walk", "copy_print", "COPY_SHARE", "COPY_LEN"]
 
@@ -58,9 +60,21 @@ def copy_print(text):
 
 # A file sitting in a sources directory that is OUR analysis rather than a primary source. The rule
 # used to live on the directory; it belongs on the file.
-DERIVED_DEFAULT = (r"ANALYSIS|SUMMARY|DIGEST|NOTES?|OUTLINE|CHECKLIST|STRATEG|MEMO|BRIEF|REVIEW|"
-                   r"DRAFT|REPORT|OUR-|РАЗБОР|АНАЛИЗ|ВЫПИСКА|СВОДКА|ЗАМЕТ|конспект|ЧЕК-ЛИСТ|"
-                   r"СТРАТЕГИ|ПРОВЕРКА|ИТОГ|отч[её]т|бриф|рецензи|наш[аи]?-")
+# 🔴 K091 (2026-11-27): a word of the list counts only as a WORD of the name - never inside another word.
+# On a copy of a real matter's law shelf the unbounded list left out a regulation («34CFR-600.2-clock-hour-…»)
+# and a BIA decision («Matter-of-Hosseinpour-…») for the «our-» inside «hour-» / «Hosseinpour-», and the
+# same list drops a policy «memorandum», a statute's «footnotes», a «reporter». A stem («STRATEG», «ЗАМЕТ»,
+# «рецензи») still takes any ending; an English word takes its plural. The list still drops an official
+# title that USES one of its words - «Chapter 8 - Discretionary Analysis», «Chapter 6 - Adjudicative
+# Review»: 9 of the 14 files it left out on that shelf. A name cannot tell those from our own analysis
+# (one shelf file was «ПЕРВОИСТОЧНИК + РАЗБОР», the law with our analysis inside), so the drop stays LOUD,
+# each file with its reason, and `keep_sources` in casefile.json keeps a primary source the rule caught.
+_NOT_LETTER_BEFORE = r"(?<![^\W\d_])"
+_NOT_LETTER_AFTER = r"(?![^\W\d_])"
+DERIVED_DEFAULT = (_NOT_LETTER_BEFORE + r"(?:(?:ANALYS[EI]S|SUMMAR(?:Y|IES)|DIGESTS?|NOTES?|OUTLINES?|"
+                   r"CHECKLISTS?|MEMOS?|BRIEFS?|REVIEWS?|DRAFTS?|REPORTS?)" + _NOT_LETTER_AFTER + r"|STRATEG|OUR-|"
+                   r"РАЗБОР|АНАЛИЗ|ВЫПИСКА|СВОДКА|ЗАМЕТ|конспект|ЧЕК-ЛИСТ|СТРАТЕГИ|ПРОВЕРКА|ИТОГ|отч[её]т|бриф|"
+                   r"рецензи|наш[аи]?-)")
 
 # 🔴 `.docx` was missing here until 2026-08-03, and `read_any` had dispatched it the whole time.
 # So `read_docx` existed, was tested, carried a long docstring about the tables the popular
@@ -209,11 +223,17 @@ class Corpus(object):
 
     def __init__(self, roots, exts=DEFAULT_EXT, derived_re=DERIVED_DEFAULT,
                  skip_dirs=(), cache_dir=None, quiet=False, sentinel=None,
-                 superseded=(), files=None):
+                 superseded=(), files=None, keep=(), keep_root=None):
         # K046: `files` - index exactly these files instead of walking `roots` (`facts add` reads ONE exhibit with the
         # corpus's own reader, OCR-layer facts, picture pages and page index; a walk would read the whole folder).
+        # K091: `keep` - casefile.json `keep_sources`: name / glob patterns (a file name, or a path from `keep_root`,
+        # «/» between folders) of PRIMARY sources indexed although the name rule or the decision test would leave
+        # them out. Never a sentinel stamp: this toolkit's own output is never a source.
         self.paths, self.starts, self.astarts, self.hstarts = [], [], [], []
         self.excluded_derived, self.excluded_stub, self.unreadable = [], [], []
+        self.derived_why = {}               # K091: path in excluded_derived -> why it was left out
+        self.kept = []                      # K091: [(path, why a rule would have left it out)] kept by `keep`
+        keep = [k.replace("\\", "/").lower() for k in (keep or ()) if isinstance(k, str) and k.strip()]
         self.excluded_empty, self.short_sources = [], []
         self.excluded_placeholder = []
         self.stub_why = {}                  # K093: path in excluded_stub -> why it has no usable text
@@ -236,10 +256,25 @@ class Corpus(object):
 
         buf, abuf, hbuf = [], [], []
         pos = apos = hpos = 0
+        def kept_by(p):
+            if not keep:
+                return False
+            base = os.path.basename(p).lower()
+            try:
+                rel = os.path.relpath(p, keep_root).replace("\\", "/").lower() if keep_root else base
+            except ValueError:                                  # another drive (E-1098): the name alone
+                rel = base
+            return any(fnmatch.fnmatchcase(base, k) or fnmatch.fnmatchcase(rel, k) for k in keep)
+
         for p in (list(files) if files is not None else walk(roots, exts, skip_dirs)):
-            if drx and drx.search(os.path.basename(p)):
-                self.excluded_derived.append(p)
-                continue
+            nm = drx.search(os.path.basename(p)) if drx else None
+            if nm:
+                why = "its name: «%s»" % nm.group(0)
+                if not kept_by(p):
+                    self.excluded_derived.append(p)
+                    self.derived_why[p] = why
+                    continue
+                self.kept.append((p, why))
             try:
                 t = corpus_text(p, cache_dir)
             except Exception as exc:
@@ -252,7 +287,17 @@ class Corpus(object):
             # enumerates every stamped writer in the package against this window.
             if any(s in t[:2000] for s in sents):
                 self.excluded_derived.append(p)      # stamped as this toolkit's own output
+                self.derived_why[p] = "stamped as this toolkit's own output"
                 continue
+            # K091: a file named as an I&N decision whose head prints none of a decision's caption lines (a model's
+            # summary under the decision's name was the shelf's only copy of it) - out, loudly, unless kept.
+            why = decision_claim_unmet(p, cache_dir) if derived_re else ""    # derived_re=None: no derived rules
+            if why:
+                if not kept_by(p):
+                    self.excluded_derived.append(p)
+                    self.derived_why[p] = why
+                    continue
+                self.kept.append((p, why))
             # 🔴 THE FLOOR APPLIES ONLY WHERE IT MEANS WHAT IT SAYS.
             #
             # `MIN_TEXT_LAYER` answers one question: *did the extraction fail?* That question
@@ -362,7 +407,18 @@ class Corpus(object):
                   % len(self.excluded_derived))
             for p in self.excluded_derived:
                 print("     %s" % p)
-            print("     (if a primary source is in this list, fix the pattern - do not stay silent)")
+                if getattr(self, "derived_why", {}).get(p):
+                    print("         (%s)" % self.derived_why[p])
+            # K091: the lever is named where the list is read - the old line said «fix the pattern», and
+            # no setting reached the pattern.
+            print('     A primary source in this list? Name it in "keep_sources" in casefile.json (a file name, '
+                  'or a glob such as "*Discretionary-Analysis*") - it is then indexed and listed as kept.')
+        if getattr(self, "kept", None):
+            print('  KEPT as primary sources by "keep_sources" although a rule would leave them out - %d:'
+                  % len(self.kept))
+            for p, why in self.kept:
+                print("     %s" % p)
+                print("         (%s)" % why)
         if self.excluded_stub:
             print("  NO TEXT LAYER (scan without OCR, or a stub) - %d:" % len(self.excluded_stub))
             for p in self.excluded_stub:

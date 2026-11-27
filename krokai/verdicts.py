@@ -50,7 +50,9 @@ __all__ = ["ORDER", "DANGEROUS", "CLEAN", "UNCHECKABLE", "LABEL", "MEANING", "MA
 # target reads as documentation and teaches nothing.
 SIX_CAUSES = (
     "the source was never downloaded - the address beside the quotation names a file you do "
-    "not have (when the address layer can prove this, the verdict is NO_SOURCE_ON_DISK)",
+    "not have (when the address layer can prove this, the verdict is NO_SOURCE_ON_DISK) - or it is "
+    "on disk and the corpus LEFT IT OUT as our own writing (the corpus build lists those files with "
+    "the reason; `keep_sources` in casefile.json keeps a primary source a rule caught)",
     "the source on disk is a different EDITION - revised, renumbered or superseded since the "
     "quotation was taken; see the revision report",
     "the corpus COPY is damaged or incomplete - no text layer, a PICTURE PAGE (a scan, a photo or a "

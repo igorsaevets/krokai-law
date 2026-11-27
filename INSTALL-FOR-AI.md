@@ -153,9 +153,10 @@ python ~/tools/krokai/krokai check
 Read the output before you summarise it:
 
 - **Corpus of 0 files** → a path is wrong. Fix `casefile.json`; do not report results.
-- **Files excluded as derived** → the tool thinks some of the user's own analysis is in `law/`. If it
-  is right, move the file. **If it is wrong — if it excluded a real statute — say so loudly** and fix
-  the pattern. A wrongly excluded source is invisible from then on.
+- **Files excluded as derived** → the tool thinks some of the user's own analysis is in `law/`; each
+  file carries its reason. If it is right, move the file. **If it is wrong — if it excluded a real
+  statute — say so loudly** and name the file in `"keep_sources"` in `casefile.json`. A wrongly
+  excluded source is invisible from then on.
 - **Everything `NOT_FOUND`** → almost always an empty or wrong corpus, not a document full of
   fabrications. Check before alarming anyone.
 

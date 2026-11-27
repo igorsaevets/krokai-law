@@ -79,7 +79,8 @@ def corpus_for(cfg, quiet=True):
     from .fetch import superseded_paths
     return Corpus(cfg.source_dirs, skip_dirs=set(cfg["skip_dirs"]),
                   cache_dir=cfg.cache, quiet=quiet, sentinel=SENTINELS,
-                  superseded=superseded_paths(cfg.root))
+                  superseded=superseded_paths(cfg.root),
+                  keep=cfg.get("keep_sources") or (), keep_root=cfg.root)    # K091: the user's lever
 
 
 def _is_tool_output(path):
@@ -950,9 +951,17 @@ def write_report(res, cfg, out_dir, lang="en"):
     md += facts_mod.report_md(res.get("facts"))                   # K046
 
     if c.excluded_derived:
+        dwhy = getattr(c, "derived_why", {})                          # K091: the reason, per file
         md += ["## Excluded from the corpus as our own derived text", "",
-               "If a primary source is in this list, fix the pattern - do not stay silent.", ""]
-        md += ["* `%s`" % os.path.relpath(p, cfg.root) for p in c.excluded_derived] + [""]
+               'A primary source in this list? Name it in `"keep_sources"` in casefile.json (a file name or a '
+               "glob) - it is then indexed and listed below as kept. A quotation of a file left out here comes "
+               "back NOT_FOUND.", ""]
+        md += ["* `%s`%s" % (os.path.relpath(p, cfg.root), " - %s" % dwhy[p] if dwhy.get(p) else "")
+               for p in c.excluded_derived] + [""]
+    if getattr(c, "kept", None):
+        md += ['## Kept as primary sources by `"keep_sources"`', "",
+               "A rule would have left these out; casefile.json keeps them.", ""]
+        md += ["* `%s` - %s" % (os.path.relpath(p, cfg.root), why) for p, why in c.kept] + [""]
     if c.excluded_stub:
         md += ["## Corpus files with no text layer", "",
                "A scan without OCR, or a stub. A quotation from these yields a FALSE miss. "
@@ -1041,6 +1050,9 @@ def write_report(res, cfg, out_dir, lang="en"):
                "editions": res.get("editions") or {},
                "corpus_files": len(c.paths),
                "corpus_derived": [os.path.relpath(p, cfg.root) for p in c.excluded_derived],
+               "corpus_derived_why": {os.path.relpath(p, cfg.root): w                      # K091
+                                      for p, w in getattr(c, "derived_why", {}).items()},
+               "corpus_kept": [{"file": os.path.relpath(p, cfg.root), "why": w} for p, w in getattr(c, "kept", [])],
                "corpus_no_text_layer": [os.path.relpath(p, cfg.root) for p in c.excluded_stub],
                "ocr_layers": [dict(f, file=os.path.relpath(p, cfg.root))
                               for p, f in (c.ocr_files() if hasattr(c, "ocr_files") else [])],

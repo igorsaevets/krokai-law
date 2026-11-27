@@ -7152,7 +7152,9 @@ def suite_k018b_printed_pages(tmp):
     # the corpus indexes) reads «… (BIA 2026) 297», PyMuPDF «297» alone - `read_pdf` asks both
     HDR = "Cite as 27 I&N Dec. 296 (BIA 2026)"
     dec = os.path.join(law, "Matter-of-Fixture-27-IN-Dec-500.pdf")
-    make(dec, [["296", "Matter of FIXTURE", S1] + fill("first"),
+    # K091: a file NAMED as an I&N decision must print a decision's caption line, or the corpus leaves it out as a
+    # summary under the decision's name - this fixture printed none until then (E-1069's face).
+    make(dec, [["296", "Matter of FIXTURE", "In Visa Petition Proceedings", S1] + fill("first"),
                [HDR, (500, "297"), S2] + fill("second"),
                [S3] + fill("third"),
                [HDR, (500, "299"), S4] + fill("fourth"),
@@ -8581,6 +8583,130 @@ def suite_k025_copies(tmp):
        rcd == 0 and "COPIES DISAGREE, tiers A+B: 1" in outd, "exit %s: %s" % (rcd, outd[-300:]))
 
 
+def suite_k091_derived(tmp):
+    """K091 (2026-11-27): which file in a sources folder is a primary source. A word of the derived list counts only
+    as a WORD of the name (the «our-» inside «hour-» / «Hosseinpour-» dropped a regulation and a decision on a real
+    shelf); a file NAMED as an I&N decision whose head prints none of a decision's caption lines (a model's summary
+    was that shelf's only copy of 19 I&N Dec. 593) is left out with its reason; `keep_sources` in casefile.json
+    keeps a primary source a rule caught - never a stamped tool output - and the build lists it. Before: the
+    summary's words came back VERIFIED, and the console said «fix the pattern» with no setting that reached it."""
+    import json
+    import re as _re
+    import subprocess as _sp
+    from krokai.corpus import DERIVED_DEFAULT
+    from krokai.readers import DECISION_UNMET
+    from krokai.run import SENTINELS
+    from krokai.verdicts import CLEAN
+
+    drx = _re.compile(DERIVED_DEFAULT, _re.I)
+    keep_names = ["uscis-policy-memorandum-2019.pdf", "8USC-1101-footnotes.md", "federal-reporter-F3d.pdf",
+                  "34CFR-600.2-clock-hour-definition.md", "Matter-of-Hosseinpour-15-I-N-Dec-191-BIA-1975.pdf",
+                  "SEVP-four-year-rule.md"]
+    drop_names = ["OUR-ANALYSIS-of-part-214.md", "notes.md", "case-strategy.md", "draft-brief-v3.docx",
+                  "memo-to-client.docx", "summary-of-Matter-of-X.md", "конспект-решения.md", "наша-позиция.md"]
+    ok("k091: a word of the derived list counts only as a word of a name - «hour-», «Hosseinpour-», «memorandum», "
+       "«footnotes», «reporter» do not trip it",
+       not [n for n in keep_names if drx.search(n)], str([n for n in keep_names if drx.search(n)]))
+    ok("k091: our own writing is still caught by its name (OUR-, notes, strategy, draft, memo, summary, конспект, "
+       "наша-)", not [n for n in drop_names if not drx.search(n)], str([n for n in drop_names if not drx.search(n)]))
+
+    root = os.path.join(tmp, "k091m")
+    law, case = os.path.join(root, "law"), os.path.join(root, "case")
+    os.makedirs(law)
+    os.makedirs(case)
+
+    def casefile(keep):
+        d = {"bank": "QUOTE-BANK.md", "queue": "QUOTE-QUEUE.md", "library_index": "law/INDEX.md",
+             "sources": ["law"], "drafts": [{"tier": "A", "label": "filed", "path": "case"}],
+             "citation_packs": ["us-immigration", "us-federal"]}
+        if keep is not None:
+            d["keep_sources"] = keep
+        io.open(os.path.join(root, "casefile.json"), "w", encoding="utf-8").write(json.dumps(d))
+
+    def put(name, text):
+        io.open(os.path.join(law, name), "w", encoding="utf-8").write(text)
+
+    def fill(tag, n=8):
+        return " ".join("The fixture provision %s number %d governs the record before the officer in full."
+                        % (tag, k) for k in range(n))
+
+    S = {"hour": "A clock hour for the fixture program means a period of fifty to sixty minutes of class each week.",
+         "dec": "The respondent did not show that the fixture visa was issued before the statutory date had passed.",
+         "mesa": "The applicant for admission bears the burden to prove that the fixture exclusion does not apply.",
+         "sum": "The Commissioner held that a fixture church must prove ownership and control of the fixture branch.",
+         "pm": "An officer weighs every positive and negative fixture factor in the totality of the circumstances.",
+         "our": "We think the fixture rule says something entirely different from what the agency now applies."}
+    put("34CFR-600.2-clock-hour-fixture.md", "# 34 CFR 600.2 Definitions\n\n%s\n%s\n" % (fill("h"), S["hour"]))
+    put("Matter-of-Fixpour-15-I-N-Dec-191-fixture.txt",
+        "Interim Decision #9911\n\nMATTER OF FIXPOUR\n\nIn Deportation Proceedings\n\nDecided by Board March 5, 1975"
+        "\n\nON BEHALF OF RESPONDENT: Pro se\nON BEHALF OF SERVICE: Trial Attorney\n\n%s\n%s\n" % (fill("d"), S["dec"]))
+    put("Matter-of-Fixmesa-12-I-N-Dec-432-fixture.txt",       # an OCR layer that misread «Decided» (the Mesa shape)
+        "Interim Decision #9912\n\nMATTER OF FIXMESA\n\nIn Exclusion Proceedings\n\nDeoicled by Board June 1, 1967"
+        "\n\n%s\n%s\n" % (fill("m"), S["mesa"]))
+    put("Matter-of-Fixsum-19-I-N-Dec-593-fixture.md",
+        "# Matter of Fixsum, 19 I&N Dec. 593 (Comm. 1988)\n\n## HEADNOTES & PRECEDENTIAL HOLDINGS\n\n%s\n\n"
+        "## FACTUAL SUMMARY & PROCEDURAL HISTORY\n\n%s\n\n## LEGAL ANALYSIS & RATIO DECIDENDI\n\n%s\n"
+        % (fill("s"), S["sum"], fill("t")))
+    put("chapter-8-discretionary-analysis-fixture.md",
+        "# Chapter 8 - Discretionary Analysis\n\n## A. Applicability\n\n%s\n\n%s\n" % (fill("p"), S["pm"]))
+    put("OUR-ANALYSIS-of-part-214-fixture.md", "%s\n%s\n" % (S["our"], fill("o")))
+    put("stamped-sidecar-fixture.md", "<!-- %s : extracted layer -->\n%s\n" % (SENTINELS[0], fill("x")))
+    io.open(os.path.join(case, "petition.md"), "w", encoding="utf-8").write(
+        "".join("Point %d says \"%s\".\n" % (k, s) for k, s in enumerate(S.values())))
+
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def run_check(tag):
+        out_dir = os.path.join(tmp, "k091o-" + tag)
+        p_ = _sp.run([sys.executable, "-m", "krokai", "check", "--dir", root, "--out", out_dir], cwd=repo, env=env,
+                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
+
+        def read(name):
+            f_ = os.path.join(out_dir, name)
+            return io.open(f_, encoding="utf-8").read() if os.path.exists(f_) else ""
+        res = json.loads(read("result.json") or "{}")
+        v = {}
+        for r in res.get("rows", []):
+            for key, s in S.items():
+                if s[:40] in (r.get("quote") or ""):
+                    v[key] = r.get("verdict")
+        return (p_.stdout or "") + (p_.stderr or ""), res, read("REPORT.md"), v
+
+    casefile(None)
+    out1, res1, rep1, v1 = run_check("plain")
+    der1 = [os.path.basename(p) for p in res1.get("corpus_derived", [])]
+    why1 = {os.path.basename(k): w for k, w in (res1.get("corpus_derived_why") or {}).items()}
+    ok("k091: a regulation and decisions whose names hold «our-» inside a word are indexed and verify; so does a "
+       "decision whose OCR misread «Decided» under its «In … Proceedings» caption (green paths)",
+       v1.get("hour") in CLEAN and v1.get("dec") in CLEAN and v1.get("mesa") in CLEAN, "%s | derived %s" % (v1, der1))
+    ok("k091: a summary under a decision's name is left out - its words come back NOT_FOUND, never VERIFIED - with "
+       "the reason, beside the name-rule and stamp reasons",
+       v1.get("sum") == "NOT_FOUND" and why1.get("Matter-of-Fixsum-19-I-N-Dec-593-fixture.md") == DECISION_UNMET
+       and "«analysis»" in why1.get("chapter-8-discretionary-analysis-fixture.md", "")
+       and "stamped" in why1.get("stamped-sidecar-fixture.md", "") and v1.get("our") == "NOT_FOUND",
+       "%s | why %s" % (v1, why1))
+    ok("k091: the console and REPORT.md name the lever (`keep_sources`) and each file's reason; «fix the pattern» "
+       "is gone", 'Name it in "keep_sources"' in out1 and DECISION_UNMET in out1 and "fix the pattern" not in out1
+       and '`"keep_sources"`' in rep1 and "Matter-of-Fixsum-19-I-N-Dec-593-fixture.md` - its name cites" in rep1,
+       out1[:1500])
+
+    casefile(["*discretionary-analysis*", "law/Matter-of-Fixsum-19-I-N-Dec-593-fixture.md",
+              "stamped-sidecar-fixture.md"])
+    out2, res2, rep2, v2 = run_check("kept")
+    der2 = [os.path.basename(p) for p in res2.get("corpus_derived", [])]
+    kept2 = {os.path.basename(k["file"]) for k in res2.get("corpus_kept", [])}
+    ok("k091: `keep_sources` keeps a primary source the name rule caught (by a glob) and one the decision test "
+       "caught (by its path) - both verify, both are listed as kept",
+       v2.get("pm") in CLEAN and v2.get("sum") in CLEAN and kept2 == {"chapter-8-discretionary-analysis-fixture.md",
+                                                                      "Matter-of-Fixsum-19-I-N-Dec-593-fixture.md"}
+       and "KEPT as primary sources" in out2 and "## Kept as primary sources" in rep2, "%s | kept %s" % (v2, kept2))
+    ok("k091: `keep_sources` never keeps this toolkit's own stamped output, nor a file it does not name",
+       "stamped-sidecar-fixture.md" in der2 and "OUR-ANALYSIS-of-part-214-fixture.md" in der2
+       and v2.get("our") == "NOT_FOUND", "derived %s | %s" % (der2, v2))
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if root not in sys.path:
@@ -8623,6 +8749,7 @@ def main():
         suite_k092_exhibit_ids(tmp)
         suite_k045_exhibit_list(tmp)
         suite_k047_reading_list(tmp)
+        suite_k091_derived(tmp)
         suite_k061b_judge(tmp)
         suite_k094_condition_cuts(tmp)
         suite_word_diff()

@@ -1144,6 +1144,37 @@ def zone_table(path, at, cache_dir=None):
     return zones, ""
 
 
+# 🔴 K091 (2026-11-27): A FILE NAMED AS A DECISION THAT DOES NOT READ AS ONE. On a copy of a real matter's law
+# shelf the only file under «…-19-I-N-Dec.-593-…» was a 6.4 KB summary a model wrote («FACTUAL SUMMARY &
+# PROCEDURAL HISTORY», «LEGAL ANALYSIS & RATIO DECIDENDI»), indexed as the decision: a quotation of its words
+# came back VERIFIED - the failure this tool exists to catch. The name is the user's CLAIM; the head is the
+# evidence, read the way K018c reads it: a published I&N decision prints its caption - a «Decided … <year>»
+# line, an «In … Proceedings» line, or a counsel / charge / panel line (EOIR's own copy of that decision opens
+# «Interim Decision #3052 … In Visa Petition Proceedings … Decided by Commissioner March 15, 1988»). Of 44 files
+# on that shelf named as an I&N decision, two printed none of the three - the summary and a saved catalogue
+# page («NOT-A-FILE-Google-Books-…») - and all 42 real decisions printed one (an OCR layer that misread
+# «Decided» still prints «In Exclusion Proceedings»). Not a test for summaries in general: «SUMMARY»,
+# «ANALYSIS», «BACKGROUND» head sections of 14-19 official files each on the same shelf.
+_NAME_INDEC_RE = re.compile(r"(?<![A-Za-z])I[-_ .&]*N[-_ .]*Dec(?![a-z])", re.I)
+_PROCEEDINGS_RE = re.compile(r"(?im)^[ \t>*_#]*In[ \t]+[A-Za-z][A-Za-z \t]{0,40}?Proceedings\b")
+DECISION_UNMET = ("its name cites an I&N decision and its text does not read as one - no «Decided … <year>» line, "
+                  "no «In … Proceedings» caption, no counsel / charge / panel line in its head (a summary, or a "
+                  "saved page, under the decision's name)")
+
+
+def decision_claim_unmet(path, cache_dir=None):
+    """K091: DECISION_UNMET when the file's NAME cites an I&N decision («…-19-I-N-Dec.-593-…») and its own head
+    prints none of a published decision's caption lines; '' otherwise - and '' without reading the file when the
+    name cites no I&N decision."""
+    if not _NAME_INDEC_RE.search(os.path.basename(path)):
+        return ""
+    raw = read_any(path, cache_dir)
+    head = (raw if isinstance(raw, str) else "")[:ZONE_HEAD]
+    if _DECIDED_RE.search(head) or _PROCEEDINGS_RE.search(head) or _OPENS_RE.search(head):
+        return ""
+    return DECISION_UNMET
+
+
 def no_text_layer(path, cache_dir=None):
     """True when a PDF is a scan with no OCR, or a stub page.
 
