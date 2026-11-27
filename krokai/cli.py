@@ -339,10 +339,16 @@ def cmd_quote(a):
         print("  found in: %s" % os.path.relpath(where, cfg.root))
         # K018: the PDF page the words stand on - the file's own page index; K018b: and the page
         # the source PRINTS (a reprint's own numbers, a GPO text's page markers), or why not
-        from .verify import page_of
+        from .verify import page_of, zone_of
         pg = page_of(text, where, corpus)
         if pg:
             print("  %s" % pg["label"])
+        # K018c: the zone of a decision - the headnote, the opinion, a separate opinion - or why unknown
+        zn = zone_of(text, where, corpus)
+        if zn:
+            print("  %s" % zn["label"])
+            if zn["advisory"]:
+                print("  🟡 %s." % zn["advisory"])
     if detail:
         print("  %s" % detail)
     # K024: a match in an OCR text layer is what an OCR engine read, not what the page says.

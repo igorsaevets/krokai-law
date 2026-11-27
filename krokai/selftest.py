@@ -7238,6 +7238,182 @@ def suite_k018b_printed_pages(tmp):
        str([(r.get("verdict"), r.get("page")) for r in (r2, r4, rx)]) + " || " + out[-300:])
 
 
+def suite_k018c_zones(tmp):
+    """K018c (2026-11-27): the ZONE of a decision the words stand in - the headnote above the opinion (EOIR adds it
+    when it publishes the decision), the opinion, a separate (dissenting / concurring) opinion - or «zone unknown» and
+    why. A headnote-only match carries an advisory, never a verdict; `wrong_speaker` asks the zone, so a dissent's
+    words are WRONG_SPEAKER however far below its heading, and a «dissenting» in a majority's citation no longer
+    flags the majority. Before: a headnote quoted as the Board's words and a dissent quoted as the majority passed."""
+    import json
+    import subprocess as _sp
+    from krokai import readers as R
+    from krokai import verify as V
+    from krokai.normalize import alnum as _al
+    from krokai.corpus import Corpus
+    from krokai.verdicts import CLEAN
+
+    root = os.path.join(tmp, "k018cm")
+    law, case = os.path.join(root, "law"), os.path.join(root, "case")
+    os.makedirs(law)
+    os.makedirs(case)
+    io.open(os.path.join(root, "casefile.json"), "w", encoding="utf-8").write(json.dumps({
+        "bank": "QUOTE-BANK.md", "queue": "QUOTE-QUEUE.md", "library_index": "law/INDEX.md",
+        "sources": ["law"], "drafts": [{"tier": "A", "label": "filed", "path": "case"}],
+        "citation_packs": ["us-immigration", "us-federal"]}))
+
+    def fill(tag, n=6):
+        return " ".join("The Board weighed fixture point %s number %d on the record as a whole and found it plain."
+                        % (tag, k) for k in range(n))
+
+    HN = "A respondent who files a late fixture motion must show a change in the fixture circumstances of the case."
+    BOTH = "The fixture rule applies to every motion that is filed after the regulatory deadline has passed."
+    OPN = "The record shows that the respondent never received the notice that set the fixture deadline."
+    CITX = "A motion to reopen that rests on new evidence must explain why the evidence was not available before."
+    DIS = "The majority overlooks that the fixture deadline was never served on the respondent at any address."
+    d1 = os.path.join(law, "99-IN-Dec-100-fixture-zone.txt")
+    io.open(d1, "w", encoding="utf-8").write(
+        "Cite as 99 I&N Dec. 100 (BIA 2026)          Interim Decision #9901\n\nMatter of FIXTURE-ZONE, Respondent\n\n"
+        "Decided November 2, 2026\n\nU.S. Department of Justice\nBoard of Immigration Appeals\n\n(1) %s\n(2) %s\n\n"
+        "FOR RESPONDENT: Pro se\nFOR THE DEPARTMENT OF HOMELAND SECURITY: Assistant Chief Counsel\n\n"
+        "BEFORE: Board Panel: ALPHA, BETA, and GAMMA, Board Members. Dissenting Opinion: GAMMA,\nBoard Member.\n\n"
+        "ALPHA, Board Member:\n\n%s\n%s\n%s\n%s\nSee Matter of Sample, 98 I&N Dec. 50, 52 (BIA 2025) (Delta, "
+        "dissenting). %s\n%s\n\nORDER: The appeal is dismissed.\n\nDISSENTING OPINION: Gamma, Board Member\n\n"
+        "I respectfully dissent.\n\n%s\n%s\n"
+        % (HN, BOTH, fill("a"), BOTH, fill("b"), OPN, CITX, fill("c"), fill("d", 20), DIS))
+    HN2 = "An alien who departs while a fixture appeal is pending abandons the appeal for every fixture purpose."
+    OPN2 = "The respondent left the country while the appeal was pending and the record leaves no doubt of it."
+    d2 = os.path.join(law, "98-IN-Dec-200-fixture-old.txt")
+    io.open(d2, "w", encoding="utf-8").write(
+        "Interim Decision #9902\n\nMATTER OF FIXTURE-OLD\n\nIn Deportation Proceedings\n\nDecided by Board March 5, "
+        "1975\n\n%s\n\nON BEHALF. OP RESPONDENT: Pro se\nON BEHALF OF SERVICE: Trial Attorney\n\n%s\n%s\n"
+        % (HN2, fill("e"), OPN2))
+    HN3 = "A petition for a fixture worker is denied when the employer cannot show the ability to pay the wage."
+    d3 = os.path.join(law, "97-IN-Dec-300-fixture-regional.txt")
+    io.open(d3, "w", encoding="utf-8").write(
+        "Interim Decision #9903\n\nMATTER OF FIXTURE-REGIONAL\n\nIn Visa Petition Proceedings\n\nDecided by "
+        "Regional Commissioner May 1, 1974\n\n%s\n\nThis matter is before the Regional Commissioner on "
+        "certification. %s\n" % (HN3, fill("f")))
+    CITY = "A fixture statute that names a deadline must be read with the notice that starts the deadline running."
+    st = os.path.join(law, "8USC-9999-fixture-statute.txt")
+    io.open(st, "w", encoding="utf-8").write(
+        "8 U.S.C. 9999 - fixture provision.\n\n%s\nSee Sample v. Fixture, 1 F.4th 2 (Delta, dissenting). %s\n%s\n"
+        % (fill("g"), CITY, fill("h")))
+    co = os.path.join(law, "Fixture-v-USCIS-4th-Cir.txt")
+    io.open(co, "w", encoding="utf-8").write(
+        "PUBLISHED\nUNITED STATES COURT OF APPEALS\nFOR THE FOURTH CIRCUIT\n\nArgued: October 29, 2009\nDecided: "
+        "January 13, 2010\n\nThe court reviewed Matter of Sample, 98 I&N Dec. 50 (BIA 2025).\n\nFOR THE PETITIONER: "
+        "Counsel of record\n\n%s\n" % fill("i"))
+    DIS4 = "The respondent's long residence and his family here outweigh one stale fixture conviction by far."
+    AGX = "On review I conclude that the Board applied the correct fixture standard to the respondent's case."
+    d4 = os.path.join(law, "96-IN-Dec-400-fixture-attorney-general.txt")
+    io.open(d4, "w", encoding="utf-8").write(
+        "Interim Decision #9904\n\nMATTER OF FIXTURE-REVIEW\n\nDecided by Board August 2, 1974\nDecided by Attorney "
+        "General March 10, 1976\n\n%s\n\nCHARGE:\nOrder: Act of 1952 - Section 241(a)(2) - remained longer\n\n"
+        "BEFORE THE BOARD\n\n%s\n\nAlpha Beta, Chairman, Dissenting:\n\n%s\n%s\n\nBEFORE THE ATTORNEY GENERAL\n\n"
+        "%s\n%s\n" % (fill("j"), fill("k"), DIS4, fill("l"), AGX, fill("m")))
+    nd = os.path.join(law, "Fixture-appeals-unit-order.txt")
+    io.open(nd, "w", encoding="utf-8").write(
+        "DEPARTMENT OF FIXTURES - APPEALS UNIT\n\nDecided March 2, 2020\n\nFOR THE APPLICANT: Counsel of record\n\n"
+        "%s\n" % fill("n"))
+    corp = Corpus([law], quiet=True)
+    z4 = corp.zones(d4)[0] or []
+    ok("k018c: a file holding a Board decision, a dissent and the Attorney General's review - «Name, Chairman, "
+       "Dissenting:» opens the dissent, «BEFORE THE ATTORNEY GENERAL» ends it; no I&N mark, no decision",
+       [k for _s, k, _l in z4] == ["headnote", "opinion", "opinion", "separate", "opinion"]
+       and V.check(DIS4, corp)[0] == "WRONG_SPEAKER" and V.check(AGX, corp)[0] == "VERIFIED"
+       and (V.zone_of(AGX, d4, corp) or {}).get("zone") == "opinion" and corp.zones(nd) == (None, ""), str(z4))
+    zs = corp.zones(d1)[0] or []
+    ok("k018c: a decision's zones are read from its own lines - the headnote from the top, the opinion from the "
+       "first counsel line, a dissent from its heading (the panel line's «Dissenting Opinion: GAMMA» is no heading)",
+       [k for _s, k, _l in zs] == ["headnote", "opinion", "separate"] and zs[1][2] == "FOR RESPONDENT: Pro se"
+       and zs[2][2] == "DISSENTING OPINION: Gamma, Board Member", str(zs))
+
+    def zq(q, path=d1):
+        v, w, d = V.check(q, corp)
+        return v, w, d, V.zone_of(q, path, corp)
+    hn, both, opn, dis, citx = zq(HN), zq(BOTH), zq(OPN), zq(DIS), zq(CITX)
+    ok("k018c: words that stand only in the headnote - verdict unchanged, zone «headnote», the advisory",
+       hn[0] == "VERIFIED" and (hn[3] or {}).get("zone") == "headnote" and hn[3]["advisory"] == V.HEADNOTE_ONLY
+       and hn[3]["label"] == "zone: the headnote only, not the opinion", str(hn))
+    ok("k018c: words the headnote repeats from the opinion are the opinion's - the FIRST occurrence (in the "
+       "headnote) does not decide; the opinion alone gets no «also» and no advisory",
+       (both[3] or {}).get("zone") == "opinion" and both[3]["zones"] == ["headnote", "opinion"]
+       and both[3]["label"] == "zone: the opinion; also in the headnote" and not both[3]["advisory"]
+       and opn[0] == "VERIFIED" and (opn[3] or {}).get("label") == "zone: the opinion" and not opn[3]["advisory"],
+       str((both, opn)))
+    txt = corp.text_of(d1)
+    gap = txt.index(DIS) - txt.rindex("dissent", 0, txt.index(DIS))
+    ok("k018c: a dissent's words far below its heading - out of the 1 400-character window - are WRONG_SPEAKER "
+       "by the zone, and the zone names the heading",
+       gap > 1400 and dis[0] == "WRONG_SPEAKER" and "DISSENTING OPINION: Gamma, Board Member" in dis[2]
+       and (dis[3] or {}).get("zone") == "separate"
+       and dis[3]["label"] == "zone: a separate opinion only - «DISSENTING OPINION: Gamma, Board Member»",
+       "gap %d %s" % (gap, dis))
+    city = V.check(CITY, corp)
+    ok("k018c: a majority's words right after a citation «(Delta, dissenting)» verify in a decision whose zones are "
+       "known; the window still flags the same shape where no zones are known",
+       citx[0] == "VERIFIED" and (citx[3] or {}).get("zone") == "opinion" and city[0] == "WRONG_SPEAKER",
+       str((citx, city)))
+    z2 = corp.zones(d2)[0] or []
+    hn2, opn2 = V.zone_of(HN2, d2, corp), V.zone_of(OPN2, d2, corp)
+    ok("k018c: an old decision whose counsel line the OCR bent («ON BEHALF. OP RESPONDENT») opens its opinion there",
+       len(z2) == 2 and z2[1][2] == "ON BEHALF. OP RESPONDENT: Pro se" and (hn2 or {}).get("zone") == "headnote"
+       and (opn2 or {}).get("zone") == "opinion", str((z2, hn2, opn2)))
+    hn3 = V.zone_of(HN3, d3, corp)
+    ok("k018c: a decision with no counsel, charge or panel line is «zone unknown» with the reason, never a guess",
+       corp.zones(d3) == (None, R.ZONE_NONE) and (hn3 or {}).get("zone") is None
+       and hn3["label"] == "zone unknown - %s" % R.ZONE_NONE and not hn3["advisory"], str(hn3))
+    ok("k018c: a statute and a court of appeals opinion («Decided:» with a colon, I&N Dec. cited in its body) are "
+       "not decisions - no zone line at all",
+       V.zone_of(CITY, st, corp) is None and corp.zones(co) == (None, "") and corp.zones(st) == (None, ""),
+       str((corp.zones(co), corp.zones(st))))
+    across = V.zone_of(BOTH + " FOR RESPONDENT: Pro se", d1, corp)
+    good = _al(txt)
+    ok("k018c: words across the line that opens the opinion are «zone unknown»; zones that do not add up to the "
+       "indexed text are not named",
+       (across or {}).get("zone") is None and across["unknown"] == V.ZONE_ACROSS
+       and R.zone_table(d1, good)[0] is not None and R.zone_table(d1, good[:-5] + "zzzzz") == (None, R.ZONE_BROKEN),
+       str(across))
+
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    def cli(*args):
+        p_ = _sp.run([sys.executable, "-m", "krokai"] + list(args), cwd=repo, env=env,
+                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=240)
+        return p_.returncode, (p_.stdout or "") + (p_.stderr or "")
+
+    q1, q2, q3 = cli("quote", "--dir", root, HN)[1], cli("quote", "--dir", root, OPN)[1], \
+        cli("quote", "--dir", root, CITY)[1]
+    ok("k018c: `quote` prints the zone and, for a headnote-only match, the advisory - and neither for an opinion "
+       "match or a statute",
+       "zone: the headnote only, not the opinion" in q1 and "🟡 HEADNOTE ONLY:" in q1
+       and "zone: the opinion" in q2 and "HEADNOTE ONLY" not in q2
+       and "zone: " not in q3 and "zone unknown" not in q3, q1[:500] + " || " + q2[:300])
+    io.open(os.path.join(case, "petition.md"), "w", encoding="utf-8").write(
+        'Under Matter of Fixture-Zone, "%s"\n\nUnder Matter of Fixture-Zone, "%s"\n\nUnder Matter of Fixture-Zone, '
+        '"%s"\n' % (HN, OPN.replace("received the notice", "received, the notice"), DIS))
+    out_dir = os.path.join(tmp, "k018co")
+    _rc, out = cli("check", "--dir", root, "--out", out_dir)
+
+    def read(name):
+        p_ = os.path.join(out_dir, name)
+        return io.open(p_, encoding="utf-8").read() if os.path.exists(p_) else ""
+    rows = (json.loads(read("result.json") or "{}")).get("rows", [])
+    rh = next((r for r in rows if "late fixture motion" in r["quote"]), {})
+    rp = next((r for r in rows if "received, the notice" in r["quote"]), {})
+    md, rl = read("REPORT.md"), read("READING-LIST.md")
+    ok("k018c: result.json carries the zone, REPORT.md's «Found in» names it, READING-LIST.md notes the "
+       "headnote-only quotation as a fact and names the zone beside the source",
+       (rh.get("zone") or {}).get("zone") == "headnote" and rh.get("verdict") in CLEAN
+       and rp.get("verdict") == "PUNCTUATION" and (rp.get("zone") or {}).get("zone") == "opinion"
+       and "99-IN-Dec-100-fixture-zone.txt` · zone: the opinion" in md
+       and "the words stand only in the decision's headnote" in rl
+       and "99-IN-Dec-100-fixture-zone.txt`, zone: the headnote only, not the opinion:" in rl,
+       str([(r.get("verdict"), r.get("zone")) for r in (rh, rp)]) + " || " + out[-300:])
+
+
 def suite_k096_picture_pages(tmp):
     """K096 (2026-11-26): a page of an INDEXED PDF whose words are in a picture or drawn as shapes
     while its text layer holds little more than a label there is named - in the build output, REPORT.md,
@@ -8439,6 +8615,7 @@ def main():
         suite_k030_edge_ellipsis(tmp)
         suite_k018_pages(tmp)
         suite_k018b_printed_pages(tmp)
+        suite_k018c_zones(tmp)
         suite_k093_short_pdf(tmp)
         suite_k096_picture_pages(tmp)
         suite_k097_split_quotation(tmp)

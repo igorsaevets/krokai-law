@@ -35,6 +35,7 @@ __all__ = ["MissingReader", "read_any", "read_pdf", "read_docx", "no_text_layer"
            "is_broken_type3", "text_layer", "ocr_label", "ocr_pages_cell", "OCR_PAGE_SHARE",
            "OCR_CHECK", "LAYER_VERSION", "page_table", "page_check", "PAGES_VERSION",
            "page_table_facts", "printed_span", "marker_table", "MARK_LEAD", "MARK_BROKEN",
+           "zone_table", "ZONE_NONE", "ZONE_BROKEN",
            "pdf_text_verdict", "STAMP_BAND", "PICTURE_COVER", "picture_pages", "picture_pages_cell",
            "PICTURE_ADVICE", "BODY_TEXT_MIN", "SHAPES_MIN"]
 
@@ -1072,6 +1073,75 @@ def marker_table(path, at):
     if lead and labels[1].isdigit() and int(lead.group(1)) == int(labels[1]) - 1:
         labels[0] = lead.group(1)
     return ends, labels, ""
+
+
+# 🔴 K018c (2026-11-27): THE ZONES OF A DECISION. A brief that quotes «Matter of X, 21 I&N Dec. 296, 299»
+# may be quoting the HEADNOTE - the summary above the opinion, which EOIR adds when it prepares a decision
+# for publication (EOIR Policy Manual, Part III, ch. 1.4: «Headnotes are added, and an I&N Decision
+# citation is assigned») - or a DISSENT; both verify, because the words are in the file. Where they stand
+# inside the decision is read from the lines the reporter prints between the parts. Measured on a copy of
+# a real matter's law shelf (43 I&N Dec. files, `private` K018c census): the opinion opens at the first
+# counsel / charge / panel line under the «Decided …» line - «FOR RESPONDENT:», «ON BEHALF OF SERVICE:»
+# (and the OCR's «ON BEHALF* OF», «PNITHONER»), «CHARGE:», «BEFORE:», «BY:», an Attorney General's
+# «BEFORE THE ATTORNEY GENERAL» - and a separate opinion at its own heading («DISSENTING OPINION: …»,
+# «CONCURRING AND DISSENTING OPINION: …»). A Regional Commissioner's decision prints none of those
+# lines: «zone unknown», never a guess. A file is read as a decision only by its own head («Interim
+# Decision» or «I&N Dec.», and a «Decided … <year>» line) - never by its name, which is the user's.
+# The boundaries are cut in the text `read_any` returns and must add up to the indexed text (K018's
+# discipline): the letters and digits of the pieces, cleaned as the corpus cleans a file, joined, ARE
+# the indexed text - or no zone is named.
+# The census's own corrections, each a file of that shelf: the decision line also reads «Designated by Commissioner …»
+# and «Decided October 20, 20101» (a footnote number on the year); a court of appeals writes «Decided: <date>» with
+# a colon (and cites I&N Dec. in its body - the mark may not be required ABOVE the decision line: two Board reprints
+# print «Interim Decision #…» below it); a file holding a Board
+# decision and the Attorney General's review of it opens each part with «BEFORE THE BOARD» / «BEFORE THE ATTORNEY
+# GENERAL», and a dissent printed between them ends there; a separate opinion is also headed «CONCURRING IN PART AND
+# DISSENTING IN PART:» and «Maurice A. Roberts, Chairman, Dissenting:». The panel line's own «Dissenting Opinion:
+# HEILMAN» (mixed case, mid-line) is not a heading.
+ZONE_HEAD = 6000      # characters of a file's head that hold the marks of a decision and its opening line
+_DEC_MARK_RE = re.compile(r"Interim\s+Decision|I\.?\s*&\s*N\.?\s+Dec\b", re.I)
+_DECIDED_RE = re.compile(r"(?m)^[ \t>*_#]*(?:Decided|Designated)\b(?![ \t]*:)[^\n]{0,80}?(?:1[89]|20)\d\d")
+_MAIN_RE = r"BEFORE[ \t]+THE[ \t]+(?:BOARD|ATTORNEY[ \t]+GENERAL)\b"
+_OPENS_RE = re.compile(
+    r"(?m)^[ \t>*_#]*(?:CHARGES?[ \t]*:|ON[ \t]+BEHALF\b|FOR[ \t]+[A-Z][A-Z .,'&/-]{2,90}:|BEFORE[ \t]*:|"
+    r"B[Yy][ \t]*:|%s)" % _MAIN_RE)
+_PARTS_RE = re.compile(
+    r"(?m)^[ \t>*_#]*(?:(?P<main>%s)|(?:CONCURRING|DISSENTING)\b[A-Z ,]{0,60}?(?:OPINION\b|:)|"
+    r"[A-Z][A-Za-z.' -]{1,60}(?:,[ \t]*[A-Z][A-Za-z .'-]{1,40})?,[ \t]*(?:Dissenting|Concurring)"
+    r"(?:[ \t]+in[ \t]+[Pp]art)?[ \t]*:[ \t]*$)[^\n]*" % _MAIN_RE)
+ZONE_NONE = "no counsel, charge or panel line under the decision's caption marks where the opinion begins"
+ZONE_BROKEN = "its zones do not add up to the indexed text"
+
+
+def zone_table(path, at, cache_dir=None):
+    """K018c: `(zones, why)` for the file `path` whose indexed letters-and-digits text is `at`:
+    `zones` - `[(start, kind, line)]` in `at`, kind «headnote» (from the top: caption and headnote),
+    «opinion» (from the line that opens it) or «separate» (a dissenting or concurring opinion, from its
+    heading), `line` the source's own line there. `(None, "")` for a file that is not a decision;
+    `(None, why)` for a decision whose zones cannot be told."""
+    raw = read_any(path, cache_dir)
+    raw = raw if isinstance(raw, str) else ""
+    head = raw[:ZONE_HEAD]
+    dec = _DECIDED_RE.search(head)
+    if not dec or not _DEC_MARK_RE.search(head):
+        return None, ""
+    opens = _OPENS_RE.search(head, dec.end())
+    if not opens:
+        return None, ZONE_NONE
+    eol = raw.find("\n", opens.start())
+    cuts = [(opens.start(), "opinion", raw[opens.start():eol if eol >= 0 else len(raw)])]
+    cuts += [(m.start(), "opinion" if m.group("main") else "separate", m.group(0))
+             for m in _PARTS_RE.finditer(raw, eol if eol >= 0 else len(raw))]
+    bounds = [0] + [c for c, _k, _l in cuts] + [len(raw)]
+    al = [alnum(normalise(strip_scrape_artifacts(raw[a:b]))) for a, b in zip(bounds, bounds[1:])]
+    if "".join(al) != at:
+        return None, ZONE_BROKEN
+    zones, n = [(0, "headnote", "")], len(al[0])
+    for (_c, kind, line), piece in zip(cuts, al[1:]):
+        line = " ".join(line.replace("*", " ").split())
+        zones.append((n, kind, line[:100]))
+        n += len(piece)
+    return zones, ""
 
 
 def no_text_layer(path, cache_dir=None):

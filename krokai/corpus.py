@@ -28,7 +28,7 @@ import re
 
 from .normalize import alnum, dehyph
 from .readers import (corpus_text, no_text_layer, MIN_TEXT_LAYER, text_layer, page_table,  # noqa: F401
-                      pdf_text_verdict, picture_pages, page_table_facts, marker_table)
+                      pdf_text_verdict, picture_pages, page_table_facts, marker_table, zone_table)
 
 __all__ = ["Corpus", "walk", "copy_print", "COPY_SHARE", "COPY_LEN"]
 
@@ -597,6 +597,33 @@ class Corpus(object):
             except Exception as exc:                              # noqa: BLE001 - advisory
                 memo[path] = (None, None, "%s while its page markers were read" % type(exc).__name__)
         return memo[path]
+
+    # -- K018c: the zone of a decision a match stands in -------------------------------------------
+    def zones(self, path):
+        """K018c: `(zones, why)` for an indexed decision (`readers.zone_table` - `[(start, kind, line)]`
+        in its letters-and-digits text), `(None, why)` when its zones cannot be told, `(None, "")` for a
+        file that is not a decision. Asked per file on first need, like the pages."""
+        span = self.aspan(path)
+        if span is None:
+            return None, ""
+        memo = self.__dict__.setdefault("_zones", {})
+        if path not in memo:
+            try:
+                memo[path] = zone_table(path, self.ajoined[span[0]:span[1]], self.__dict__.get("cache_dir"))
+            except Exception as exc:                              # noqa: BLE001 - advisory
+                memo[path] = (None, "%s while its zones were read" % type(exc).__name__)
+        return memo[path]
+
+    def zone_at(self, path, offset):
+        """K018c: `(kind, line)` of the zone holding the `joined` offset `offset` of `path`; None when
+        the file has no zones (`wrong_speaker` asks it for every occurrence)."""
+        zs = self.zones(path)[0]
+        if not zs:
+            return None
+        k = self._index_of[path]
+        a = len(alnum(self.texts[k][:max(0, offset - self.starts[k])]))
+        z = zs[bisect.bisect_right([s for s, _k, _l in zs], a) - 1]
+        return z[1], z[2]
 
     # -- lookup ---------------------------------------------------------------------------------
     def _owner(self, i):

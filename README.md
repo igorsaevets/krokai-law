@@ -278,6 +278,15 @@ two sequences, a page outside the numbered ones - the line says `printed page un
 is the page the file prints: a reprint of the reporter prints the reporter's page, a slip opinion
 its own, so compare a pincite with it only when the file is the reporter's print.
 
+**The zone of a decision.** In an I&N Dec. decision `quote` and `check` also name the part the words
+stand in: `zone: the opinion`; `zone: the headnote only, not the opinion` - the summary EOIR adds above
+the opinion when it publishes the decision (its Policy Manual, Part III, ch. 1.4: «Headnotes are
+added»), so a pincite should rest on the opinion's own words; or `zone: a separate opinion only -
+«DISSENTING OPINION: …»`, which also makes the quotation `WRONG_SPEAKER`. The parts are read from the
+lines the decision prints between them - the first counsel, charge or panel line under the caption, a
+dissent's heading - and a decision that prints none is `zone unknown` and why. A file is read as a
+decision only by its own head; court opinions are not zoned.
+
 Beside `REPORT.md`, every `check` writes `READING-LIST.md`: each quotation of the filed documents with
 the sentence that uses it and the passage of the source around it, flagged ones first. Whether a
 verbatim quotation actually *supports* its sentence is a question of reading, so the clean ones carry

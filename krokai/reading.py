@@ -203,8 +203,10 @@ _OBLIGE = re.compile(r"\b(must|shall|required|requires|mandatory|entitled|always
                      re.I)
 _EDGE_OPEN = re.compile(r"^[\s\"'“(\[]*(?:\.\.\.|…)")
 _EDGE_CLOSE = re.compile(r"(?:\.\.\.|…)[\s\"'”.)\]]*$")
-PRIORITY = ("ocr", "speaker", "modal", "limiter", "omitted", "uncited", "digits")
-NAMES = {"ocr": "an OCR layer", "speaker": "another speaker", "modal": "may against must",
+# K018c: «headnote» - the words stand only in a decision's headnote (`verify.zone_of`): not the authority's own words,
+# so it ranks with «another speaker».
+PRIORITY = ("ocr", "speaker", "headnote", "modal", "limiter", "omitted", "uncited", "digits")
+NAMES = {"ocr": "an OCR layer", "speaker": "another speaker", "headnote": "the headnote only", "modal": "may against must",
          "limiter": "a limiter next to the words", "omitted": "words left out", "uncited": "no citation beside it",
          "digits": "numbers"}
 
@@ -220,6 +222,9 @@ def signals(row, pas, claims):
     if row.get("verdict") == "WRONG_SPEAKER":
         out.append(("speaker", "the source recites someone here (a commenter, a party, a dissent)%s"
                     % ((": " + _flat(row.get("detail"))[:200]) if row.get("detail") else "")))
+    if (row.get("zone") or {}).get("zone") == "headnote":
+        out.append(("headnote", "the words stand only in the decision's headnote - the summary added above the opinion "
+                    "when it was published - and nowhere in the opinion itself"))
     pm = _PERMIT.search(q)
     if pm:
         for c in claims:
@@ -311,7 +316,8 @@ def _source_lines(e, lang="en"):
     r, pas = e["row"], e["passage"]
     where = r.get("where") or ""
     page = (r.get("page") or {}).get("label") if isinstance(r.get("page"), dict) else ""
-    head = "**In the source** - `%s`%s:" % (where, (", " + page) if page else "")
+    zone = (r.get("zone") or {}).get("label") if isinstance(r.get("zone"), dict) else ""   # K018c
+    head = "**In the source** - `%s`%s:" % (where, "".join(", " + x for x in (page, zone) if x))
     if not pas:
         if e["flagged"]:
             return ["**In the source:** no passage shown - the quoted words are not in a source as written. "

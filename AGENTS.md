@@ -131,6 +131,11 @@ reprint's own number, a GPO text's `[[Page 41300]]` marker - and it is named onl
 proves it; `printed page unknown` is an answer, not a gap to fill from the file name or by counting
 pages. A slip opinion prints its own pages, not the reporter's.
 
+**A headnote is not the holding.** In an I&N Dec. decision `quote` and `check` name the zone of a match:
+`zone: the opinion`, `zone: the headnote only, not the opinion` (the summary EOIR adds when it publishes
+the decision), or `zone: a separate opinion only` (a dissent or a concurrence - also `WRONG_SPEAKER`).
+Quote the opinion's own words; `zone unknown` is an answer, never a reason to guess which part you are in.
+
 **When you hunt what the string test cannot see, do not filter to the flagged list.** The
 classes a byte comparison structurally misses — a headnote quoted under the opinion's pincite, a
 quotation that is verbatim yet does not support the proposition, right words under the wrong

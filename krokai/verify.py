@@ -594,11 +594,31 @@ def wrong_speaker(quote_n, corpus):
     A rulemaking preamble quotes objections it then rejects. A decision recites the losing party's
     argument. Quoting those as the authority's holding is a real and common error - and it is
     advisory here, not blocking, because quoting a commenter *and saying so* is legitimate.
+
+    🔴 K018c: in a decision whose zones are known (`Corpus.zone_at`), a span inside a dissenting or
+    concurring opinion is that opinion's, however far below its heading it stands. The 1 400-character
+    window saw only its first lines: on a copy of a real matter's law shelf it reached 50 of the 345
+    sentences of the 6 separate opinions in 4 decisions.
     """
-    for path, off in corpus.find_all_pos(quote_n, cap=8):
+    hits = corpus.find_all_pos(quote_n, cap=8)
+    zones = [corpus.zone_at(p, o) if hasattr(corpus, "zone_at") else None for p, o in hits]
+    # the words of a majority opinion that a dissent quotes back are the majority's (as in `zone_of`)
+    own = any(z and z[0] == "opinion" for z in zones)
+    for (path, off), z in zip(hits, zones):
+        if z and z[0] == "separate" and not own:
+            # ... also when the majority prints them with a line-break hyphen the dissent's quotation lacks (Blas:
+            # «neces- sity»): the exact search sees only the dissent, the letters-and-digits search both - ask it
+            zo = zone_of(quote_n, path, corpus)
+            if not (zo and "opinion" in zo["zones"]):
+                return path, z[1]
         head = corpus.before(path, off, 1400)
         last_speaker = last_response = None
         for m in SPEAKER_RE.finditer(head):
+            # K018c: where the zones are known, the zone - not a nearby «dissent» word - says whose words these
+            # are. In the opinions of that shelf every such word was a citation «(Pauley, dissenting)», the panel
+            # line or a reference to the dissent: 44 sentences of the majorities flagged for it.
+            if z is not None and m.group(0).startswith("dissent"):
+                continue
             last_speaker = m.start()
         for m in RESPONSE_RE.finditer(head):
             last_response = m.start()
@@ -1057,6 +1077,92 @@ def _page_ranges(pairs):
     return ", ".join(("%d" % a) if a == b else ("%d-%d" % (a, b)) for a, b in pairs)
 
 
+def _occurrences(quote, where, corpus, cap=6):
+    """`[(start, end)]` - each occurrence of the quotation's words in the letters-and-digits text of
+    the file `where` (an ellipsis quotation from its first piece to its last), at most `cap`; [] when
+    they are not all in it. K018's search, moved out of `page_of` unchanged by K018c so the zone of a
+    match is read at the same places as its page."""
+    span = corpus.aspan(where)
+    if span is None:
+        return []
+    lo, hi = span
+    aj = corpus.ajoined
+    found = []
+    for keep in (False, True):
+        n = normalise(prepare_quote(quote, keep_tags=keep))
+        pieces = [alnum(p) for p in (ellipsis_parts(n, 10) if ELLIPSIS_RE.search(n) else [n])]
+        pieces = [p for p in pieces if p]
+        if not pieces:
+            continue
+        i = aj.find(pieces[0], lo, hi)
+        while i >= 0 and len(found) < cap:
+            end = i + len(pieces[0])
+            for p in pieces[1:]:
+                j = aj.find(p, end, hi)
+                end = -1 if j < 0 else j + len(p)
+                if end < 0:
+                    break
+            if end < 0:
+                break                 # not after this start - so not after any later start either
+            found.append((i - lo, end - lo))
+            i = aj.find(pieces[0], i + 1, hi)
+        if found:
+            break
+    return found
+
+
+# 🔴 K018c: the zone answer every surface prints (`readers.zone_table` reads the zones). One label per
+# match: «the opinion» wins whenever ANY occurrence stands there - a holding the headnote repeats is the
+# opinion's; «the headnote only» and «a separate opinion only» are said only when NO occurrence is in
+# the opinion. Advisory: the verdict and the exit code never move (a dissent's words already get
+# WRONG_SPEAKER from `wrong_speaker`, which asks the same zones).
+ZONE_ACROSS = "the words run across a line where one part of the decision ends and the next begins"
+HEADNOTE_ONLY = ("HEADNOTE ONLY: the words stand in the headnote - the summary added above the opinion when the "
+                 "decision was published - and nowhere in the opinion itself; a pincite to the decision should "
+                 "rest on the opinion's own words")
+
+
+def zone_of(quote, where, corpus, cap=6):
+    """K018c - in which zone of a decision the quotation's words stand. None when `where` is not a
+    decision (no zone line at all) or the words are not all in it; otherwise a dict: `zone` -
+    «opinion» / «headnote» / «separate» / None (unknown), `zones` - the zone of each occurrence,
+    `line` - the separate opinion's heading, `unknown` - why no zone is named, `label` - the line every
+    surface prints, `advisory` - the headnote line (`HEADNOTE_ONLY`) or ""."""
+    if not where or not hasattr(corpus, "zones"):
+        return None
+    zs, why = corpus.zones(where)
+    if zs is None and not why:
+        return None
+    found = _occurrences(quote, where, corpus, cap)
+    if not found:
+        return None
+    out = {"zone": None, "zones": [], "line": "", "unknown": why, "label": "zone unknown - %s" % why,
+           "advisory": ""}
+    if zs is None:
+        return out
+    starts = [s for s, _k, _l in zs]
+    per = []
+    for s, e in found:
+        a = bisect.bisect_right(starts, s) - 1
+        b = bisect.bisect_right(starts, max(s, e - 1)) - 1
+        per.append(zs[a] if a == b else None)
+    out["zones"] = [z[1] if z else "across" for z in per]
+    kinds = set(out["zones"])
+    if "opinion" in kinds:
+        out.update(zone="opinion", unknown="", label="zone: the opinion%s"
+                   % ("; also in the headnote" if "headnote" in kinds else ""))
+    elif kinds == {"headnote"}:
+        out.update(zone="headnote", unknown="", advisory=HEADNOTE_ONLY,
+                   label="zone: the headnote only, not the opinion")
+    elif "separate" in kinds and "across" not in kinds:
+        line = next(z[2] for z in per if z and z[1] == "separate")
+        out.update(zone="separate", unknown="", line=line,
+                   label="zone: a separate opinion only - «%s»" % line)
+    else:
+        out.update(unknown=ZONE_ACROSS, label="zone unknown - %s" % ZONE_ACROSS)
+    return out
+
+
 def page_of(quote, where, corpus, cap=6):
     """K018 - which page(s) of the PDF `where` the quotation's words stand on.
 
@@ -1089,32 +1195,7 @@ def page_of(quote, where, corpus, cap=6):
         mends, mlabels, mwhy = corpus.marker_ends(where)
         if mends is None and not mwhy:
             return None                       # a text source without page markers names no page
-    span = corpus.aspan(where)
-    if span is None:
-        return None
-    lo, hi = span
-    aj = corpus.ajoined
-    found = []
-    for keep in (False, True):
-        n = normalise(prepare_quote(quote, keep_tags=keep))
-        pieces = [alnum(p) for p in (ellipsis_parts(n, 10) if ELLIPSIS_RE.search(n) else [n])]
-        pieces = [p for p in pieces if p]
-        if not pieces:
-            continue
-        i = aj.find(pieces[0], lo, hi)
-        while i >= 0 and len(found) < cap:
-            end = i + len(pieces[0])
-            for p in pieces[1:]:
-                j = aj.find(p, end, hi)
-                end = -1 if j < 0 else j + len(p)
-                if end < 0:
-                    break
-            if end < 0:
-                break                 # not after this start - so not after any later start either
-            found.append((i - lo, end - lo))
-            i = aj.find(pieces[0], i + 1, hi)
-        if found:
-            break
+    found = _occurrences(quote, where, corpus, cap)
     if not found:
         return None
     if not pdf:
