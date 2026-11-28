@@ -41,7 +41,7 @@ build-backend = "hatchling.build"
 [project]
 name = "krokai"
 dynamic = ["version"]
-description = "Check every quotation in a document against the actual source text on your own disk. A grounded citation does not prove the quote is real."
+description = "AI citation and quote checker for legal documents: checks every quotation in a draft against the actual source text on your own disk. A grounded citation does not prove the quote is real."
 readme = "README.md"
 # 3.11 (K003, 2026-11-23): 3.9 and 3.10 are end-of-life; GitHub's ubuntu-latest has no 3.9 to test
 # on; PyMuPDF 2.x and today's onnxruntime start at 3.11; pip on 3.9 cannot use the Windows
@@ -53,7 +53,8 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Igor Saevets" }]
 keywords = ["citations", "hallucination", "legal", "verification", "quotes", "llm", "fact-checking",
-            "citation-checker", "immigration", "uscis", "legal-tech"]
+            "citation-checker", "immigration", "uscis", "legal-tech", "citation-verification",
+            "case-law", "ai-hallucination", "eb2-niw", "eb1a"]
 
 classifiers = [
     "Development Status :: 4 - Beta",

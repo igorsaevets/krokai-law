@@ -1,15 +1,16 @@
-# KrokAI Law
+# KrokAI Law — AI citation and quote checker for legal documents
 
 [![selftest](https://github.com/igorsaevets/krokai-law/actions/workflows/selftest.yml/badge.svg)](https://github.com/igorsaevets/krokai-law/actions/workflows/selftest.yml)
 
 **Check every quotation in your legal draft against the real source — before you file it.**
 
-AI drafts a USCIS petition, an RFE response or a brief in minutes. Some of what it puts in quotation
-marks is not in the source: a sentence the court never wrote, a regulation with its condition quietly
-dropped, the right words under the wrong citation. **KrokAI Law** is a free, open-source command-line
-tool that compares every quoted passage in your documents with the text of the law you downloaded,
-and tells you which quotations do not match and how. It runs on your computer: the draft is not
-uploaded anywhere, and no AI model decides the verdict.
+An AI assistant — ChatGPT, Claude, Gemini — drafts a USCIS petition, an RFE response or a brief in
+minutes. Some of what it puts in quotation marks is not in the source (an AI "hallucination"): a
+sentence the court never wrote, a regulation with its condition quietly dropped, the right words under
+the wrong citation. **KrokAI Law** is a free, open-source command-line tool that compares every quoted
+passage in your documents with the text of the law you downloaded, and tells you which quotations do
+not match and how. It runs on your computer: the draft is not uploaded anywhere, and no AI model
+decides the verdict.
 
 *Русская версия: [README.ru.md](README.ru.md)*
 
@@ -22,7 +23,7 @@ uploaded anywhere, and no AI model decides the verdict.
 
 ---
 
-## The problem
+## The problem: hallucinated quotations in legal filings
 
 **Invented quotations look exactly like real ones.** A model was asked to open a federal regulation
 and quote it. It opened the right page, attached a correct, working link — and invented the text of
@@ -58,7 +59,7 @@ decision; a clause dropped from the middle of a quotation; ten quotations marked
 stopped one comma before the words that limited them (`..., but do not include instances where...`). A tired person at eleven at night makes
 these, and neither a spell-checker nor a re-read catches them.
 
-## The solution
+## The solution: check every quotation against its source
 
 1. **Keep the law you rely on in one folder.** Statutes, regulations, Policy Manual chapters,
    decisions — `krokai fetch` downloads them from the publisher byte for byte, with no AI model between
@@ -150,6 +151,50 @@ krokai check
 Or send your AI assistant this repository's link and say *"install this for me, including the
 hooks"* — [INSTALL-FOR-AI.md](INSTALL-FOR-AI.md) is written for the assistant. Every install method,
 and how to update: [below](#install-in-about-a-minute).
+
+## Questions people ask
+
+### How do I check whether ChatGPT or Claude invented a quotation in my legal draft?
+
+Put the sources the draft relies on in one folder — `krokai fetch` and `krokai fetch-precedent`
+download them from the publisher — and run `krokai check`. A quotation whose words are in none of
+your sources comes back `not found`; one that was changed or cut short is named by what happened to
+it (`operator`, `truncated condition` and the others above). It works the same whoever wrote the
+draft, a model or a person.
+
+### Is there a free AI citation checker for legal documents?
+
+This one: free and open source (MIT), no account, no API key, and it runs on your computer. It
+checks the quoted words against the sources you keep. Whether a case exists and is still good law is
+a citator's job (Westlaw's KeyCite, Lexis's Shepard's).
+
+### Does it catch fake case citations?
+
+Partly. `krokai fetch-precedent` keeps a downloaded decision only if the party, subject and court you
+name appear in its text, so a case that does not exist cannot be fetched into your sources, and a
+quotation attributed to it comes back `not found` — unless the words are real and come from another
+decision you have (the [example above](#example-the-quotation-the-ninth-circuit-sanctioned) is that
+case). It does not look a citation up in a case-law database.
+
+### I write my EB-2 NIW or EB-1A petition with ChatGPT or Claude. What does this check?
+
+Every quotation in the draft — of the USCIS Policy Manual, 8 C.F.R., the INA, AAO and BIA decisions —
+against the copy of that source on your disk, with the page each word stands on. It does not judge
+the petition's merits or whether the evidence meets the criteria.
+
+### Does my draft leave my computer?
+
+No. The check runs locally. Only the optional second-opinion commands (`krokai review`,
+`krokai check --judge`) send text out, to the models you choose, and an outbound gate stops
+credentials and personal identifiers first.
+
+### How is it different from Westlaw Quick Check or BriefCatch RealityCheck?
+
+Both are paid services that check a brief against their own databases: Westlaw compares case
+quotations with Westlaw Edge, BriefCatch checks cited cases and federal statutes. KrokAI Law is free,
+runs on your computer and checks the copies you keep — the Policy Manual, regulations and agency
+decisions as well as court opinions. More in
+[what already exists](#things-that-already-exist-and-how-this-differs).
 
 ---
 
