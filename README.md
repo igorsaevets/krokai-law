@@ -4,22 +4,26 @@
 
 **Check every quotation in your legal draft against the real source — before you file it.**
 
+<div itemscope itemtype="https://schema.org/SoftwareApplication">
+
 An AI assistant — ChatGPT, Claude, Gemini — drafts a USCIS petition, an RFE response or a brief in
 minutes. Some of what it puts in quotation marks is not in the source (an AI "hallucination"): a
 sentence the court never wrote, a regulation with its condition quietly dropped, the right words under
-the wrong citation. **KrokAI Law** is a free, open-source command-line tool that compares every quoted
+the wrong citation. <span itemprop="description"><strong itemprop="name">KrokAI Law</strong> is a free, open-source command-line tool that compares every quoted
 passage in your documents with the text of the law you downloaded, and tells you which quotations do
 not match and how. It runs on your computer: the draft is not uploaded anywhere, and no AI model
-decides the verdict.
+decides the verdict.</span>
 
-*Русская версия: [README.ru.md](README.ru.md)*
+*Русская версия: [README.ru.md](README.ru.md) · 简体中文: [README.zh-CN.md](README.zh-CN.md)*
 
 | | |
 |---|---|
 | **The pain** | an invented or altered quotation looks exactly like a real one, and the person who signs pays for it |
 | **The fix** | every quotation compared word for word with the statute, regulation, Policy Manual chapter or decision on your disk |
 | **The result** | a list of what to fix, with the page each word stands on, before anything is filed |
-| **The price** | free, MIT licence, no account, no API key |
+| **The price** | free, <a itemprop="license" href="https://github.com/igorsaevets/krokai-law/blob/main/LICENSE">MIT licence</a>, no account, no API key |
+
+</div>
 
 ---
 

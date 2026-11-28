@@ -1,0 +1,28 @@
+# GitHub reads this file and shows "Cite this repository" in the sidebar (docs: About CITATION files).
+# No `version:` and no `date-released:` on purpose: the version has one home, krokai/__init__.py,
+# and a second copy here would go stale on the next release (selftest suite_docs checks both keys
+# are absent).
+cff-version: 1.2.0
+message: "If you use KrokAI Law in your work, please cite it as below."
+type: software
+title: "KrokAI Law (krokai): AI citation and quote checker for legal documents"
+abstract: >-
+  A free, open-source command-line tool that checks every quotation in a legal
+  document drafted with AI word for word against the statutes, regulations,
+  USCIS Policy Manual chapters and case law kept on your own disk. It runs
+  offline, and no AI model decides the verdict.
+authors:
+  - family-names: Saevets
+    given-names: Igor
+repository-code: "https://github.com/igorsaevets/krokai-law"
+url: "https://pypi.org/project/krokai/"
+license: MIT
+keywords:
+  - legal citation checker
+  - quotation verification
+  - AI hallucination
+  - legal tech
+  - USCIS
+  - immigration law
+  - EB-2 NIW
+  - EB-1A

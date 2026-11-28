@@ -6,7 +6,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this pr
 <!-- KROKAI-SELFTEST: DISCUSSES-PLACEHOLDERS - this log quotes the defects it records, and one
      of them is an unreplaced clone-URL placeholder. The self-test's placeholder check honours
      this declaration for a document that declares it, and refuses the declaration outright to
-     README.md, README.ru.md, INSTALL.md and INSTALL-FOR-AI.md - the files a reader copies
+     README.md, README.ru.md, README.zh-CN.md, INSTALL.md and INSTALL-FOR-AI.md - the files a reader copies
      commands out of. Exempting a declared file is auditable; exempting a filename is the
      allowlist mistake that shipped a mangled LICENSE in a sibling project. -->
 

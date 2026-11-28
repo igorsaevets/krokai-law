@@ -1464,7 +1464,7 @@ def suite_docs(root):
     """
     from krokai.redact import SECRET_PATTERNS, PII_PATTERNS
 
-    docs = [f for f in ("README.md", "README.ru.md", "FEATURES.md", "INSTALL.md",
+    docs = [f for f in ("README.md", "README.ru.md", "README.zh-CN.md", "FEATURES.md", "INSTALL.md",
                         "INSTALL-FOR-AI.md", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md")
             if os.path.exists(os.path.join(root, f))]
     if not docs:
@@ -1485,14 +1485,18 @@ def suite_docs(root):
     # the guard written to prevent it. Two things fixed it, and the second matters more than the
     # first: the word is optional now, AND every document must be shown to carry BOTH counts, so a
     # sentence the regex cannot see fails loudly instead of being silently uncovered.
+    # K073c (2026-11-28): README.zh-CN.md writes «10 种凭据检测器 … 12 种个人身份信息检测器» - the
+    # measure word 种 stands where English has «detectors for», so it is the optional prefix here.
     CLASS = {"credentials": "secret", "personal identifiers": "pii",
-             "учётных данных": "secret", "персональных данных": "pii"}
+             "учётных данных": "secret", "персональных данных": "pii",
+             "凭据": "secret", "个人身份信息": "pii"}
     want = {"secret": len(SECRET_PATTERNS), "pii": len(PII_PATTERNS)}
 
     claims = []          # (file, class, claimed)
     for f, t in text.items():
-        for m in re.finditer(r"(\d+)\s+(?:detectors?\s+|детекторов\s+)?(?:for\s+)?"
-                             r"(credentials|personal identifiers|учётных данных|персональных данных)",
+        for m in re.finditer(r"(\d+)\s+(?:detectors?\s+|детекторов\s+|种\s*)?(?:for\s+)?"
+                             r"(credentials|personal identifiers|учётных данных|персональных данных"
+                             r"|凭据|个人身份信息)",
                              t):
             claims.append((f, CLASS[m.group(2)], int(m.group(1))))
 
@@ -1502,7 +1506,7 @@ def suite_docs(root):
 
     # Coverage, not just correctness: a document that states one count and not the other has a
     # sentence this check cannot see, and an unseen sentence is where the stale number lives.
-    for f in ("README.md", "README.ru.md", "FEATURES.md"):
+    for f in ("README.md", "README.ru.md", "README.zh-CN.md", "FEATURES.md"):
         if f not in text:
             continue
         got = {k for g, k, _ in claims if g == f}
@@ -1564,7 +1568,7 @@ def suite_docs(root):
     # And the declaration is refused outright for the three files a reader copies commands out of.
     # A document may say "I discuss placeholders"; the install instructions may not.
     DECLARE = "KROKAI-SELFTEST: DISCUSSES-PLACEHOLDERS"
-    NEVER = ("README.md", "README.ru.md", "INSTALL.md", "INSTALL-FOR-AI.md")
+    NEVER = ("README.md", "README.ru.md", "README.zh-CN.md", "INSTALL.md", "INSTALL-FOR-AI.md")
     abuse = [f for f in NEVER if DECLARE in text.get(f, "")]
     ok("docs: the placeholder exemption is refused to the files people copy commands from",
        not abuse, ", ".join(abuse))
@@ -1573,11 +1577,47 @@ def suite_docs(root):
     ok("docs: no placeholder survives in a shipped document", not holes, ", ".join(holes))
 
     # -- a link on the front page that 404s is the dead-button failure again -----------------------
-    if "README.md" in text:
-        rel = set(re.findall(r"\]\((?!https?:|\.\./)([^)#\s]+)", text["README.md"]))
+    READMES = ("README.md", "README.ru.md", "README.zh-CN.md")
+    for f in READMES:
+        if f not in text:
+            continue
+        rel = set(re.findall(r"\]\((?!https?:|\.\./)([^)#\s]+)", text[f]))
         missing = sorted(r for r in rel if not os.path.exists(os.path.join(root, r)))
-        ok("docs: every relative link in README.md resolves to a file", not missing,
+        ok("docs: every relative link in %s resolves to a file" % f, not missing,
            ", ".join(missing))
+
+    # -- an anchor that names no heading is a dead link too ----------------------------------------
+    # K073c (2026-11-28): README.zh-CN.md links its own sections by Chinese anchors, which nobody
+    # types correctly by eye. GitHub builds a heading's anchor the way github-slugger does: lower
+    # case, every character that is not a letter, a digit, a space, a hyphen or an underscore dropped
+    # (full-width punctuation such as «：» and «，» included), each space -> «-», a repeated heading
+    # «-1», «-2». Checked against the ids of the live pages (K073b: `questions-people-ask`; the
+    # Cyrillic and Chinese ids arrive as raw UTF-8). Headings inside a code fence are not headings.
+    def _anchors(t):
+        ids, seen, fence = set(), {}, False
+        for line in t.splitlines():
+            if line.lstrip().startswith("```"):
+                fence = not fence
+                continue
+            m = None if fence else re.match(r"#{1,6}\s+(.+?)\s*#*\s*$", line)
+            if m:
+                base = re.sub(r"[^\w\- ]", "", m.group(1).strip().lower()).replace(" ", "-")
+                n = seen.get(base, 0)
+                seen[base] = n + 1
+                ids.add(base if n == 0 else "%s-%d" % (base, n))
+        ids.update(re.findall(r"""<a\s+(?:id|name)=["']([^"']+)["']""", t))
+        return ids
+
+    for f in READMES:
+        if f not in text:
+            continue
+        dead = []
+        for target, frag in re.findall(r"\]\(((?:[\w.\-]+\.md)?)#([^)\s]+)\)", text[f]):
+            page = target or f
+            if page in text and frag not in _anchors(text[page]):
+                dead.append((target + "#" + frag))
+        ok("docs: every #anchor link in %s names a heading that exists" % f, not dead,
+           ", ".join(dead))
 
     # -- the translation drifts, and it drifts in the direction that flatters ----------------------
     # 🔴 Measured: README.ru.md was two whole sections behind README.md - the second-opinion
@@ -1587,7 +1627,8 @@ def suite_docs(root):
     # people each version links to is not, and that set is exactly what went missing.
     if "README.md" in text and "README.ru.md" in text:
         def outward(t):
-            skip = ("github.com/igorsaevets/krokai-law", "keepachangelog", "semver.org")
+            # schema.org: the microdata item type (K073c), markup rather than a credited project.
+            skip = ("github.com/igorsaevets/krokai-law", "keepachangelog", "semver.org", "schema.org")
             return {u.rstrip("/.,)") for u in re.findall(r"https?://[^\s)\]]+", t)
                     if not any(s in u for s in skip)}
         en, ru = outward(text["README.md"]), outward(text["README.ru.md"])
@@ -1595,6 +1636,44 @@ def suite_docs(root):
            not (en - ru), "missing from README.ru.md: " + ", ".join(sorted(en - ru)))
         ok("docs: ...and cites nothing the English one does not",
            not (ru - en), "only in README.ru.md: " + ", ".join(sorted(ru - en)))
+        if "README.zh-CN.md" in text:
+            zh = outward(text["README.zh-CN.md"])
+            ok("docs: the Chinese README credits the same outside projects as the English one",
+               not (en - zh), "missing from README.zh-CN.md: " + ", ".join(sorted(en - zh)))
+            ok("docs: ...and the Chinese one cites nothing the English one does not",
+               not (zh - en), "only in README.zh-CN.md: " + ", ".join(sorted(zh - en)))
+
+    # -- structured data on the GitHub page: only what GitHub's sanitiser keeps --------------------
+    # K073c (2026-11-28), measured through GitHub's own renderer (`gh api markdown`, mode gfm):
+    # `<div itemscope itemtype=...>` and `itemprop` on span / strong / a survive; `<meta itemprop>`
+    # is dropped without a word; `<script type="application/ld+json">` is ESCAPED - its JSON shows on
+    # the page as text. So each README carries ONE SoftwareApplication item built on words the reader
+    # sees (Google: mark up visible content only), and neither failing form may appear.
+    for f in READMES:
+        if f not in text:
+            continue
+        t = text[f]
+        ok("docs: %s marks itself up as one SoftwareApplication with a visible name and description"
+           % f, t.count('itemtype="https://schema.org/SoftwareApplication"') == 1
+           and 'itemprop="name"' in t and 'itemprop="description"' in t
+           and t.count("<div") == t.count("</div>"), "item, name, description or a closing div missing")
+        bad = [tag for tag in ("<script", "<meta") if tag in t.lower()]
+        ok("docs: %s holds no <script> or <meta> (GitHub shows the first as text, drops the second)"
+           % f, not bad, ", ".join(bad))
+
+    # -- the citation file GitHub shows as «Cite this repository» -----------------------------------
+    # K073c (2026-11-28). The version has one home (krokai/__init__.py, equal to the newest CHANGELOG
+    # heading - checked above). CFF makes `version:` and `date-released:` optional; a copy here would
+    # be one release behind the day after the next tag, so both keys stay absent.
+    cff = os.path.join(root, "CITATION.cff")
+    if os.path.isfile(cff):
+        ckeys = set(re.findall(r"^([a-z][a-z-]*):", io.open(cff, encoding="utf-8").read(), re.M))
+        need = {"cff-version", "message", "title", "authors"}
+        ok("docs: CITATION.cff carries the keys the Citation File Format requires", need <= ckeys,
+           "missing: " + ", ".join(sorted(need - ckeys)))
+        ok("docs: CITATION.cff states no version and no release date (one home for the version)",
+           not (ckeys & {"version", "date-released"}), ", ".join(sorted(ckeys & {"version",
+                                                                                 "date-released"})))
 
 
 def suite_pipeline_samples():
