@@ -8394,6 +8394,162 @@ def suite_k045_exhibit_list(tmp):
        in out and "| File, not in the exhibit list | 0 |" in out, "rc %s %s" % (p.returncode, out[-500:]))
 
 
+def suite_k045d_dashless_ids(tmp):
+    """K045d (2026-11-28): an exhibit id written with no dash. Every reader had been measured on the filed I-485 petition
+    alone (dashes; K without); the same matter's I-140 letter writes «Exhibit O2» (926 times on a copy, two more of its
+    documents 975 and 1 335 times) and prints its list lines with a backslash before the dash (a Markdown export) -
+    krokai read none of it but the K series, and `check-exhibits` called 329 of the I-140 package's files «not cited»
+    (7 after). Seven rules: after the word the dash is optional (a range start excepted); a .md document reads as
+    CommonMark renders it; a dashless id continues a list the word opened; an id the list names is a reference; a
+    title row after a space counts in a run of 3+ such lines; `--exhibit O2` names an exhibit; one mention, one entry.
+    A BARE dashless token stays no id («O2», «B12», «Q4», «W2»)."""
+    import json
+    import subprocess as _sp
+    from krokai import exhibit_check as X
+    from krokai import facts as F
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    base = os.path.join(tmp, "k045d")
+    CYR_O = chr(0x41E)          # Cyrillic capital O - a look-alike of the Latin series letter
+    BS = chr(92)                # a backslash, built here - never typed into a fixture (ledger E-189 / E-1109)
+    ser = list(X.DEFAULT_SERIES) + ["O", "Q", "Y"]          # as `reconcile` adds the series a package declares
+
+    def touch(*parts, text=""):
+        p = os.path.join(base, *parts)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with io.open(p, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        return p
+
+    # --- rule 1: after the word the dash is optional; bare, or as a range start, it is not ---------------------------
+    got = [e for e, _m in X.text_ids("The award (Exhibit O2), the letters (Exhibits Y12-1), the memo (Ex. B7) and the "
+                                      "copy (Exhibit %s3)." % CYR_O)]
+    ok("k045d: after the word the dash is optional - «Exhibit O2», «Exhibits Y12-1» (part 1 of Y-12), «Ex. B7» and a "
+       "look-alike «Exhibit О3» are ids", got == ["O-2", "Y-12", "B-7", "O-3"], str(got))
+    got = X.ids_in_text("An O2 visa, a B12 form, Q4 2024 and a W2. Exhibit A 2019 tax return; Ex. 5.", ser)
+    ok("k045d: a BARE dashless token is no id («O2», «B12», «Q4», «W2» name visas, forms, quarters, tax forms - even in "
+       "a series in play), and after the word the letter and the number must touch («Exhibit A 2019»)",
+       got == set(), str(sorted(got)))
+    got = [e for e, _m in X.text_ids("EXHIBITS K1-K102 and Exhibits B1-B5")]
+    rr = X.range_ids("EXHIBITS K1-K102 and Exhibits B1-B5")
+    ok("k045d: a dashless id that a dash and a letter follow starts a RANGE, never an id of its own - «EXHIBITS K1-K102» "
+       "reads K-102 alone (a span over 50 is no range), «Exhibits B1-B5» is the range B-1 … B-5",
+       got == ["K-102"] and rr == {"B-%d" % k for k in range(1, 6)}, "%s / %s" % (got, sorted(rr)))
+
+    # --- rule 7: one mention, one entry -------------------------------------------------------------------------------
+    got = [e for e, _m in X.text_ids("See Exhibit K28 and K29.")]
+    ok("k045d: «Exhibit K28» is one entry although two readers see it (the word reads it now, the K reader always did); "
+       "«K29» after it is read once too", got == ["K-28", "K-29"], str(got))
+
+    # --- rule 3: the word governs a list ------------------------------------------------------------------------------
+    got = X.ids_in_text("The letters (Exhibits Y42, Y43a and Y44; Exhibit B-2 & C3). Exhibit Y12 and O1A approval; "
+                        "Exhibit Y13, H1B; Exhibit Y14, M3; Exhibit Y16, J1; Exhibit Y15 shows that Q2 grew.", ser)
+    ok("k045d: a dashless id joined to an id by «,» «and» «&» continues the list («Y43a», «Y44», «C3»); a visa «O1A» / "
+       "«H1B» (a capital after the number), a memoranda letter «M3», a code «J1» and an id after prose («shows that "
+       "Q2») do not", got == {"Y-42", "Y-43a", "Y-44", "B-2", "C-3", "Y-12", "Y-13", "Y-14", "Y-15", "Y-16"},
+       str(sorted(got)))
+
+    # --- rule 2: a .md document as CommonMark renders it --------------------------------------------------------------
+    raw = ("Exhibit O2 %s- Certified copy\n| a %s| b |\nC:%s%s-x and %s*bold%s* and C:%sdocs\n"
+           % (BS, BS, BS, BS, BS, BS, BS))
+    md, txt = touch("esc", "letter.md", text=raw), touch("esc", "letter.txt", text=raw)
+    got = X._read_text(md)
+    ok("k045d: a .md document reads as CommonMark renders it - an escaped dash or star is the character, an escaped "
+       "backslash escapes nothing, a backslash before a letter stays, an escaped «|» stays (a table cell's own "
+       "character); a .txt document reads as written",
+       got == "Exhibit O2 - Certified copy\n| a %s| b |\nC:%s-x and *bold* and C:%sdocs\n" % (BS, BS, BS)
+       and X._read_text(txt) == raw, repr(got))
+
+    # --- rule 5 (with rule 2): a list printed in lines -----------------------------------------------------------------
+    doc = touch("list", "letter.md", text=(
+        "# Exhibit List\n\n"
+        "Exhibit O1 %s- Award certificate\n"
+        "Exhibit O2 %s- Certified translation of the award\n\n"
+        "Exhibit G12 Letter from the laboratory director\n"
+        "Exhibit G13 Article in a national newspaper\n\n"
+        "Exhibit G14 “Prize of the year”, the citation\n"
+        "Exhibit G15 shows that the prize is national\n"
+        "The prize is described below.\n"
+        "Exhibit Q20 Letter from the first expert\n"
+        "Exhibit Q21 Letter from the second expert\n"
+        "That ends the letters.\n" % (BS, BS)))
+    got = [e for _n, e, _a in X.exhibit_list(X._read_text(doc), ser)[0]]
+    ok("k045d: list lines - «Exhibit O1 - …» behind an escaped dash, and among 3+ lines that open with an id (a blank line "
+       "does not break them) a title after a space («Exhibit G12 Letter from …», a quote too); not a lowercase sentence "
+       "in that run («G15 shows that …»), not a run of two («Q20», «Q21»)",
+       got == ["O-1", "O-2", "G-12", "G-13", "G-14"], str(got))
+
+    # --- rule 4 (with rules 1, 3, 7): a list cell, and the list's own ids are references -------------------------------
+    tab = "| Exhibit | Description |\n|---|---|\n| Y69, Y70 | Two letters |\n| K28 | Award |\n| **O2** | Copy |\n"
+    got = [e for _n, e, _a in X.exhibit_list(tab, ser)[0]]
+    ok("k045d: under a column headed «Exhibit» a dashless cell is an id cell - «Y69, Y70» lists both, «K28» once, "
+       "«**O2**» O-2", got == ["Y-69", "Y-70", "K-28", "O-2"], str(got))
+    pet = touch("red", "letter.md", text=(
+        "# Exhibit List\n\n| Exhibit | Description |\n|---|---|\n| Y69 | Letter from the director |\n\n"
+        "Exhibit O1 %s- Award certificate\nExhibit O2 %s- Certified translation\n\n"
+        "The award (Exhibit O1) and its translation (Exhibit %s2). The letters (Exhibits Y12, Y13). The press "
+        "(Exhibit Q9).\n" % (BS, BS, CYR_O)))
+    for parts in (("Exhibit O", "Exhibit O1 award.pdf"), ("Exhibit O", "Exhibit O2 translation.pdf"),
+                  ("Exhibit Y", "Exhibit Y12 letter.pdf"), ("Exhibit Y", "Exhibit Y13 letter.pdf"),
+                  ("Exhibit Y", "Exhibit Y69 letter.pdf")):
+        touch("red-ex", *parts)
+    r = X.reconcile([pet], [os.path.join(base, "red-ex")])
+    rep = "\n".join(r["report_lines"])
+    ok("k045d: check-exhibits on an I-140-style letter (dashless ids, an escaped list, a cell «Y69») matches every file; "
+       "«Exhibit Q9» with no file is CITED-NO-FILE; «Exhibits Y12, Y13» cites both",
+       {"O-1", "O-2", "Y-12", "Y-13", "Y-69"} <= r["matched"] and r["cited_no_file"] == {"Q-9"},
+       "matched %s · cited-no-file %s" % (sorted(r["matched"]), sorted(r["cited_no_file"])))
+    ok("k045d: an id only the list names (the cell «Y69») is a reference - its file is not «file exists, not cited» - "
+       "and the advisory section still says no sentence cites it",
+       r["file_no_cite"] == set() and r["listed_not_cited"] == ["Y-69"],
+       "file-no-cite %s · listed-not-cited %s" % (sorted(r["file_no_cite"]), r["listed_not_cited"]))
+    ok("k045d: a look-alike letter in a dashless id («Exhibit О2», a Cyrillic О) is read as O-2 and named",
+       rep.count("U+041E CYRILLIC CAPITAL LETTER O") == 1, rep[rep.find("LOOK-ALIKE"):][:300])
+
+    # --- green path through the CLI (E-1072) ----------------------------------------------------------------------
+    gpet = touch("green", "letter.md", text=(
+        "# Exhibit List\n\nExhibit O1 %s- Award certificate\nExhibit O2 %s- Certified translation\n"
+        "Exhibit Y12 %s- Letter from the lab\n\nThe award (Exhibit O1) and its translation (Exhibit O2). The lab "
+        "letter (Exhibits Y12, O1).\n" % (BS, BS, BS)))
+    for parts in (("Exhibit O", "Exhibit O1 award.pdf"), ("Exhibit O", "Exhibit O2 translation.pdf"),
+                  ("Exhibit Y", "Exhibit Y12 letter.pdf")):
+        touch("green-ex", *parts)
+    p = _sp.run([sys.executable, "-m", "krokai", "check-exhibits", "--petition", gpet, "--exhibits",
+                 os.path.join(base, "green-ex")], cwd=repo, env=env, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=240)
+    out = (p.stdout or "") + (p.stderr or "")
+    ok("k045d: green path through the CLI - an I-140-style letter (dashless ids, its list behind escaped dashes) and its "
+       "package: exit 0, all three files matched, the list found (3 ids), no file uncited, every list section 0",
+       p.returncode == 0 and "| Exhibits matched | 3 |" in out and "## EXHIBIT LIST — 3 ids listed" in out
+       and "not referenced in any petition document — 0" in out and "| Listed, never cited in a sentence | 0 |" in out
+       and "| Cited in a sentence, not in the exhibit list | 0 |" in out and "| File, not in the exhibit list | 0 |"
+       in out and "LOOK-ALIKE" not in out, "rc %s %s" % (p.returncode, out[-600:]))
+
+    # --- rule 6 and the facts layer -----------------------------------------------------------------------------------
+    ok("k045d: a fact sentence's «Exhibit O2» is an id, not a fact (its digit is blanked); `--exhibit O2` names exhibit "
+       "O-2 the way the letter writes it; «the O2 visa» names none",
+       "2" not in F._masked("as Exhibit O2 shows") and F.exhibit_id("O2") == "O-2"
+       and F.exhibit_id("Exhibit O2") == "O-2" and F.exhibit_id("the O2 visa") is None,
+       "%r %r %r" % (F._masked("as Exhibit O2 shows"), F.exhibit_id("O2"), F.exhibit_id("the O2 visa")))
+    root = os.path.join(base, "facts")
+    os.makedirs(os.path.join(root, "case"), exist_ok=True)
+    touch("facts", "law", "8CFR-204.md", text=(
+        "# 8 CFR 204.5 (fixture)\n\n(h) An alien of extraordinary ability must show sustained national acclaim.\n"))
+    touch("facts", "exhibits", "Exhibit O2 Award.md", text=(
+        "Northfield Institute awards the National Prize for Applied Physics on June 5, 2019.\n"))
+    touch("facts", "casefile.json", text=json.dumps({
+        "bank": "QUOTE-BANK.md", "queue": "QUOTE-QUEUE.md", "library_index": "law/INDEX.md", "sources": ["law"],
+        "drafts": [{"tier": "A", "label": "filed", "path": "case"}], "citation_packs": ["us-federal"],
+        "exhibits": ["exhibits"]}))
+    p = _sp.run([sys.executable, "-m", "krokai", "facts", "add", "--exhibit", "O2", "--from", "Northfield Institute",
+                 "--to", "June 5, 2019", "--dir", root], cwd=repo, env=env, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=240)
+    out = (p.stdout or "") + (p.stderr or "")
+    ok("k045d: `facts add --exhibit O2` (the id as the I-140 letter writes it) finds «Exhibit O2 Award» (dry run)",
+       p.returncode == 0 and "Exhibit O2 Award.md" in out and "exhibit : O-2" in out, out[:400])
+
+
 def suite_k093_short_pdf(tmp):
     """K093 (2026-11-26): a SHORT PDF (under MIN_TEXT_LAYER) that reads as a typeset document on
     every count - a typeset layer, no picture, a line in the page body - is INDEXED with the
@@ -9102,6 +9258,7 @@ def main():
         suite_k046_fact_bank(tmp)
         suite_k092_exhibit_ids(tmp)
         suite_k045_exhibit_list(tmp)
+        suite_k045d_dashless_ids(tmp)
         suite_k047_reading_list(tmp)
         suite_k047c_limiter_items(tmp)
         suite_k091_derived(tmp)

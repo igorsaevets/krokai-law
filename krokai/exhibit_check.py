@@ -19,6 +19,7 @@ cannot be read is now a LOUD report row, never a quiet zero.
 """
 from __future__ import annotations
 
+import bisect
 import collections
 import io
 import os
@@ -102,8 +103,18 @@ def _fold(ch):
 #  - «V-67-1» is part 1 of V-67: the old `(?![-–—\d])` refused the whole id - 3 filed copies «Cross Exhibit V-67-1 …»
 #    had no id and 56 mentions in the drafts were not read. A date «A-12-2024» stays refused (a digit after the part).
 #  - a letter of another script that looks Latin (LOOKALIKE) is read as the Latin one, and named.
+# 🔴 K045d (2026-11-28): after the word the dash is optional - «Exhibit O2», the letter and the number touching. Every
+# reader here had been measured on the filed I-485 petition alone (dashes; K without - `_K_RE`); the same matter's
+# I-140 letter writes «Exhibit O2» 926 times and two more of its documents 975 and 1 335 times (a copy of the matter,
+# `private/reports/K045d/census.log`): krokai read none of them but the K series, so `check-exhibits` called nearly
+# every I-140 file «not cited». A BARE token still needs its dash («O2», «B12», «Q4», «W2» stand for visas, quarters and tax forms - the
+# K092 rule, E-1099), a space is no separator («Exhibit A 2019 tax return» is exhibit A), and a dashless id that a dash
+# and a letter follow is the start of a range («EXHIBITS K1-K102»), read by `range_ids` or not at all - as `_K_RE` does.
 _ANCH = r"(?P<anch>Exhibits?\s+|Exh\.\s*|Ex\.\s*)"
-_TAIL = r"\s*[-–—]\s*0*(?P<num>\d{1,4})(?P<suf>[a-zA-Z]?\d?)(?:[-–—](?P<part>\d{1,2}))?(?![-–—]?\d)"
+_DASH = r"\s*[-–—]\s*"
+_NUM = r"0*(?P<num>\d{1,4})(?P<suf>[a-zA-Z]?\d?)(?:[-–—](?P<part>\d{1,2}))?(?![-–—]?\d)"
+_SEP_ANCH = r"(?:" + _DASH + r"|(?P<nodash>))"           # after the word: a dash, or nothing between letter and number
+_END_NODASH = r"(?(nodash)(?![-–—][^\W\d_]))"            # «K1-K102»: a range start, never an id of its own
 
 
 def _letter_class(series):
@@ -116,13 +127,15 @@ def _letter_class(series):
 
 def _build_id_re(series):
     """Ids of `series` in text, after the word Exhibit or bare; `series` None = any letter. Groups: anch, let, num,
-    suf, part - canonical id = canon(_fold(let), num, suf)."""
-    return re.compile(r"(?<![^\W\d_])" + _ANCH + "?(?P<let>" + _letter_class(series) + ")" + _TAIL, re.I)
+    suf, part, nodash - canonical id = canon(_fold(let), num, suf). The dash is optional only after the word (K045d)."""
+    return re.compile(r"(?<![^\W\d_])" + _ANCH + "?(?P<let>" + _letter_class(series) + ")(?(anch)" + _SEP_ANCH + "|"
+                      + _DASH + ")" + _NUM + _END_NODASH, re.I)
 
 
 _ID_TEXT_RE = _build_id_re(None)
 # Right after the word Exhibit, any letter - `facts._masked` blanks these like series ids (their digits are no fact).
-ANCHORED_ID_RE = re.compile(r"(?<![^\W\d_])" + _ANCH + "(?P<let>" + _letter_class(None) + ")" + _TAIL, re.I)
+ANCHORED_ID_RE = re.compile(r"(?<![^\W\d_])" + _ANCH + "(?P<let>" + _letter_class(None) + ")" + _SEP_ANCH + _NUM
+                            + _END_NODASH, re.I)
 
 # K-series: often written WITHOUT hyphen ("K1", "K12") in some briefs.
 _K_RE = re.compile(r"(?<![A-Za-z])\bK\s*[-–—]?\s*0*(\d{1,4})([a-zA-Z]?)(?![-–—\d])")
@@ -167,10 +180,41 @@ def _canon_m(m):
     return canon(_fold(m.group("let")), m.group("num"), m.group("suf"))
 
 
+# 🔴 K045d: the word governs a LIST - «(Exhibits Y42, Y43, Exhibit Y45-1, Y46)». A dashless id right after an id this
+# reader took, joined to it by «,» «;» «and» «&» «or» «/» and nothing else, is the next exhibit of that list (a dashed
+# one is read bare anyway): a capital letter of a series in play, neither a code nor a form - the bare-token rule. On
+# the I-140 letter 6 of the 15 files still «not cited» once the word was read were cited only so («Exhibits Y81, Y82»).
+_CHAIN_GAP = re.compile(r"\s*(?:[,;&/]|\band\b|\bor\b)(?:\s*(?:[,;&/]|\band\b|\bor\b))*\s*", re.I)
+_CHAIN_RE = re.compile(r"(?<![^\W\d_])(?P<let>[A-Z" + _LOOK + r"])0*(?P<num>\d{1,4})(?P<suf>[a-z]?\d?)"
+                       r"(?:[-–—](?P<part>\d{1,2}))?(?![-–—]?\d)(?![-–—][^\W\d_])(?![^\W_])")
+CHAIN_GAP_MAX = 40          # «, and » - a list joint is short; a longer stretch is prose, not the next item
+
+
+def _chain(text, out, act):
+    """The dashless ids that continue a list after the ids in `out` (K045d) - appended to `out`, in text order."""
+    spans = sorted((m.start(), m.end()) for _e, m in out)
+    starts = [a for a, _b in spans]
+    ends = sorted(b for _a, b in spans)
+    for c in _CHAIN_RE.finditer(text):
+        i = bisect.bisect_right(starts, c.start()) - 1
+        if i >= 0 and spans[i][1] > c.start():
+            continue                                         # inside an id already taken («Exhibit Y42»)
+        k = bisect.bisect_right(ends, c.start())
+        if not k or c.start() - ends[k - 1] > CHAIN_GAP_MAX or not _CHAIN_GAP.fullmatch(text[ends[k - 1]:c.start()]):
+            continue
+        letter = _fold(c.group("let"))
+        eid = canon(letter, c.group("num"), c.group("suf"))
+        if letter not in act or letter in DOC_SERIES or eid in NOT_EXHIBIT or _FORM_SHAPED.match(eid):
+            continue
+        out.append((eid, c))
+        bisect.insort(ends, c.end())
+
+
 def text_ids(text, series=None):
     """(canonical id, match) for every exhibit id `text` cites. After the word Exhibit / Exhibits / Ex. / Exh. any
-    letter is an id (the word says so, codes included: «Exhibit J-1»); a BARE token needs a letter of `series`, and
-    must be neither a code (NOT_EXHIBIT) nor a bare form number. The memoranda series (DOC_SERIES) never count."""
+    letter is an id (the word says so, codes included: «Exhibit J-1»), its dash optional («Exhibit O2» - K045d); a
+    BARE token needs its dash and a letter of `series`, and must be neither a code (NOT_EXHIBIT) nor a bare form number
+    - or continue a list of ids (`_chain`). The memoranda series (DOC_SERIES) never count."""
     act = {s.upper() for s in (DEFAULT_SERIES if series is None else series)}
     out = []
     for m in _ID_TEXT_RE.finditer(text or ""):
@@ -182,8 +226,14 @@ def text_ids(text, series=None):
             continue
         out.append((eid, m))
     if "K" in act:
+        taken = [(m.start(), m.end()) for _e, m in out]
         for m in _K_RE.finditer(text or ""):
-            out.append((canon("K", m.group(1), m.group(2)), m))
+            # K045d: «Exhibit K28» is read after the word now as well - one mention, one entry (a list cell «K28» gave
+            # two rows otherwise)
+            if not any(a < m.end() and m.start() < b for a, b in taken):
+                out.append((canon("K", m.group(1), m.group(2)), m))
+    if out:
+        _chain(text or "", out, act)
     return out
 
 
@@ -193,12 +243,16 @@ def ids_in_text(text, series=None):
 
 
 def id_of(s):
-    """The first exhibit id in `s` with ANY series letter - a user who types `--exhibit Y-3` has named an exhibit."""
+    """The first exhibit id in `s` with ANY series letter - a user who types `--exhibit Y-3` has named an exhibit, and
+    so has one who types `--exhibit O2` the way the I-140 letter writes it (K045d: the flag is the context word)."""
     m = _ID_TEXT_RE.search(s or "")
     if m:
         return _canon_m(m)
     m = _K_RE.search(s or "")
-    return canon("K", m.group(1), m.group(2)) if m else None
+    if m:
+        return canon("K", m.group(1), m.group(2))
+    m = _NAME_RE.fullmatch((s or "").strip())
+    return _canon_m(m) if m else None
 
 
 def name_id(fn, series=None):
@@ -255,6 +309,19 @@ _DESC_SEP = re.compile(r"^\s*[—–:\-.)]\s*\S.{4,}")
 _ALIAS_SEP = re.compile(r"=|\bsame\s+as\b", re.I)
 INDEX_LINE_MAX = 300        # a list line is short; a paragraph that opens with «Exhibit B-3 - …» is an argument
 RANGE_MAX = 50              # «B-1 through B-50» at most; a wider «range» is two unrelated ids
+# 🔴 K045d (2026-11-28): a list whose description follows the id after a SPACE - «Exhibit G12 Letter from …» (two more
+# documents of the same matter: 90 and 37 such lines, none read). A space alone is no separator in prose («Exhibit Y12
+# shows that …»), so such a line is a list row only when the word Exhibit stands before the id, its description opens
+# like a title (a capital, a digit, a quote) and it stands among LIST_RUN_MIN+ lines that open with an id (a blank
+# line does not break the run; any other line does - E-1100, a list is a line structure). Measured first: the filed
+# I-485 petition, 179 drafts and the packages' own text documents hold no such line in such a run.
+LIST_RUN_MIN = 3
+
+
+def _spaced_desc(rest):
+    """`rest` (the line after its id) is « Letter from …»: a space, then a description that opens like a title."""
+    m = re.match(r"[ \t]+(\S.{4,})$", rest)
+    return bool(m) and (m.group(1)[0].isupper() or m.group(1)[0].isdigit() or m.group(1)[0] in "\"'«“‘([")
 RANGE_RE = re.compile(
     r"(?<![^\W\d_])(?:Exhibits?\s+|Exh\.\s*|Ex\.\s*)?(?P<let>[A-Z])\s*[-–—]?\s*0*(?P<a>\d{1,4})"
     r"\s*(?:[-–—]|(?i:to|through|thru)\b)\s*(?:(?i:exhibits?)\s+)?(?P=let)\s*[-–—]?\s*0*(?P<b>\d{1,4})(?![-–—]?[\d\w])")
@@ -342,10 +409,12 @@ def _table_entries(rows, series):
 def exhibit_list(text, series=None):
     """The exhibit LIST a document prints (🔴 K045): ([(line number, id, aliases)], {line numbers of the list}). A list
     entry is a row of a table with an id column (`_table_entries`) or a line (<= INDEX_LINE_MAX characters, after a
-    bullet) that opens with an id followed by a dash / colon and a description. Every other mention is a citation."""
+    bullet) that opens with an id followed by a dash / colon and a description - or, in a run of such lines, by a space
+    and a title-like description (K045d, `LIST_RUN_MIN`). Every other mention is a citation."""
     act = DEFAULT_SERIES if series is None else series
     lines = (text or "").splitlines()
     entries, used = [], set()
+    shaped = {}                 # line index -> (id, "mark" | "space" | None): a line that opens with an id
     i = 0
     while i < len(lines):
         if lines[i].lstrip().startswith("|"):
@@ -362,10 +431,25 @@ def exhibit_list(text, series=None):
             pos = _LIST_MARK.match(s).end()
             found = sorted(text_ids(s, act), key=lambda t: t[1].start())
             pos += re.match(r"(?:Exhibits?\s+|Exh\.\s*|Ex\.\s*)?", s[pos:], re.I).end()      # «Exhibit K28 - …»
-            if found and found[0][1].start() <= pos and _DESC_SEP.match(s[found[0][1].end():]):
-                entries.append((i + 1, found[0][0], []))
-                used.add(i + 1)
+            if found and found[0][1].start() <= pos:
+                rest = s[found[0][1].end():]
+                shaped[i] = (found[0][0], "mark" if _DESC_SEP.match(rest) else
+                             "space" if found[0][1].groupdict().get("anch") and _spaced_desc(rest) else None)
         i += 1
+    run = []
+    for k in range(len(lines) + 1):
+        if k < len(lines) and k in shaped:
+            run.append(k)
+            continue
+        if k < len(lines) and not lines[k].strip():
+            continue                                         # a blank line does not break a run
+        for n in run:
+            eid, kind = shaped[n]
+            if kind == "mark" or (kind == "space" and len(run) >= LIST_RUN_MIN):
+                entries.append((n + 1, eid, []))
+                used.add(n + 1)
+        run = []
+    entries.sort(key=lambda t: t[0])                         # stable: one table row keeps its own order
     return entries, used
 
 
@@ -475,6 +559,13 @@ def _read_docx(path):
 # (.docx/.pdf), refused loudly (.doc), or silently skipped by design (images, archives,
 # spreadsheets — not petition text, do not open as soup and search).
 _TEXT_EXTS = (".md", ".txt", ".markdown", ".htm", ".html")
+# 🔴 K045d (2026-11-28): a Markdown export escapes punctuation - the I-140 letter's list lines read «Exhibit O2 \- Certified
+# …» (858 of them; 369 in another document), its bullets «\- Exhibit …», its ranges «C12 \- C15». CommonMark 0.31.2 §2.4:
+# any ASCII punctuation may be backslash-escaped and renders as itself; a backslash before anything else is a backslash,
+# and an escaped backslash escapes nothing. A .md document is read as it renders - but «\|» stays: inside a table row
+# it is the cell's own character, and the row splitter here is no GFM parser. (Code spans keep their backslashes in
+# CommonMark; an exhibit id does not stand in code.) The filed I-485 petition holds no escape at all.
+_MD_ESCAPE = re.compile(r"\\([!-/:-@\[-`{}~])")
 
 
 def _read_text(path):
@@ -497,9 +588,10 @@ def _read_text(path):
                             ".docx once, then re-run.")
     if low.endswith(_TEXT_EXTS):
         try:
-            return io.open(path, encoding="utf-8", errors="replace").read()
+            text = io.open(path, encoding="utf-8", errors="replace").read()
         except Exception:
             return ""
+        return _MD_ESCAPE.sub(r"\1", text) if low.endswith((".md", ".markdown")) else text
     # Everything else — images (.jpg/.png/.tif/…), archives (.zip/.7z/.rar), spreadsheets
     # (.xls/.xlsx/.pptx/…), unknown binaries — is not petition text and stays silently
     # skipped BY DESIGN. Do NOT open with errors="replace" and search: probe-proven with a
@@ -658,9 +750,11 @@ def reconcile(petition_paths, exhibit_dirs, form_dirs=None, series=None, out=Non
                                    "failure; re-save it from Word and re-run"))
             return
         found = text_ids(text, active)
-        refs = {eid for eid, _m in found} | range_ids(text, active)
         # 🔴 K045: the exhibit LIST this document prints, and the ids its sentences cite (the list lines blanked)
         entries, list_lines = exhibit_list(text, active)
+        # 🔴 K045d: an id the list names is a reference too - a cell «Y69» under a column headed «Exhibit» is read by
+        # the list alone (the header is its context word), and its file was «listed» and «not cited» at once
+        refs = {eid for eid, _m in found} | range_ids(text, active) | {e for _n, e, _a in entries}
         for _n, eid, al in entries:
             listed.setdefault(eid, set()).add(fn)
             for a in al:
