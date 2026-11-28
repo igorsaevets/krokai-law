@@ -2,50 +2,154 @@
 
 [![selftest](https://github.com/igorsaevets/krokai-law/actions/workflows/selftest.yml/badge.svg)](https://github.com/igorsaevets/krokai-law/actions/workflows/selftest.yml)
 
-**Your AI quoted a law. Is the quote real?**
+**Check every quotation in your legal draft against the real source — before you file it.**
 
-**KrokAI Law** checks every quotation in your documents against the actual text of the law, on your own
-disk, and tells you which ones are wrong — before anything is filed, sent, or relied on.
+AI drafts a USCIS petition, an RFE response or a brief in minutes. Some of what it puts in quotation
+marks is not in the source: a sentence the court never wrote, a regulation with its condition quietly
+dropped, the right words under the wrong citation. **KrokAI Law** is a free, open-source command-line
+tool that compares every quoted passage in your documents with the text of the law you downloaded,
+and tells you which quotations do not match and how. It runs on your computer: the draft is not
+uploaded anywhere, and no AI model decides the verdict.
 
-It is built for people who work with an AI assistant on legal material: immigration attorneys and
-paralegals, founders arguing with their own tax position, anyone whose draft contains sentences in
-quotation marks that were produced by a machine.
+*Русская версия: [README.ru.md](README.ru.md)*
+
+| | |
+|---|---|
+| **The pain** | an invented or altered quotation looks exactly like a real one, and the person who signs pays for it |
+| **The fix** | every quotation compared word for word with the statute, regulation, Policy Manual chapter or decision on your disk |
+| **The result** | a list of what to fix, with the page each word stands on, before anything is filed |
+| **The price** | free, MIT licence, no account, no API key |
 
 ---
 
-## Why this exists
+## The problem
 
-A model was asked to open a specific federal regulation and quote it. It did three things:
-
-1. it really opened the page — the fetch is in the logs;
-2. it attached a **correct, working link** to the **correct** government URL;
-3. and it **invented the text of the rule**, word for word, in quotation marks.
-
-The invented sentence appeared nowhere in that regulation. Not one fragment of it. Every automated
-"did the AI check its sources?" audit reported that answer as **1 of 1 grounded, perfectly clean** —
-because those audits check whether a page was *fetched*, not whether the *words* are in it.
+**Invented quotations look exactly like real ones.** A model was asked to open a federal regulation
+and quote it. It opened the right page, attached a correct, working link — and invented the text of
+the rule, word for word, in quotation marks. Every "did the AI check its sources?" audit graded that
+answer clean, because those audits check that a page was *fetched*, not that the *words* are in it.
 
 > **A citation with a working link does not prove the quotation is real.**
-> Only comparing the words against the document does.
+> Only comparing the words with the document does.
 
-That is what this tool does, and everything else in it exists so that the comparison happens without
-anyone having to remember to run it.
+**Courts now deal with this every week.** A public database of court decisions about AI-hallucinated
+filings counted **2,387** of them on 28 November 2026: 1,586 in the United States, 622 with false
+quotations, 968 where the AI was used by a lawyer
+([AI Hallucination Cases](https://www.damiencharlotin.com/hallucinations/)).
 
-### It is not only the machine
+**The person who signs pays — in immigration too.** In June 2026 the Ninth Circuit fined two attorneys
+in an immigration appeal $2,500 each and suspended them from practice before it for six months, for
+briefs with "multiple nonexistent cases, misattributed quotations, and gross misrepresentations of
+real cases" ([Lnu v. Blanche, No. 24-4790](https://cdn.ca9.uscourts.gov/datastore/opinions/2026/06/03/24-4790.pdf)).
+In October 2026 the Board of Immigration Appeals suspended one of them from practice before the Board,
+the Immigration Courts **and the Department of Homeland Security**, which USCIS is part of
+([Matter of Sethi, 30 I&N Dec. 112 (BIA 2026)](https://www.justice.gov/eoir/media/1463921/dl)).
 
-Roughly half of the errors this was built to catch turned out to be **human**. In one audit of
-already-published work:
+**"Is the case real?" is not enough.** The same order: a competent attorney "must do more than prompt
+generative AI, check that the citations provided by the AI are real and the subject matter roughly on
+point, and call it a day." One of the quotations it sanctioned was a real sentence — from a different
+case. Paid research tools are not immune: a study of the AI research tools of LexisNexis and Thomson
+Reuters found that they "each hallucinate between 17% and 33% of the time"
+([Magesh et al.](https://arxiv.org/abs/2405.20362), *Journal of Empirical Legal Studies*, 2025).
 
-- a Board decision was quoted under the footnote number of a **different** decision — every
-  character of the quotation correct, the pincite wrong;
-- the clause `as with immediate relative status` had been dropped from the middle of a quotation,
-  which changed what it meant;
-- **ten quotations already marked "verified"** stopped one comma short of the words that limited
-  them: the source went on `..., but do not include instances where...`, and the quotation did not.
+**And it is not only the machine.** About half of the errors this tool was built to catch turned out to
+be human. In one audit of already-published work: a decision quoted under the footnote of a different
+decision; a clause dropped from the middle of a quotation; ten quotations marked "verified" that
+stopped one comma before the words that limited them (`..., but do not include instances where...`). A tired person at eleven at night makes
+these, and neither a spell-checker nor a re-read catches them.
 
-None of those is a hallucination. All of them are the kind of mistake a tired person makes at
-eleven at night, and none of them is visible to a spell-checker or to a person re-reading their own
-draft.
+## The solution
+
+1. **Keep the law you rely on in one folder.** Statutes, regulations, Policy Manual chapters,
+   decisions — `krokai fetch` downloads them from the publisher byte for byte, with no AI model between
+   the server and the file.
+2. **Write as usual** — with ChatGPT, Claude, Gemini or any other assistant, or by hand.
+3. **Run `krokai check`.** Every quotation in every draft gets a verdict: `verified`, `not found`,
+   `truncated condition` (exact, but the source goes on with `unless…`), `operator` (`may` where the
+   source says `must`), `found elsewhere` (the words are in another provision than the one you cite)
+   and others — with the PDF page and the page the source prints. What you file is reported apart from
+   notes and research.
+
+Optional hooks run the check every time your assistant writes a quotation, not when someone remembers.
+
+## Example: the quotation the Ninth Circuit sanctioned
+
+The order quotes a sentence the brief attributed to *Kamalthas v. INS*, 251 F.3d 1279, 1284 (9th Cir.
+2001) — "An adverse credibility determination is not necessarily a death knell to CAT protection." —
+and finds: "This quotation does not appear in Kamalthas." With that opinion in the sources folder
+(downloaded by `krokai fetch-precedent`), it takes one command (output shortened):
+
+```text
+$ krokai quote "An adverse credibility determination is not necessarily a death knell to CAT protection."
+corpus: 2 files, 0.0 MB of text
+
+NOT FOUND
+  absent from the corpus, AND the cited source is one you have - so this is the shape a fabrication makes
+
+🔴 NOT FOUND is not the same as INVENTED. Rule these out in order - only what
+   survives all of them is a defect in the quotation:
+     1. the source was never downloaded - ...
+     ...
+     6. the quotation was rewritten in OUR file - ...
+```
+
+A sentence the opinion really contains:
+
+```text
+$ krokai quote "the BIA has plainly overrelied on its prior adverse credibility finding against Kamalthas and failed to consider evidence of the relevant country conditions in the record"
+corpus: 2 files, 0.0 MB of text
+
+VERIFIED
+  word for word in a file in your sources folder - which is not the same as 'in force today'
+  found in: law\251.F3d.1279.99-71081.html
+```
+
+`krokai check` does the same for every quotation in every draft at once and writes `REPORT.md` (what
+to fix, and what differs) and `READING-LIST.md` (each filed quotation beside its source passage).
+The sanctioned sentence is itself real: *Shrestha v. Holder* (9th Cir. 2010) wrote it about Kamalthas,
+and the court held that "It makes no difference that the quotation does in fact appear in another
+case". If *Shrestha* is in your folder too, `check` finds the words there and names that file under
+`Found in:`; it does not yet flag a court opinion cited by party names as the wrong address on its
+own — read that line.
+
+## Who it is for
+
+- **People who write USCIS petitions** — EB-2 NIW, EB-1A, O-1, I-140, I-485 adjustment of status, RFE
+  responses — on their own or in a small practice, with an AI assistant.
+- **Immigration attorneys and paralegals** who sign what an assistant drafted. The built-in citation
+  packs cover the INA, the CFR, the U.S. Code, the Federal Register, USCIS policy, the FAM and Board
+  precedent.
+- **Anyone filing legal text with quotations in it** — a tax pack ships too, and adding your own body
+  of law is a JSON file, not a code change.
+
+## How it differs from a citation checker
+
+Most citation checkers answer "does this case exist?" A few commercial ones also compare a brief's
+quotations with the cited case in their own databases (see
+[what already exists](#things-that-already-exist-and-how-this-differs)). KrokAI Law:
+
+- **checks the words**, not just the citation — and what comes right after them (`but`, `unless`,
+  `except`), because a quotation that stops one clause early states a different rule;
+- **checks the law a petition rests on** — regulations, the Policy Manual, AAO and BIA decisions, the
+  FAM — in the exact copies you rely on, with the page each word stands on;
+- **keeps your client's text on your computer**: the check runs locally, and an outbound gate stops
+  credentials and personal identifiers before anything is sent to an outside AI;
+- **is deterministic**: a verdict is a text comparison, never a model's opinion — the same draft gets
+  the same answer;
+- **is free and open source** (MIT), with no account and no API key.
+
+## Start in a minute
+
+```bash
+pip install "krokai[all]"     # PDF, DOCX and web fetch included
+cd /path/to/your/matter
+krokai init .
+krokai check
+```
+
+Or send your AI assistant this repository's link and say *"install this for me, including the
+hooks"* — [INSTALL-FOR-AI.md](INSTALL-FOR-AI.md) is written for the assistant. Every install method,
+and how to update: [below](#install-in-about-a-minute).
 
 ---
 
@@ -344,8 +448,9 @@ sent, what was held, the cost and the time.
 
 ## Things that already exist, and how this differs
 
-Found by the outside reviewers of this design rather than by its author, which is the honest way to
-report prior art. Feature descriptions are from each project's own page; none was tested here.
+Most of these were found by the outside reviewers of this design rather than by its author, which is
+the honest way to report prior art; the two quotation checkers at the end were added on 28 November
+2026. Feature descriptions are from each project's own page; none was tested here.
 
 | | what it does | how this differs |
 |---|---|---|
@@ -353,6 +458,8 @@ report prior art. Feature descriptions are from each project's own page; none wa
 | [citereview](https://github.com/kirinccchang/citereview) (open source) | validates citations against CourtListener, Cornell LII, GovInfo | checks the citation **exists**; this checks the **words** against a copy on your disk |
 | Clearbrief, ProofBrief, briefcheckr (commercial) | citation checking inside Word, backed by commercial databases | Word-integrated and database-backed; this is a local corpus you control, offline, with no per-seat licence |
 | Tracelaw (commercial) | runs several frontier models and cross-validates the findings | the closest to the second-opinion half — but the cross-validation is between models, not against primary text you hold |
+| [Westlaw Quick Check Quotation Analysis](https://legal.thomsonreuters.com/en/c/quick-check-quotation-analysis) (commercial) | *"shows differences such as missing, added, or changed language between case quotes in your uploaded document, and the cited case language on Westlaw Edge"* | case law in the vendor's database, on an uploaded document; this checks statutes, regulations, agency guidance and decisions on your own disk, and uploads nothing |
+| [BriefCatch RealityCheck](https://www.briefcatch.com/realitycheck) (commercial) | *"verifies cited cases and federal statutes"* and flags *"Quotations that do not match the source text"* | a paid service that checks against the vendor's sources; this compares with the copies you hold, on your own computer |
 
 None of them was found to do the combination: **byte-for-byte checking against a corpus on your own
 disk, plus multi-model second opinions whose quotations are then run through that same check.** Three
@@ -376,6 +483,9 @@ work than maintaining this.
   measured: a scraped agency chapter held four of its six bullet points, so a *correct* quotation of
   the missing text came back flagged. Before you "fix" a document because of a flag, open the live
   page. The order to rule things out is printed with every miss.
+- **It does not yet reliably tie a court opinion cited by party names to its file.** A quotation that
+  exists in a different opinion on your disk is graded as found, and only the `Found in:` line shows
+  which opinion it was found in — the *Shrestha* case in the example above.
 
 ---
 
@@ -400,13 +510,7 @@ work than maintaining this.
 
 ---
 
-## Who this is for
-
-- **Immigration attorneys and paralegals** — the built-in citation pack covers the INA, the CFR, the
-  U.S. Code, the Federal Register, USCIS policy, the FAM and Board precedent.
-- **Founders and their advisers** — a tax pack ships too, and adding your own body of law is a JSON
-  file, not a code change.
-- **Anyone drafting with an AI** who has noticed that the confident ones are the dangerous ones.
+## Reference
 
 Full function-by-function reference, with the incident behind each one:
 **[FEATURES.md](FEATURES.md)**
