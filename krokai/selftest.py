@@ -6319,6 +6319,174 @@ def suite_k047_reading_list(tmp):
        "No quotation was found in a document of the filed tier (A)" in md3 and "**Quoted:**" not in md3, md3[:600])
 
 
+def suite_k047c_limiter_items(tmp):
+    """K047c (2026-11-28): the reading list's limiter fact reads a LIST by its items - before the quoted words the
+    list's lead-in and the items they stand in, after them their own item, its sub-items and a flush tail after the
+    last item - never a sibling item; a list the passage window cuts is read whole; a sentence with fewer than two
+    item starts, and words standing in a lead-in, keep the whole sentence. The note says where in the list a word
+    stands, and when it lies beyond the passage shown. Order of part 2 only - no verdict changes."""
+    import json
+    from krokai import config as _config
+    from krokai import reading as R
+    from krokai.normalize import normalise
+    from krokai.run import scan_matter, write_report
+
+    def note(law, quote):
+        """The limiter note the product writes for `quote` in `law` (normalised as the corpus is), or ''."""
+        text, q = normalise(law), normalise(quote)
+        i = text.find(q)
+        if i < 0:
+            return "QUOTE NOT IN THE FIXTURE"
+        facts = R.signals({"quote": q, "near": ["x"], "verdict": "VERIFIED"}, R.passage(text, [(i, i + len(q))]), [])
+        return next((x for n, x in facts if n == "limiter"), "")
+
+    LEAD = "in the source: «%s» earlier in the quoted words' own sentence, before the first item of the list they stand in"
+    BEYOND = ", %d characters before the quoted words - beyond the passage shown"
+    IF_LIST = ("(k) An alien who is eligible to receive an immigrant visa may adjust status if- (1) the alien, on the "
+               "date of filing, is present in the United States under a lawful admission; (2) the alien has kept a "
+               "lawful status, unless the failure was excused; and (3) the alien is admissible. The Secretary decides "
+               "each case.")
+    Q1 = "the alien, on the date of filing, is present in the United States under a lawful admission"
+    got = note(IF_LIST, Q1)
+    ok("k047c: an «if-» lead-in governs every item - named, before the first item; the sibling item's «unless» is not",
+       got == LEAD % "if", got)
+    Q10 = "An alien who is eligible to receive an immigrant visa may adjust status"
+    got = note(IF_LIST, Q10)
+    ok("k047c: words standing in the lead-in keep the whole sentence - every item is theirs, «if» right after them",
+       got == "in the source: «if» later in their own sentence", got)
+    FLUSH = ("Each agency shall make available for public inspection- (A) final opinions made in the adjudication of "
+             "cases; (B) statements of policy adopted by the agency; and (C) staff manuals that affect a member of the "
+             "public; unless the materials are promptly published and offered for sale. The agency keeps an index.")
+    got = note(FLUSH, "statements of policy adopted by the agency")
+    ok("k047c: words after the last item («; unless the materials are promptly published», 5 U.S.C. 552(a)(2)) "
+       "govern every item - named, after the last item",
+       got == "in the source: «unless» later in their own sentence, after the last item of the list they stand in", got)
+    SPACED = ("(c) Evidence. The petition must include: (1) a statement by the applicant; (2) evidence of the harm, "
+              "including, to the extent possible, the following: ( 1 ) when the harm occurred; ( 2 ) where the harm "
+              "occurred; and (3) any other evidence the applicant has. The officer reads all of it.")
+    got = note(SPACED, "when the harm occurred")
+    ok("k047c: an eCFR italic numeral «( 1 )» is a level of its own - the item holding it, with «to the extent», "
+       "stays open above the quoted words", got == "in the source: «to the extent» earlier in the quoted words' own "
+       "sentence", got)
+    OWN = ("The following persons register at the office: (A) a child under the age of 14 years; (B) a diplomat "
+           "accredited to the United States, except a diplomat whose posting has ended; and (C) a member of a crew who "
+           "does not land. The office keeps the list.")
+    got = note(OWN, "a diplomat accredited to the United States")
+    ok("k047c: the quoted item's own «, except …» is named", got == "in the source: «except» later in their own sentence",
+       got)
+    CHILD = ("An employer may file for a worker who: (1) holds a degree; (2) has an offer of employment in a position "
+             "that meets the following: (A) the position is permanent; and (B) the position is not seasonal; and (3) is "
+             "admissible. The form is filed online.")
+    got = note(CHILD, "has an offer of employment in a position that meets the following")
+    ok("k047c: a sub-item of the quoted item is its own - «is not» in its (B) is named",
+       got == "in the source: «is not» later in their own sentence", got)
+    SIB = ("The following documents are accepted as evidence: (A) a passport issued by a government, except a passport "
+           "that has expired; (B) a national identity card issued by a government; and (C) a birth certificate, except "
+           "a certificate issued more than ten years after the birth. The officer may ask for more.")
+    got = note(SIB, "a national identity card issued by a government")
+    ok("k047c: a sibling item's «except» - before the words and after them - is not the quoted item's limit", got == "",
+       got)
+    BUL = ("Bring these documents to the interview: * a passport valid for six more months * a visa, if one was issued "
+           "* two photographs taken recently. The interview lasts one hour.")
+    got = note(BUL, "a passport valid for six more months")
+    ok("k047c: a sibling bullet's «if» under a lead-in with no limiter is not named", got == "", got)
+    LETTERS = ("The board may admit any of the following: (a) a teacher; (b) a nurse; (c) a farmer; (d) a pilot; (e) a "
+               "cook; (f) a guard; (g) a clerk; (h) a driver, except a driver of a truck; (i) an engineer with a license "
+               "issued by a state; and (j) a lawyer. The board meets monthly.")
+    got = note(LETTERS, "an engineer with a license issued by a state")
+    ok("k047c: «(i)» right after «(h)» is the next letter, not a numeral under (h) - (h)'s «except» is a sibling's",
+       got == "", got)
+    DOUBLE = ("The plan covers: (a) a worker, subject to the terms below: (aa) who is paid by the hour; and (bb) who works "
+              "full time; and (b) a manager. The plan ends in 2030.")
+    got = note(DOUBLE, "who works full time")
+    ok("k047c: a doubled letter «(aa)» is a level below «(a)» - the open (a)'s «subject to» is named",
+       got == "in the source: «subject to» earlier in the quoted words' own sentence", got)
+    RANGE = ("The following rules apply: (i) an alien described in paragraphs (i)-(iii) of this section is not eligible "
+             "for the waiver; (ii) an alien who entered as a crewman is eligible for the waiver; and (iii) the officer "
+             "decides each request in writing. The rules took effect in 2020.")
+    got = note(RANGE, "an alien described in paragraphs")
+    ok("k047c: «(i)-(iii)» is a range, not an item start - the quoted item keeps its own «is not»",
+       got == "in the source: «is not» later in their own sentence", got)
+    PLAIN = ("Unless waived, the officer shall collect the fee from the applicant at the time of filing, except in an "
+             "emergency. The fee is set by rule.")
+    got = note(PLAIN, "the officer shall collect the fee from the applicant at the time of filing")
+    ok("k047c: a sentence that is not a list reads as before - both limiters named, no list wording",
+       got == "in the source: «Unless» earlier in the quoted words' own sentence; «except» later in their own sentence",
+       got)
+    FAR = ("Other than an alien described in paragraph (2), subsection (a) shall not be applicable to any of the "
+           "following: " + "; ".join("(%d) a person in the class numbered %d under the plan of this part, named in "
+                                    "the register" % (k, k) for k in range(1, 30))
+           + "; (30) a person who holds a valid card under section 9; and (31) a person in the last class. The list "
+           "closes here.")
+    q = "a person who holds a valid card under section 9"
+    got = note(FAR, q)
+    ok("k047c: a lead-in further back than the passage shows is named with its distance and «beyond the passage "
+       "shown»", got == LEAD % "Other than" + BEYOND % normalise(FAR).find(q), got)
+    WIDE = ("Subject to section 5 of this part, the term covered person means any of the following: "
+            + "; ".join(["(%d) a member of the group numbered %d, unless the group was closed by the board" % (k, k)
+                         for k in range(1, 120)] + ["(120) a person admitted as a student under the program"]
+                        + ["(%d) a member of the group numbered %d, unless the group was closed by the board" % (k, k)
+                           for k in range(121, 240)])
+            + ". However, the board may add a group by rule.")
+    q = "a person admitted as a student under the program"
+    got = note(WIDE, q)
+    ok("k047c: a list longer than the passage window (8 U.S.C. 1101(a)(15) is one) is read whole - its lead-in, "
+       "not a sibling cut in half by the window, and the sentence after the list",
+       got == LEAD % "Subject to" + BEYOND % normalise(WIDE).find(q) + "; «However» opening the next sentence", got)
+    RUNON = ("word " * 60000 + "the rules below apply if asked: (1) the first rule of the set; (2) the second rule, "
+             "unless waived; (3) the third rule of the set. The set ends here.")
+    got = note(RUNON, "the third rule of the set")
+    ok("k047c: a sentence too long to read whole (a run-on past %d characters) keeps the window's cut and makes no "
+       "claim about where its list begins" % R.WHOLE, got == "in the source: «if» earlier in the quoted words' own "
+       "sentence", got)
+
+    # --- end to end: a law page with one item per line, `check`'s own pipeline, READING-LIST.md -------------
+    root = os.path.join(tmp, "k047c-m")
+    os.makedirs(os.path.join(root, "law"))
+    os.makedirs(os.path.join(root, "case"))
+    io.open(os.path.join(root, "law", "8CFR-299.md"), "w", encoding="utf-8").write(
+        "# 8 CFR 299.9 Adjustment (fixture)\n\n"
+        "(k) An alien who is eligible to receive an immigrant visa may adjust status if- (1) the alien, on the date "
+        "of filing, is present in the United States under a lawful admission;\n"
+        "(2) the alien has kept a lawful status, unless the failure was excused; and\n"
+        "(3) the alien is admissible. The Secretary decides each case.\n\n"
+        "(m) The following documents are accepted as evidence:\n"
+        "(A) a passport issued by a government, except a passport that has expired;\n"
+        "(B) a national identity card issued by a government; and\n"
+        "(C) a birth certificate, except a certificate issued more than ten years after the birth. The officer may "
+        "ask for more.\n")
+    Q6 = "a national identity card issued by a government"
+    io.open(os.path.join(root, "case", "petition.md"), "w", encoding="utf-8").write(
+        'The rule lets him adjust because "%s".\n\nHe will show "%s".\n' % (Q1, Q6))
+    io.open(os.path.join(root, "casefile.json"), "w", encoding="utf-8").write(json.dumps({
+        "bank": "QUOTE-BANK.md", "queue": "QUOTE-QUEUE.md", "library_index": "law/INDEX.md", "sources": ["law"],
+        "drafts": [{"tier": "A", "label": "filed", "path": "case"}],
+        "citation_packs": ["us-immigration", "us-federal"]}))
+    res = scan_matter(_config.load(root), quiet=True, printer=lambda *a: None)
+    out = os.path.join(tmp, "k047c-o")
+    if res:
+        write_report(res, _config.load(root), out)
+    try:
+        md = io.open(os.path.join(out, R.FILE), encoding="utf-8").read()
+    except OSError:
+        md = ""
+    verdicts = {r["quote"]: r["verdict"] for r in (res or {}).get("rows") or ()}
+
+    def noted(q):
+        """The «Noted» line of the entry whose quotation is `q`."""
+        for blk in re.split(r"^### \d+\. ", md, flags=re.M)[1:]:
+            if "**Quoted:**\n> %s" % q in blk:
+                return next((ln for ln in blk.splitlines() if ln.startswith("**Noted:**")), "NO NOTED LINE")
+        return "NO ENTRY"
+    ok("k047c: end to end - READING-LIST.md names the lead-in's «if» for an item of a list printed one item a line, "
+       "and no limiter for the item whose only neighbours carry «except»",
+       verdicts.get(Q1) == "VERIFIED" and verdicts.get(Q6) == "VERIFIED"
+       and ("«if» earlier in the quoted words' own sentence, before the first item of the list they stand in"
+            in noted(Q1)) and "«except»" not in noted(Q6) and "in the source:" not in noted(Q6)
+       and noted(Q6).startswith("**Noted:**"),
+       "%s | %s | %s" % (verdicts, noted(Q1), noted(Q6)))
+
+
 def suite_k061b_judge(tmp):
     """K061b (2026-11-27): `check --judge <channel>` - an outside model reads each clean filed quotation against its
     passage and the doubted ones go first in part 2 of READING-LIST.md. Pinned end to end through the CLI against a
@@ -8935,6 +9103,7 @@ def main():
         suite_k092_exhibit_ids(tmp)
         suite_k045_exhibit_list(tmp)
         suite_k047_reading_list(tmp)
+        suite_k047c_limiter_items(tmp)
         suite_k091_derived(tmp)
         suite_k099_ligatures(tmp)
         suite_k061b_judge(tmp)

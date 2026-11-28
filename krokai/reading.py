@@ -22,11 +22,13 @@ put a quotation early; it never says the quotation passed.
 
 🔴 THE ORDER IS A HEURISTIC, MEASURED FOR WHAT IT FIRES ON, NOT FOR WHAT IT FINDS. Nobody has labelled which clean
 quotations are defective (K037's reading was skipped, 2026-11-26), so no fact is graded by the defects it finds.
-K047 counted them on a copy of a filed petition, 68 clean quotations: a limiter word next to the words 27 (one
-reader of the law text judged about 15 of those to bear on the quoted words - the rest sit in a sibling list item),
+K047 counted them on a copy of a filed petition, 68 clean quotations: a limiter word next to the words 27,
 words left out 10, no citation beside it 17, numbers 31, an OCR layer 0, another speaker 0, a «may» against a
 «must / shall» 0 (that draft writes must / shall only inside quotations - a second count over its whole text
-agreed). Groups run strongest first: what makes the comparison itself unsafe (an OCR layer, another speaker), a
+agreed). K047b re-read the 27 by the word each note NAMES - K047's «about half sit in a sibling list item» had been
+read off a census display that marked every limiter word near the quotation: 20 bear on the quoted words, 2 rest
+only on a sibling item of their list (2 more name one beside another word), 4 sit in a sentence the splitter
+glued to theirs. Since K047c a list is read by its items (`bearing_parts`): 25 there. Groups run strongest first: what makes the comparison itself unsafe (an OCR layer, another speaker), a
 sentence stronger than its source, a limiter, left-out words, no citation, numbers; inside a group, more facts first,
 then the quotation used in more places.
 """
@@ -127,7 +129,8 @@ def locate(quote, verdict, path, corpus):
 def passage(text, segs, n=SENTENCES, cap=CAP):
     """The quoted words in their source with `n` sentences on each side. `pieces` = [(text, quoted?)] - the words
     an ellipsis left out are the unquoted pieces; `own_before` / `own_after` = the rest of the quoted words' own
-    sentence; `next` = the sentence after it."""
+    sentence; `own_cut` = (does that sentence run on before / after the window read here?) and, when it does,
+    `own_whole` = `_whole_sentence`; `next` = the sentence after it."""
     a, b = segs[0][0], max(y for _x, y in segs)
     lo, hi = max(0, a - 8000), min(len(text), b + 8000)
     win = text[lo:hi]
@@ -141,12 +144,38 @@ def passage(text, segs, n=SENTENCES, cap=CAP):
             pieces.append((text[end:x], False))
         pieces.append((text[max(x, end):y], True))
         end = max(end, y)
+    own_cut = (sp[ia][0] == 0 and lo > 0, sp[ib][1] == len(win) and hi < len(text))
     return {"before": before[-cap:], "after": after[:cap],
             "cut_before": len(before) > cap or (s0 == 0 and lo > 0),
             "cut_after": len(after) > cap or (s1 == len(win) and hi < len(text)),
             "pieces": pieces,
             "own_before": win[sp[ia][0]:a - lo], "own_after": win[b - lo:sp[ib][1]],
+            "own_cut": own_cut, "own_whole": _whole_sentence(text, a, b) if any(own_cut) else None,
             "next": win[sp[ib + 1][0]:sp[ib + 1][1]] if ib + 1 < len(sp) else ""}
+
+
+WHOLE = 256000          # characters read on each side, at most, to find the ends of a sentence the window cuts
+
+
+def _whole_sentence(text, a, b):
+    """K047c: (sentence, a, b, next sentence) - the sentence(s) holding text[a:b] read whole, past the window
+    `passage` reads: the window doubles until the sentence starts and ends inside it. None when it still runs on at
+    WHOLE characters a side. A list longer than the window - 8 U.S.C. 1101(a)(15) is one sentence of classes (A)
+    to (V) to the splitter - keeps its lead-in and the quoted class's place only this way: on K047b's law corpus the
+    window cut the own sentence of 56 list items before the words and of 35 after them, and for 35 items (30 in
+    8 U.S.C. 1101) the limiter fact named another word than the rule reads on the whole sentence; read whole, 0."""
+    w = 16000
+    while True:
+        lo, hi = max(0, a - w), min(len(text), b + w)
+        win = text[lo:hi]
+        sp = sentence_spans(win)
+        ia, ib = _at(sp, a - lo), _at(sp, max(a - lo, b - lo - 1))
+        if not ((sp[ia][0] == 0 and lo > 0) or (sp[ib][1] == len(win) and hi < len(text))):
+            return (win[sp[ia][0]:sp[ib][1]], a - lo - sp[ia][0], b - lo - sp[ia][0],
+                    win[sp[ib + 1][0]:sp[ib + 1][1]] if ib + 1 < len(sp) else "")
+        if w >= WHOLE:
+            return None
+        w *= 2
 
 
 # ------------------------------------------------------------------------------------------------ the draft side
@@ -210,6 +239,113 @@ NAMES = {"ocr": "an OCR layer", "speaker": "another speaker", "headnote": "the h
          "limiter": "a limiter next to the words", "omitted": "words left out", "uncited": "no citation beside it",
          "digits": "numbers"}
 
+# K047c (2026-11-28): WHICH PART OF A LIST CAN BEAR ON THE QUOTED WORDS. The corpus text has no line breaks
+# (`normalise` folds them), so a statute's «(7) …; or (8) …» or a policy page's bullets is ONE sentence to
+# `sentence_spans`, and the limiter fact read every item of it: for words quoted from item (A) of a list it named an
+# «except» standing in item (B). K047b measured it with this module's own predicate on a law corpus of 302 files,
+# every item of every list «quoted» whole: 11 022 items, the fact fired on 7 098, and 4 530 of the words it named sat
+# in a sibling or a cousin item. A plain cut at every item start is wrong too - it lost 480 firings that a reading by
+# levels keeps: a list's lead-in governs every item («if-», «Other than …, subsection (a) shall not be applicable
+# to»), so do the item's own sub-items, words after the last item («; unless the materials are promptly published»,
+# 5 U.S.C. 552(a)(2)), and an ancestor whose item is printed «( 1 )» (eCFR's italic numerals, a level of their own).
+# So the fact reads, before the words, the lead-in and the text of the items they stand in (outermost first); after
+# them, their own item and its sub-items up to the next item of its level or an outer one, and a flush tail. The same
+# census under this rule: 4 488 firings, no named word in a sibling or cousin item; 20 of the 2 610 dropped firings,
+# drawn at random and read by hand: none bore on the quoted item. On a copy of a filed petition: 27 -> 25 firings, the
+# two that rested only on a sibling item gone. A sentence with fewer than two item starts, and words that stand in
+# the lead-in, keep the whole sentence. This decides only which clean quotations come first in part 2 - never a
+# verdict, a REPORT.md line or the exit code - and `LIMITER_RE` (verify.py) is untouched: it also drives `check`'s
+# truncation verdicts.
+# An item starts at «(x)» / «( x )» (a letter, a roman numeral, a number) after «;», «:», «--», «—» or a single «-»
+# followed by a space («if- (1)»; never the range «(i)-(iii)»), «and» / «or» between them allowed; or at a «*» / «•».
+_TOK = re.compile(r"\(( ?)([a-z]{1,2}|[ivx]{1,5}|[A-Z]{1,2}|[IVX]{1,5}|\d{1,3})( ?)\)")
+_ITEM = re.compile(r"(?:(?<=[;:])|(?<=--)|(?<=—)|(?<=[^-]-)(?=\s))\s*(?:(?:and|or)\s+)?(?=" + _TOK.pattern + r"\s)"
+                   r"|(?:(?<=^)|(?<=\s))(?=[*•]\s)")
+_FLUSH = re.compile(r";\s+(?=[a-z])")
+_ROMAN = frozenset("i ii iii iv v vi vii viii ix x xi xii xiii xiv xv xvi xvii xviii xix xx".split())
+
+
+def _levels(text, starts):
+    """[(start, level)]: «n» a number, «a» / «A» a letter, «r» / «R» a roman numeral, «aa» / «AA» a doubled letter,
+    «*» a bullet; a token printed with inner spaces («( 1 )») is a level of its own («_»). A lone i / v / x right
+    after h / u / w is the next letter, not a numeral."""
+    out, last = [], {}
+    for p in starts:
+        m = _TOK.match(text, p)
+        if not m:
+            out.append((p, "*"))
+            continue
+        sp, t = "_" if (m.group(1) or m.group(3)) else "", m.group(2)
+        if t.isdigit():
+            lv = "n"
+        else:
+            low = t.islower()
+            fam = "a" if low else "A"
+            prev = last.get(fam + sp)
+            if t.lower() in _ROMAN and not (len(t) == 1 and prev and len(prev) == 1 and ord(t) == ord(prev) + 1):
+                lv = "r" if low else "R"
+            elif len(t) == 2 and t[0] == t[1]:
+                lv = fam * 2
+            else:
+                lv = fam
+                last[fam + sp] = t
+        out.append((p, lv + sp))
+    return out
+
+
+def _chain(lv, pos):
+    """The items open at `pos`, outermost first: a level seen again closes every item opened after it."""
+    stack = []
+    for p, lvl in lv:
+        if p > pos:
+            break
+        if any(x[1] == lvl for x in stack):
+            while stack[-1][1] != lvl:
+                stack.pop()
+            stack.pop()
+        stack.append((p, lvl))
+    return stack
+
+
+def bearing_parts(sent, a, b):
+    """K047c: the parts of `sent` that can bear on its words sent[a:b] - ([(x, y)] before them, [(x, y)] after them,
+    where the list's lead-in ends or None, where a flush tail starts or None). The comment above says why."""
+    starts = [m.end() for m in _ITEM.finditer(sent)]
+    if len(starts) < 2:
+        return [(0, a)], [(b, len(sent))], None, None
+    lv = _levels(sent, starts)
+    head = lv[0][0]
+    if a < head:                            # the words stand in the lead-in: every item is theirs
+        return [(0, a)], [(b, len(sent))], None, None
+    pos = [p for p, _l in lv]
+    before = [(0, head)] + [(p, min(next((q for q in pos if q > p), len(sent)), a)) for p, _l in _chain(lv, a)]
+    keep = {lvl for _p, lvl in _chain(lv, max(a, b - 1))}
+    cut = next((p for p, lvl in lv if p >= b and lvl in keep), len(sent))
+    after, flush = [(b, max(b, cut))], None
+    fm = _FLUSH.search(sent, lv[-1][0])
+    if fm and fm.end() >= cut:
+        after.append((fm.end(), len(sent)))
+        flush = fm.end()
+    return before, after, head, flush
+
+
+def first_limit(sent, spans):
+    """(word, position) of the first `_LIMITS` match in the `spans` of `sent`, read in order, or None. Each span is
+    searched as a string of its own: a flush «unless» opening one matches as at the start of a sentence."""
+    for x, y in spans:
+        m = _LIMITS.search(sent[x:y])
+        if m:
+            return m.group(1), x + m.start(1)
+    return None
+
+
+def _beyond(gap, past, shown, side):
+    """«, N characters before / after the quoted words - beyond the passage shown» when the named word is not
+    inside the passage the list prints (`past` = how far it reaches from the words), else ""."""
+    if shown is None or past <= len(shown):
+        return ""
+    return ", %d characters %s the quoted words - beyond the passage shown" % (gap, side)
+
 
 def signals(row, pas, claims):
     """[(name, note)] - plain facts about one clean quotation, in PRIORITY order. A note says what is there; it never
@@ -234,13 +370,36 @@ def signals(row, pas, claims):
                             % (pm.group(1), om.group(1))))
                 break
     if pas:
-        found = []
-        for where, text, opening in (("earlier in the quoted words' own sentence", pas["own_before"], False),
-                                     ("later in their own sentence", pas["own_after"], False),
-                                     ("opening the next sentence", pas["next"], True)):
-            m = LIMITER_RE.match(_ENUM.sub("", text)) if opening else _LIMITS.search(text)
-            if m:
-                found.append("«%s» %s" % (m.group(1), where))
+        # K047c: in a list only the lead-in, the items the words stand in and a flush tail count (`bearing_parts`).
+        # A list the window cut is read whole (`_whole_sentence`); any other sentence the window cut stays cut, as
+        # before K047c, and a lead-in or a flush tail is named as such only in a sentence read whole.
+        found, quoted = [], "".join(t for t, _q in pas["pieces"])
+        own, nxt = pas["own_before"] + quoted + pas["own_after"], pas["next"]
+        a, b = len(pas["own_before"]), len(pas["own_before"]) + len(quoted)
+        cut_a, cut_b = pas.get("own_cut") or (False, False)
+        before, after, lead, flush = bearing_parts(own, a, b)
+        whole = pas.get("own_whole")
+        if whole:
+            parts = bearing_parts(*whole[:3])
+            if parts[2] is not None:            # the words stand in an item of a list: read the whole list
+                (own, a, b, nxt), (before, after, lead, flush), cut_a, cut_b = whole, parts, False, False
+        # Where in the list, never what the word does there: the splitter can glue a sentence before a list onto it
+        # (K047b: a word 5 780 characters back, across a GPO «``»), so «the lead-in» would claim too much.
+        hit = first_limit(own, before)
+        if hit:
+            w, p = hit
+            found.append("«%s» earlier in the quoted words' own sentence%s%s" % (
+                w, ", before the first item of the list they stand in" if lead is not None and p < lead and not cut_a
+                else "", _beyond(a - p, a - p, pas.get("before"), "before")))
+        hit = first_limit(own, after)
+        if hit:
+            w, p = hit
+            found.append("«%s» later in their own sentence%s%s" % (
+                w, ", after the last item of the list they stand in" if flush is not None and p >= flush and not cut_b
+                else "", _beyond(p - b, p + len(w) - b, pas.get("after"), "after")))
+        m = LIMITER_RE.match(_ENUM.sub("", nxt))
+        if m:
+            found.append("«%s» opening the next sentence" % m.group(1))
         if found:
             out.append(("limiter", "in the source: " + "; ".join(found)))
         gaps = [t for t, quoted in pas["pieces"] if not quoted]

@@ -290,8 +290,9 @@ decision only by its own head; court opinions are not zoned.
 Beside `REPORT.md`, every `check` writes `READING-LIST.md`: each quotation of the filed documents with
 the sentence that uses it and the passage of the source around it, flagged ones first. Whether a
 verbatim quotation actually *supports* its sentence is a question of reading, so the clean ones carry
-no "passed" label - only the plain facts that put a quotation early (a limiter next to the words,
-words left out, no citation beside it).
+no "passed" label - only the plain facts that put a quotation early (a limiter next to the words -
+in a list, only in the list's opening words, the quoted item and what follows the last item, never in
+a neighbouring item - words left out, no citation beside it).
 
 **Optional: a model reads them first (`check --judge <channel>`).** Off unless you ask for it on the
 command line. With an HTTP channel from `channels.json` that has its key and `model` set, `check`
