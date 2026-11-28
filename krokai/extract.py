@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import bisect
 import re
+import unicodedata
 
 from .normalize import (normalise, strip_markdown, is_mostly_cyrillic, alnum)
 
@@ -60,15 +61,74 @@ def blocks(text):
     return out
 
 
-def _quote_patterns(min_len):
-    return [re.compile(r'"([^"\n]{%d,})"' % min_len),
-            re.compile(r'“([^”\n]{%d,})”' % min_len),
-            re.compile(r'«([^»\n]{%d,})»' % min_len)]
+# 🔴 K049 (2026-11-28, the re-rank after K045d). Quoted spans were found by a regex per quote style,
+# `"([^"]{45,})"` run left to right. A short quoted term before a long quotation broke it: the term
+# is under 45 characters, so the scan moved on and RESTARTED AT THE TERM'S CLOSING MARK - the
+# drafter's prose up to the long quotation's OPENING mark became a «quotation» (NOT FOUND: a false
+# alarm), and the long quotation, its opening mark already spent, was never examined. Nothing said
+# so. Measured on a copy of the matter: the filed petition carried 2 long quotations never examined
+# and 9 rows of its own prose; the I-140 letter 14 and 92. A language model writes straight quotes,
+# so the commonest drafting style was the one read wrong.
+#
+# So the marks are PAIRED first and the length filter runs after. An opening mark waits on a stack;
+# a closing mark takes the nearest one waiting. Curly quotes and guillemets say which they are; a
+# straight quote is told by its neighbours - CommonMark's smart-quote test (spec 0.31.2,
+# «left-flanking delimiter run»; commonmark.js `scanDelims`: a quote opens when it is left-flanking
+# and not right-flanking, and closes when it is right-flanking). The test and not a 1-2 / 3-4
+# count: on the same copy 54 paragraphs hold an odd number of straight marks - mostly a quotation
+# opened in one paragraph and closed in a later one - and a count shifts every pair after the first
+# unpaired mark. A mark that pairs with nothing is listed by `not_examined` (`unpaired`), never
+# guessed into a quotation; a quotation inside a quotation is examined as part of the outer one.
+def _punct(c):
+    return unicodedata.category(c)[0] in "PS"
 
 
-_INNER = [re.compile(r'"([^"\n]{20,})"'),
-          re.compile(r'«([^»\n]{20,})»'),
-          re.compile(r'“([^”\n]{20,})”')]
+def _straight_role(s, i):
+    """'open', 'close' or None for the straight quote at `s[i]`; the text's edges count as spaces."""
+    a = s[i - 1] if i > 0 else " "
+    b = s[i + 1] if i + 1 < len(s) else " "
+    left = not b.isspace() and (not _punct(b) or a.isspace() or _punct(a))
+    right = not a.isspace() and (not _punct(a) or b.isspace() or _punct(b))
+    if left and not right:
+        return "open"
+    return "close" if right else None
+
+
+_CLOSER_OF = {"”": "“", "»": "«"}
+
+
+def _pairs(blk):
+    """`(spans, loose)`: the text of every OUTERMOST quoted span of `blk`, in reading order, and the
+    offsets of the quotation marks that pair with nothing. «„…“» (German / Russian) pairs too, so
+    its closing mark is not read as an opening one."""
+    waiting = {'"': [], "“": [], "«": [], "„": []}
+    pairs, loose = [], []
+    for i, ch in enumerate(blk):
+        if ch == '"':
+            role = _straight_role(blk, i)
+            if role == "open":
+                waiting['"'].append(i)
+            elif role == "close" and waiting['"']:
+                pairs.append((waiting['"'].pop(), i))
+            else:
+                loose.append(i)
+        elif ch == "“" and waiting["„"]:
+            pairs.append((waiting["„"].pop(), i))
+        elif ch in waiting:
+            waiting[ch].append(i)
+        elif ch in _CLOSER_OF:
+            st = waiting[_CLOSER_OF[ch]]
+            if st:
+                pairs.append((st.pop(), i))
+            else:
+                loose.append(i)
+    loose += [i for st in waiting.values() for i in st]
+    spans, end = [], -1
+    for a, b in sorted(pairs):
+        if b > end:                     # not inside the outer span before it
+            spans.append(blk[a + 1:b])
+            end = b
+    return spans, sorted(loose)
 
 
 def _split_blockquote(line):
@@ -82,9 +142,7 @@ def _split_blockquote(line):
     failure is **indistinguishable from fabrication**. If the line contains complete quoted spans,
     those spans ARE the quotations and everything around them is ours.
     """
-    inner = []
-    for rx in _INNER:
-        inner += [m.group(1) for m in rx.finditer(line)]
+    inner = [s for s in _pairs(line)[0] if len(s) >= 20]
     return inner if inner else [line]
 
 
@@ -110,8 +168,7 @@ def extract_quotes(text, min_len=DEFAULT_MIN_LEN, drop_cyrillic=True):
     """
     found = []
     for kind, blk in blocks(text):
-        for rx in _quote_patterns(min_len):
-            found += [m.group(1) for m in rx.finditer(blk)]
+        found += [s for s in _pairs(blk)[0] if len(s) >= min_len]        # K049: pair, then filter
         if kind == "q" and len(blk) >= min_len and not _CALLOUT_RE.search(blk):
             found.extend(_split_blockquote(blk))
 
@@ -214,7 +271,6 @@ def _alnum_locate(body, quote):
 # every verdict stays what it was, and nothing it returns reaches the exit code: it is a reading
 # list, not a finding. A short quoted term and a paraphrase are ordinary legal writing, and a gate
 # on these numbers would reward deleting citations - the one thing that makes a claim checkable.
-_ANY_LEN = [re.compile(r'"([^"\n]+)"'), re.compile(r'“([^”\n]+)”'), re.compile(r'«([^»\n]+)»')]
 # One or more blank lines; \r so that a CRLF text read as bytes still splits into paragraphs.
 _PARA_BREAK = re.compile(r"\n(?:[ \t\r\f\v]*\n)+")
 
@@ -247,7 +303,7 @@ def _occurrences(proj, quote):
 
 def not_examined(text, examined, packs=None, min_len=DEFAULT_MIN_LEN, drop_cyrillic=True,
                  near=140):
-    """What `extract_quotes(text, min_len, drop_cyrillic)` did NOT examine, in three buckets.
+    """What `extract_quotes(text, min_len, drop_cyrillic)` did NOT examine, in four buckets.
 
     * ``short`` - quoted phrases of two or more words under `min_len` characters, each as
       ``{"text", "cites"}``: `cites` are the primary citations within `near` characters of the
@@ -259,6 +315,10 @@ def not_examined(text, examined, packs=None, min_len=DEFAULT_MIN_LEN, drop_cyril
       compare. A lead-in (a heading, a line ending with a colon, a bare citation) right before a
       quotation and a bare citation line right after one carry it (see below); `near` is the
       address ring of `citation_window`.
+    * ``unpaired`` - paragraphs holding a quotation mark that pairs with nothing in the paragraph
+      (K049), each as ``{"excerpt", "marks"}``: the excerpt starts 80 characters before the first
+      such mark. Measured: a quotation opened in one paragraph and closed in a later one - neither
+      part was examined. A typo, an inch mark or a glued word («term"shall"») lands here too.
 
     A quoted single word is in no bucket: a defined term or a scare quote, and a one-word match
     proves nothing. `examined` is what `extract_quotes` returned for the same text with the same
@@ -266,13 +326,19 @@ def not_examined(text, examined, packs=None, min_len=DEFAULT_MIN_LEN, drop_cyril
     """
     text = text or ""
     seen = {normalise(q).lower() for q in examined}
-    short, cyrillic = [], []
+    short, cyrillic, unpaired = [], [], []
     for kind, blk in blocks(text):
-        spans = []
-        for rx in _ANY_LEN:
-            spans += [m.group(1) for m in rx.finditer(blk)]
+        spans, loose = _pairs(blk)                  # K049: the extractor's own pairing
         if kind == "q" and not _CALLOUT_RE.search(blk):
-            spans += _split_blockquote(blk)
+            whole = _split_blockquote(blk)
+            spans += whole
+            if whole == [blk] and len(blk) >= min_len:
+                loose = []                          # the whole blockquote was examined
+        if loose:
+            k = loose[0]
+            ex = " ".join(blk[max(0, k - 80):k + 120].split())
+            if not (drop_cyrillic and is_mostly_cyrillic(ex)):
+                unpaired.append({"excerpt": ex, "marks": len(loose)})
         for s in spans:
             s = strip_markdown(s).strip()
             if len(s.split()) < 2:
@@ -289,7 +355,7 @@ def not_examined(text, examined, packs=None, min_len=DEFAULT_MIN_LEN, drop_cyril
 
     if packs is None:
         return {"short": [{"text": s, "cites": []} for s in short], "cyrillic": cyrillic,
-                "cited": []}
+                "cited": [], "unpaired": unpaired}
 
     cites = [(c, p) for c, p in packs.find_positions(text) if packs.is_primary(c)]
     proj = _alnum_projection(text)
@@ -371,4 +437,4 @@ def not_examined(text, examined, packs=None, min_len=DEFAULT_MIN_LEN, drop_cyril
                 left.append(c)
         if left:
             cited.append({"excerpt": " ".join(text[lo:hi].split())[:200], "cites": left})
-    return {"short": short_out, "cyrillic": cyrillic, "cited": cited}
+    return {"short": short_out, "cyrillic": cyrillic, "cited": cited, "unpaired": unpaired}

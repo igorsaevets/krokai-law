@@ -142,7 +142,7 @@ def scan_matter(cfg, only=None, tiers="ABCD", quiet=False, printer=print):
                               cfg["drop_cyrillic_quotes"])
             unexamined.append({"tier": t, "file": rel, "examined": len(qs),
                                "short": ne["short"], "cyrillic": ne["cyrillic"],
-                               "cited": ne["cited"]})
+                               "cited": ne["cited"], "unpaired": ne["unpaired"]})
             for q in qs:
                 key = q.strip().lower()
                 rec = uniq.setdefault(key, {"quote": q, "sites": []})
@@ -432,13 +432,14 @@ def _pl(n, one, many):
 
 
 def _ne_counts(rec):
-    """(short phrases, of them beside a citation, Cyrillic phrases, citing paragraphs)."""
+    """(short phrases, of them beside a citation, Cyrillic phrases, citing paragraphs, paragraphs
+    with an unpaired quotation mark - K049; a result.json written before it has no such key)."""
     return (len(rec["short"]), sum(1 for s in rec["short"] if s["cites"]),
-            len(rec["cyrillic"]), len(rec["cited"]))
+            len(rec["cyrillic"]), len(rec["cited"]), len(rec.get("unpaired") or []))
 
 
 def _ne_line(rec, min_len):
-    s, sb, c, p = _ne_counts(rec)
+    s, sb, c, p, u = _ne_counts(rec)
     parts = []
     if s:
         parts.append("%s under %d characters (%d beside a citation of law)"
@@ -449,6 +450,9 @@ def _ne_line(rec, min_len):
     if p:
         parts.append("%s citing the law with no quotation beside the citation"
                      % _pl(p, "paragraph", "paragraphs"))
+    if u:
+        parts.append("%s with a quotation mark that pairs with nothing in the paragraph"
+                     % _pl(u, "paragraph", "paragraphs"))
     return "%s examined · %s" % (_pl(rec["examined"], "quotation", "quotations"),
                                  ("NOT examined: " + " · ".join(parts)) if parts
                                  else "nothing skipped")
@@ -467,7 +471,8 @@ def print_not_examined(res, printer=print, limit=20):
     n = res.get("min_len") or 0
     ab = sorted((r for r in recs if r["tier"] in ("A", "B")),
                 key=lambda r: (r["tier"], -(len(r["short"]) + len(r["cyrillic"])
-                                            + len(r["cited"])), r["file"]))
+                                            + len(r["cited"]) + len(r.get("unpaired") or [])),
+                               r["file"]))
     cd = [r for r in recs if r["tier"] not in ("A", "B")]
     printer("\nNOT examined - a clean verdict below says nothing about these "
             "(per file; the phrases and paragraphs are listed in REPORT.md):")
@@ -476,14 +481,16 @@ def print_not_examined(res, printer=print, limit=20):
     if len(ab) > limit:
         printer("  ... and %s in tiers A+B" % _pl(len(ab) - limit, "more file", "more files"))
     if cd:
-        tot = [sum(_ne_counts(r)[i] for r in cd) for i in range(4)]
-        printer("  tiers C+D, %s: %s examined · NOT examined: %s, %s, %s"
+        tot = [sum(_ne_counts(r)[i] for r in cd) for i in range(5)]
+        printer("  tiers C+D, %s: %s examined · NOT examined: %s, %s, %s, %s"
                 % (_pl(len(cd), "file", "files"),
                    _pl(sum(r["examined"] for r in cd), "quotation", "quotations"),
                    _pl(tot[0], "short phrase", "short phrases"),
                    _pl(tot[2], "Cyrillic phrase", "Cyrillic phrases"),
                    _pl(tot[3], "paragraph citing the law without a quotation",
-                       "paragraphs citing the law without a quotation")))
+                       "paragraphs citing the law without a quotation"),
+                   _pl(tot[4], "paragraph with an unpaired quotation mark",
+                       "paragraphs with an unpaired quotation mark")))
 
 
 def _mtime(p):
@@ -672,18 +679,20 @@ def _not_examined_md(res):
           "phrase of two or more words under that length%s, and a paragraph that cites the law "
           "and carries no examined quotation (a heading, a line ending with a colon or a bare "
           "citation right before a quotation, and a bare citation line right after one, count "
-          "as carrying it), were NOT examined: a clean "
-          "verdict says nothing about them. These counts are "
+          "as carrying it), and a paragraph with a quotation mark that pairs with nothing in the "
+          "paragraph (a quotation running over a paragraph break, a typo), were NOT examined: a "
+          "clean verdict says nothing about them. These counts are "
           "a reading list, not a finding - they never change the exit code. A quoted single word "
           "is not counted." % (n, ", a Cyrillic phrase (drop_cyrillic_quotes is on)"
                                if res.get("drop_cyrillic") else ""), "",
           "| tier | file | examined | short phrases (beside a citation) | Cyrillic phrases | "
-          "paragraphs citing the law, no quotation |", "|---|---|---|---|---|---|"]
+          "paragraphs citing the law, no quotation | paragraphs with an unpaired quotation mark |",
+          "|---|---|---|---|---|---|---|"]
     recs = sorted(recs, key=lambda r: (r["tier"], r["file"]))
     for r in recs:
-        s, sb, c, p = _ne_counts(r)
-        md.append("| %s | `%s` | %d | %d (%d) | %d | %d |"
-                  % (r["tier"], r["file"], r["examined"], s, sb, c, p))
+        s, sb, c, p, u = _ne_counts(r)
+        md.append("| %s | `%s` | %d | %d (%d) | %d | %d | %d |"
+                  % (r["tier"], r["file"], r["examined"], s, sb, c, p, u))
     md.append("")
 
     def capped(items, cap):
@@ -691,7 +700,8 @@ def _not_examined_md(res):
                               if len(items) > cap else [])
 
     for r in recs:
-        if r["tier"] not in ("A", "B") or not (r["short"] or r["cyrillic"] or r["cited"]):
+        if r["tier"] not in ("A", "B") or not (r["short"] or r["cyrillic"] or r["cited"]
+                                               or r.get("unpaired")):
             continue
         md += ["### %s · `%s`" % (r["tier"], r["file"]), ""]
         bes = [x for x in r["short"] if x["cites"]]
@@ -713,6 +723,14 @@ def _not_examined_md(res):
                    "what they say about the law rests on the reader, not on this check:", ""]
             md += capped(["* %s - %s" % ("; ".join(x["cites"]), x["excerpt"])
                           for x in r["cited"]], 25)
+            md.append("")
+        if r.get("unpaired"):
+            md += ["Paragraphs with a quotation mark that pairs with nothing in the paragraph - "
+                   "what it quotes was not examined. A quotation that runs over a paragraph break "
+                   "is checked once each paragraph is quoted on its own, or once it is a "
+                   "blockquote (`>`):", ""]
+            md += capped(["* (%s) %s" % (_pl(x["marks"], "mark", "marks"), x["excerpt"])
+                          for x in r["unpaired"]], 25)
             md.append("")
     return md
 

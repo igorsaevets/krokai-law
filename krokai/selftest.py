@@ -9296,6 +9296,124 @@ def suite_k099_ligatures(tmp):
        "\nVERIFIED" in out and "PDF page 2 of 2" in out and "NOT FOUND" not in out, out[:600])
 
 
+def suite_k049_pairing(tmp):
+    """K049: quotation marks are PAIRED before the length filter (extract._pairs).
+
+    The old per-style regex restarted at a short quoted term's closing mark: the drafter's prose up
+    to the next opening mark became a «quotation» (NOT FOUND, a false alarm) and the long quotation
+    after it was never examined, silently - measured on a copy of the matter: 2 long quotations of
+    the filed petition never examined, 9 prose rows. A mark that pairs with nothing in its paragraph
+    is listed by `not_examined` (`unpaired`), never guessed into a quotation."""
+    import json
+    import subprocess as _sp
+    from krokai.extract import extract_quotes, not_examined
+
+    dq, nl = chr(34), chr(10)
+    long_q = "an alien who is admitted as a nonimmigrant shall maintain the status in which admitted"
+    one = ("The word " + dq + "shall" + dq + " is mandatory under the statute, while the provision "
+           "states " + dq + long_q + dq + " and the rest of this sentence is ours.")
+    got = extract_quotes(one)
+    ok("k049: a short quoted term before a long quotation - the quotation is examined, our prose "
+       "between them is not", got == [long_q], str(got)[:300])
+    alone = dq + long_q + dq + " is the rule."
+    ok("k049: green path - one straight-quoted quotation alone is examined and nothing is unpaired",
+       extract_quotes(alone) == [long_q] and not_examined(alone, [long_q])["unpaired"] == [],
+       str(extract_quotes(alone)))
+    two = ("Both " + dq + "lawful status" + dq + " and " + dq + "admission" + dq + " appear in the "
+           "section we discuss at length here, which reads " + dq + long_q + dq + ".")
+    ok("k049: two short terms first - still exactly the quotation", extract_quotes(two) == [long_q],
+       str(extract_quotes(two))[:300])
+    inner = "good moral character"
+    nest = (dq + "The court held that " + dq + inner + dq + " must be shown for the whole statutory "
+            "period before the application." + dq)
+    gn = extract_quotes(nest)
+    ok("k049: a quoted term INSIDE a quotation - one span, the outer quotation with the term in it",
+       len(gn) == 1 and (dq + inner + dq) in gn[0] and gn[0].startswith("The court"), str(gn)[:300])
+    ok("k049: ... and the inner term is not listed as an unexamined short phrase (it was examined "
+       "as part of the outer one)", not_examined(nest, gn)["short"] == [], "")
+    stray = ("which ends the quotation above." + dq + " The statute then provides " + dq + long_q
+             + dq + " in plain words.")
+    gs, ns = extract_quotes(stray), not_examined(stray, extract_quotes(stray))
+    ok("k049: a stray closing mark first - the pair after it is examined, not the text between",
+       gs == [long_q], str(gs)[:300])
+    ok("k049: ... and the stray mark's paragraph is listed as unpaired",
+       [u["marks"] for u in ns["unpaired"]] == [1], str(ns["unpaired"])[:300])
+    cross = ("The decision reads: " + dq + "the applicant bears the burden of proof in every "
+             "proceeding of this kind," + nl + nl + "and the burden never shifts to the agency." + dq
+             + " We agree.")
+    gc, nc = extract_quotes(cross), not_examined(cross, extract_quotes(cross))
+    ok("k049: a quotation running over a paragraph break is not guessed into a quotation, and BOTH "
+       "paragraphs are listed as unpaired", gc == [] and len(nc["unpaired"]) == 2,
+       "%s / %s" % (gc, nc["unpaired"]))
+    bq = ("> The term " + dq + "alien" + dq + " as the statute uses it throughout this whole chapter "
+          "of the code means " + dq
+          + "any person not a citizen or national of the United States" + dq + ".")
+    gb = extract_quotes(bq)
+    ok("k049: a blockquote line - the long inner quotation, never the gloss between two marks",
+       gb == ["any person not a citizen or national of the United States"], str(gb)[:300])
+    curly = ("“The court held that “" + inner + "” must be shown for the whole statutory period "
+             "before the application.”")
+    gq = extract_quotes(curly)
+    ok("k049: curly quotes nest too - one outer span, not a span cut at the inner closing mark",
+       len(gq) == 1 and gq[0].endswith("application."), str(gq)[:300])
+    ru = "Мы пишем «термин „по закону“ и далее» в своём тексте."
+    ok("k049: «„…“» pairs - its closing mark is not an unpaired opening one",
+       not_examined(ru, extract_quotes(ru, drop_cyrillic=False), drop_cyrillic=False)["unpaired"]
+       == [], "")
+    whole = ("> " + dq + "This whole blockquote is the quotation and its opening mark never closes "
+             "in this line of text")
+    ok("k049: a blockquote examined whole is not listed as unpaired (its marks were examined)",
+       extract_quotes(whole) != [] and not_examined(whole, extract_quotes(whole))["unpaired"] == [],
+       str(extract_quotes(whole))[:200])
+    ru2 = "Мы пишем «термин без закрывающей кавычки в своём длинном комментарии к делу."
+    ok("k049: drop_cyrillic_quotes - our own Cyrillic paragraph with a stray mark is not listed",
+       not_examined(ru2, [], drop_cyrillic=True)["unpaired"] == []
+       and not_examined(ru2, [], drop_cyrillic=False)["unpaired"] != [], "")
+    glued = "The provision uses the term" + dq + "shall" + dq + "to mean a duty, not a choice."
+    ok("k049: a glued mark (no space beside it) pairs with nothing and is listed, never paired "
+       "across our words", not_examined(glued, extract_quotes(glued))["unpaired"] != [], "")
+
+    # --- through the real CLI: no prose row, the quotation VERIFIED, the unpaired lines ----------
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    matter = os.path.join(tmp, "k049m")
+    out = os.path.join(tmp, "k049out")
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+
+    def run(*args):
+        return _sp.run([sys.executable, "-m", "krokai"] + list(args), cwd=root, env=env,
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       timeout=240)
+
+    r = run("init", matter)
+    if r.returncode != 0:
+        ok("k049: init failed - the CLI pins were skipped", False, r.stderr[-200:])
+        return
+    io.open(os.path.join(matter, "law", "8USC-1184.md"), "w", encoding="utf-8").write(
+        "SEC. 1184. Admission of nonimmigrants. (a) In general, " + long_q + " under this section.")
+    io.open(os.path.join(matter, "case", "draft.md"), "w", encoding="utf-8").write(
+        one + nl + nl + cross + nl)
+    r = run("check", "--dir", matter, "--strict", "--out", out)
+    so = r.stdout or ""
+    try:
+        data = json.load(io.open(os.path.join(out, "result.json"), encoding="utf-8"))
+        rep = io.open(os.path.join(out, "REPORT.md"), encoding="utf-8").read()
+    except (OSError, ValueError) as exc:
+        ok("k049: the report files were written", False, repr(exc))
+        return
+    ok("k049: `check` - one row, the real quotation, VERIFIED (the prose row is gone)",
+       [(x["verdict"], x["quote"]) for x in data["rows"]] == [("VERIFIED", long_q)],
+       str([(x["verdict"], x["quote"][:40]) for x in data["rows"]]))
+    ok("k049: `check --strict` exits 0 - the unpaired paragraphs never reach the exit code",
+       r.returncode == 0, "rc=%s %s" % (r.returncode, so[-300:]))
+    ok("k049: the per-file line names the paragraphs with an unpaired quotation mark",
+       "2 paragraphs with a quotation mark that pairs with nothing in the paragraph" in so,
+       so[:600])
+    ok("k049: REPORT.md lists them under their own heading, with the cure",
+       "Paragraphs with a quotation mark that pairs with nothing in the paragraph" in rep
+       and "(1 mark) The decision reads:" in rep, "")
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if root not in sys.path:
@@ -9344,6 +9462,7 @@ def main():
         suite_k099_ligatures(tmp)
         suite_k061b_judge(tmp)
         suite_k094_condition_cuts(tmp)
+        suite_k049_pairing(tmp)
         suite_word_diff()
         suite_citations()
         suite_address(corpus, law)
